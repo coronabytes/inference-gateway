@@ -134,6 +134,8 @@ export interface DeploymentConfig {
   thinking_mode?: string;
   forward_sampling?: boolean;
   aws_service?: string;
+  /** Bedrock with the Anthropic Messages protocol: Claude through InvokeModel, or bedrock-mantle (the default). */
+  bedrock_api?: "invoke" | "mantle";
 }
 
 export interface Deployment {
@@ -196,6 +198,8 @@ export interface Secrets {
   aws_session_token?: string;
   /** Vertex: the service account key file (JSON). */
   google_service_account?: string;
+  /** Azure with Entra ID: the app registration's client secret, instead of an API key. */
+  client_secret?: string;
 }
 
 export interface CredentialSettings {
@@ -209,6 +213,74 @@ export interface CredentialSettings {
   project_id?: string;
   /** OpenAI-compatible only: the header the API key is sent in, as is, instead of `Authorization: Bearer`. */
   auth_header?: string;
+  /** Azure with Entra ID: the app registration's directory (tenant) ID or domain. */
+  tenant_id?: string;
+  /** Azure with Entra ID: the app registration's application (client) ID. */
+  client_id?: string;
+}
+
+/** A deployment on an Azure credential's resource, read from Azure Resource Manager (Entra ID credentials only). */
+export interface FoundryDeployment {
+  /** The deployment name, sent as the upstream model. */
+  name: string;
+  /** The model deployed, e.g. gpt-4o. */
+  model: string;
+  model_version?: string;
+  /** The model's vendor, e.g. OpenAI, Anthropic, Cohere. */
+  format?: string;
+  /** Deployment type, e.g. GlobalStandard. */
+  sku?: string;
+  /** Data zone deployments: the zone, eu or us, from the resource's region. Their prices are keyed azure/eu/… and azure/us/…. */
+  data_zone?: "eu" | "us";
+  /** Requests and tokens per minute its quota allows. */
+  rpm?: number;
+  tpm?: number;
+  mode: Mode;
+  api_style?: ApiStyle;
+  state?: string;
+}
+
+/** An AWS region the gateway's SDK knows (its built-in endpoint partitions). */
+export interface AwsRegion {
+  /** e.g. eu-central-1 */
+  id: string;
+  /** e.g. Europe (Frankfurt) */
+  name: string;
+  /** aws, aws-eusc (European Sovereign Cloud), aws-us-gov (GovCloud) or aws-cn (China). */
+  partition: string;
+}
+
+/** A Bedrock model or inference profile a credential can call, with its account's quota in the credential's region. */
+export interface BedrockModel {
+  /** The model or inference profile ID, sent as the upstream model. */
+  id: string;
+  /** Display name, e.g. EU Anthropic Claude Sonnet 4. */
+  name: string;
+  provider?: string;
+  /** The model ID in the region, a geographic inference profile (eu., us., …) or the global one: each has its own quota. */
+  kind: "on_demand" | "cross_region" | "global";
+  mode: Mode;
+  /** Requests and tokens per minute the account's quota allows; shared by everything using the account. */
+  rpm?: number;
+  tpm?: number;
+  legacy: boolean;
+}
+
+export interface BedrockModels {
+  region: string;
+  models: BedrockModel[];
+  /** Why the models or inference profiles could not be listed (e.g. a missing permission). */
+  models_error?: string;
+  /** Why the quotas could not be read. */
+  quotas_error?: string;
+}
+
+export interface FoundryDeployments {
+  /** The resource's Azure Resource Manager ID. */
+  resource: string;
+  /** The resource's region, e.g. swedencentral. */
+  location?: string;
+  deployments: FoundryDeployment[];
 }
 
 export interface Credential {

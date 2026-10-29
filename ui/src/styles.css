@@ -316,6 +316,8 @@ input:focus-visible, select:focus-visible, button:focus-visible, svg:focus-visib
 .mode-bar .segmented-group { margin-right: auto; }
 /* Router form: name, decision model, then the Enabled switch in a narrow last column. */
 .row.with-switch { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+/* A control with a button after it, such as Authentication and its IAM policy. */
+.row.with-action { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 @media (max-width: 720px) { .row.with-switch { grid-template-columns: 1fr; } }
 .switch { display: inline-flex; align-items: center; gap: 8px; }
 /* A switch without text keeps the height of one with text, so its pill matches the other controls. */

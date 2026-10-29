@@ -193,6 +193,12 @@ pub struct CredentialSettings {
     /// `Authorization: Bearer` (for example `X-Api-Key`). The header name is not secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_header: Option<String>,
+    /// Azure with Entra ID: the app registration's directory (tenant) ID or domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    /// Azure with Entra ID: the app registration's application (client) ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// Per-model settings, stored as JSONB on the deployment.
@@ -218,9 +224,24 @@ pub struct DeploymentConfig {
     /// default because current Claude models reject sampling parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forward_sampling: Option<bool>,
-    /// Bedrock: SigV4 service name override (default `bedrock`).
+    /// Bedrock with bedrock-mantle: SigV4 service name override (default `bedrock`). Other Bedrock
+    /// calls go through the SDK, which signs for its own service.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aws_service: Option<String>,
+    /// Bedrock with the Anthropic Messages protocol: how Claude is called (see `BedrockApi`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bedrock_api: Option<BedrockApi>,
+}
+
+/// How a Bedrock deployment with the Anthropic Messages protocol calls Claude.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum BedrockApi {
+    /// The Messages body through InvokeModel (Bedrock Runtime, with the SDK): any region and
+    /// inference profile that serves the model.
+    Invoke,
+    /// bedrock-mantle's Messages API. The default, as before this option existed.
+    Mantle,
 }
 
 /// Headers a deployment's `headers` may not set: they would change where or how the request is
@@ -314,6 +335,9 @@ pub struct Secrets {
     /// Vertex: the service account key file (JSON), as downloaded from Google Cloud.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub google_service_account: Option<String>,
+    /// Azure with Entra ID: the app registration's client secret, used instead of an API key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
 }
 
 impl Secrets {
@@ -329,6 +353,7 @@ impl Secrets {
         apply(&mut self.aws_secret_access_key, patch.aws_secret_access_key);
         apply(&mut self.aws_session_token, patch.aws_session_token);
         apply(&mut self.google_service_account, patch.google_service_account);
+        apply(&mut self.client_secret, patch.client_secret);
     }
 
     /// All values that are set.
@@ -339,6 +364,7 @@ impl Secrets {
             &self.aws_secret_access_key,
             &self.aws_session_token,
             &self.google_service_account,
+            &self.client_secret,
         ]
         .into_iter()
             .filter_map(|v| v.as_deref())
@@ -351,6 +377,7 @@ impl Secrets {
             ("aws_secret_access_key", self.aws_secret_access_key.is_some()),
             ("aws_session_token", self.aws_session_token.is_some()),
             ("google_service_account", self.google_service_account.is_some()),
+            ("client_secret", self.client_secret.is_some()),
         ])
     }
 }
@@ -651,6 +678,11 @@ pub struct Deployment {
 }
 
 impl Deployment {
+    /// Claude on Bedrock through InvokeModel rather than bedrock-mantle.
+    pub fn bedrock_invoke(&self) -> bool {
+        self.provider == ProviderKind::Bedrock && self.style == ApiStyle::Anthropic && self.config.bedrock_api == Some(BedrockApi::Invoke)
+    }
+
     /// The reasoning efforts this deployment accepts, in order. From its catalog entry: the
     /// entry's `reasoning_effort_levels`, or else each level its `supports_<level>_reasoning_effort`
     /// flag allows, with low, medium and high allowed unless flagged off (LiteLLM leaves out flags

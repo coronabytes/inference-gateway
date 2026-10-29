@@ -4,8 +4,9 @@
 //! session) could make the gateway call cloud metadata services or other internal endpoints and
 //! read the answer back through error messages. Two layers enforce the policy:
 //!
-//! - a DNS resolver for the HTTP clients that drops blocked addresses, so a hostname cannot
-//!   resolve (or re-resolve, DNS rebinding) to an internal address;
+//! - a DNS resolver for the HTTP clients (the gateway's own and the AWS SDK's, for Bedrock) that
+//!   drops blocked addresses, so a hostname cannot resolve (or re-resolve, DNS rebinding) to an
+//!   internal address;
 //! - [`Policy::check_url`] for URLs with an IP literal host, which skip DNS resolution.
 //!
 //! Redirects are not followed by the clients that use this policy, so a public endpoint cannot
@@ -180,29 +181,48 @@ impl reqwest::dns::Resolve for GuardedResolver {
         let policy = self.policy.clone();
         let host = name.as_str().to_string();
         Box::pin(async move {
-            let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
-            let mut reason = None;
-            let allowed: Vec<SocketAddr> = resolved
-                .into_iter()
-                .filter(|a| match policy.deny_reason(a.ip()) {
-                    Some(why) => {
-                        reason.get_or_insert((a.ip(), why));
-                        false
-                    }
-                    None => true,
-                })
-                .collect();
-            if allowed.is_empty() {
-                let msg = match reason {
-                    Some((ip, why)) => format!("{host} resolves to {ip}, which is {why}"),
-                    None => format!("{host} did not resolve"),
-                };
-                tracing::warn!(host = %host, "blocked outbound connection: {msg}");
-                return Err(msg.into());
-            }
+            let allowed = lookup(&policy, &host).await?;
             Ok(Box::new(allowed.into_iter()) as reqwest::dns::Addrs)
         })
     }
+}
+
+/// The same guard as a DNS resolver for the AWS SDK's HTTP client, which Bedrock calls go through.
+#[derive(Debug, Clone)]
+pub struct SdkResolver(pub Policy);
+
+impl aws_smithy_runtime_api::client::dns::ResolveDns for SdkResolver {
+    fn resolve_dns<'a>(&'a self, name: &'a str) -> aws_smithy_runtime_api::client::dns::DnsFuture<'a> {
+        aws_smithy_runtime_api::client::dns::DnsFuture::new(async move {
+            let allowed = lookup(&self.0, name).await.map_err(aws_smithy_runtime_api::client::dns::ResolveDnsError::new)?;
+            Ok(allowed.into_iter().map(|a| a.ip()).collect())
+        })
+    }
+}
+
+/// Resolve `host` and keep the addresses the policy allows; none allowed is an error.
+async fn lookup(policy: &Policy, host: &str) -> Result<Vec<SocketAddr>, Box<dyn std::error::Error + Send + Sync>> {
+    let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host, 0)).await?.collect();
+    let mut reason = None;
+    let allowed: Vec<SocketAddr> = resolved
+        .into_iter()
+        .filter(|a| match policy.deny_reason(a.ip()) {
+            Some(why) => {
+                reason.get_or_insert((a.ip(), why));
+                false
+            }
+            None => true,
+        })
+        .collect();
+    if allowed.is_empty() {
+        let msg = match reason {
+            Some((ip, why)) => format!("{host} resolves to {ip}, which is {why}"),
+            None => format!("{host} did not resolve"),
+        };
+        tracing::warn!(host = %host, "blocked outbound connection: {msg}");
+        return Err(msg.into());
+    }
+    Ok(allowed)
 }
 
 #[cfg(test)]
@@ -268,5 +288,13 @@ mod tests {
         // Alternative IPv4 spellings are normalized before the check.
         assert!(p.check_url("http://2852039166/").is_err());
         assert!(p.check_url("http://0xa9.0xfe.0xa9.0xfe/").is_err());
+    }
+
+    #[tokio::test]
+    async fn sdk_resolver_applies_the_policy() {
+        use aws_smithy_runtime_api::client::dns::ResolveDns;
+        assert!(SdkResolver(Policy::default()).resolve_dns("localhost").await.is_err(), "loopback is blocked by default");
+        let allowed = SdkResolver(Policy::from_list("127.0.0.0/8,::1/128").unwrap()).resolve_dns("localhost").await.unwrap();
+        assert!(allowed.iter().all(|ip| ip.is_loopback()) && !allowed.is_empty());
     }
 }

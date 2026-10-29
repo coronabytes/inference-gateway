@@ -45,6 +45,9 @@ export function StatTile({ label, value, hint }: { label: string; value: string;
  * dialog's buttons) stay in view; the content between them scrolls, with a line above and below
  * it while it does.
  */
+/** Open dialogs, innermost last: Escape closes only the innermost one. */
+const openDialogs: object[] = [];
+
 export function Modal({
   title,
   onClose,
@@ -61,11 +64,19 @@ export function Modal({
 }) {
   const body = useRef<HTMLDivElement>(null);
   const [scrolls, setScrolls] = useState(false);
+  // The latest onClose, so a parent that passes a new function on every render keeps its place.
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && onClose();
+    const me = {};
+    openDialogs.push(me);
+    const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && openDialogs[openDialogs.length - 1] === me && close.current();
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      openDialogs.splice(openDialogs.indexOf(me), 1);
+    };
+  }, []);
   // After every render, as the content may have grown or shrunk, and when the window resizes.
   const measure = () => {
     const b = body.current;

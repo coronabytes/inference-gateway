@@ -14,6 +14,7 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Value, json};
 
 use crate::{
+    entra,
     error::GatewayError,
     google,
     ir::{ChatRequest, StreamEvent},
@@ -122,7 +123,6 @@ pub enum Op {
     /// Anthropic Messages without streaming. Only Vertex has a separate route for it.
     MessagesOnce,
     CountTokens,
-    ConverseStream,
     /// System One decisions (decision deployments).
     SystemOne,
     /// OpenAI embeddings (embedding deployments).
@@ -283,15 +283,7 @@ pub async fn url(state: &AppState, d: &Deployment, op: Op) -> Result<String, Gat
         Op::Responses => format!("{base}/responses"),
         Op::Messages | Op::MessagesOnce => format!("{base}/messages"),
         Op::CountTokens => format!("{base}/messages/count_tokens"),
-        // Bedrock embeddings go through InvokeModel (Titan Text Embeddings V2).
-        Op::Embeddings if d.provider == ProviderKind::Bedrock => {
-            format!("{base}/model/{}/invoke", utf8_percent_encode(&d.upstream_model, PATH_SEGMENT))
-        }
         Op::Embeddings => format!("{base}/embeddings"),
-        Op::ConverseStream => format!(
-            "{base}/model/{}/converse-stream",
-            utf8_percent_encode(&d.upstream_model, PATH_SEGMENT)
-        ),
         Op::SystemOne | Op::Rerank => unreachable!("handled above"),
     };
     if d.provider == ProviderKind::Azure
@@ -325,6 +317,8 @@ pub fn headers(d: &Deployment) -> Result<HeaderMap, GatewayError> {
                 h.insert(name, value);
             }
         }
+        // Entra ID: an access token is added when the request is sent (see `post`).
+        ProviderKind::Azure if key.is_none() && entra::client(&d.connection, &d.secrets).is_some() => {}
         // Foundry's System One route takes the resource key as a bearer token.
         ProviderKind::Azure if d.style == ApiStyle::Systemone => {
             let k = key.ok_or_else(|| GatewayError::internal("azure deployment has no api_key"))?;
@@ -396,6 +390,16 @@ pub async fn post(
         v.set_sensitive(true);
         headers.insert("authorization", v);
     }
+    if d.provider == ProviderKind::Azure
+        && d.secrets.api_key.is_none()
+        && let Some(client) = entra::client(&d.connection, &d.secrets)
+    {
+        let scope = entra::scope_for(d.connection.base_url.as_deref());
+        let token = state.entra.access_token(state, &client, scope).await?;
+        let mut v = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| GatewayError::internal("invalid Entra ID access token"))?;
+        v.set_sensitive(true);
+        headers.insert("authorization", v);
+    }
     let resp = state
         .http
         .post(url)
@@ -424,6 +428,7 @@ pub async fn stream_chat(state: &AppState, d: &Deployment, req: &ChatRequest) ->
     match d.style {
         ApiStyle::Chat => openai_chat::send(state, d, req).await,
         ApiStyle::Responses => openai_responses::send(state, d, req).await,
+        ApiStyle::Anthropic if d.bedrock_invoke() => bedrock::send_invoke(state, d, req).await,
         ApiStyle::Anthropic => anthropic::send(state, d, req).await,
         ApiStyle::Converse => bedrock::send(state, d, req).await,
         ApiStyle::Systemone | ApiStyle::Embeddings | ApiStyle::Rerank => Err(GatewayError::invalid(format!(
@@ -579,6 +584,21 @@ pub(crate) mod tests {
         assert_eq!(h["x-api-token"], "k1");
         assert!(h["x-api-token"].is_sensitive());
         assert!(!h.contains_key("authorization"));
+    }
+
+    #[test]
+    fn azure_with_entra_sends_no_key_headers() {
+        for style in [ApiStyle::Chat, ApiStyle::Anthropic, ApiStyle::Rerank, ApiStyle::Systemone] {
+            let mut d = deployment(ProviderKind::Azure, style, "m");
+            d.connection.tenant_id = Some("contoso.onmicrosoft.com".into());
+            d.connection.client_id = Some("00000000-0000-0000-0000-000000000001".into());
+            d.secrets.client_secret = Some("s".into());
+            // The token is added in `post`.
+            let h = headers(&d).unwrap();
+            assert!(!h.contains_key("api-key") && !h.contains_key("x-api-key") && !h.contains_key("authorization"));
+        }
+        let d = deployment(ProviderKind::Azure, ApiStyle::Chat, "m");
+        assert!(headers(&d).is_err(), "neither a key nor Entra ID");
     }
 
     #[test]
