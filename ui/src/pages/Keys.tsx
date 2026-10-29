@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useIsUser } from "../access";
-import { api, callsModels, type BudgetPeriod, type Guardrail, type KeyInput, type KeyScope, type Project, type TagInfo, type VirtualKey } from "../api";
-import { Button, MultiSelect, PageActions, Select, Tabs, TextInput, useHashTab } from "../components/controls";
+import { api, callsModels, setListParam, type BudgetPeriod, type Guardrail, type KeyInput, type KeyScope, type Project, type TagInfo, type VirtualKey } from "../api";
+import { Button, MultiSelect, PageActions, Select, Tabs, TextInput, useDebounced, useHashTab } from "../components/controls";
 import { GuardrailList, TagList, TagPicker } from "../components/Tags";
 import {
   Badge,
@@ -40,18 +40,6 @@ const SCOPE_HINT: Record<KeyScope, string> = {
 
 /** The tag filter's value for keys without tags; tags never contain spaces. */
 const NO_TAGS = " none";
-
-/**
- * Whether a key matches the search: by name, by part of its shown prefix ("sk-gw-c9d0…bb2d"), or
- * by a whole pasted key, which starts and ends like the prefix.
- */
-function keyMatches(k: VirtualKey, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  const prefix = k.key_prefix.toLowerCase();
-  const [head, tail] = prefix.split("…");
-  return k.name.toLowerCase().includes(q) || prefix.includes(q) || (!!tail && q.startsWith(head) && q.endsWith(tail));
-}
 
 /** The project filter's value for keys without a project. */
 const NO_PROJECT = " none";
@@ -100,8 +88,10 @@ export function Keys() {
 function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; onProjectFilter: (ids: string[]) => void }) {
   const user = useIsUser();
   const [keys, setKeys] = useState<VirtualKey[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [tags, setTags] = useState<string[]>([]);
+  // Null until loaded, so that a project filter is kept until it can be checked.
+  const [projectList, setProjects] = useState<Project[] | null>(null);
+  const projects = projectList ?? [];
+  const [tags, setTags] = useState<TagInfo[]>([]);
   // Only admins choose guardrails, and only they can list them.
   const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -111,28 +101,54 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const search = useDebounced(query.trim());
 
-  const load = useCallback(async () => {
+  // A filter for a project deleted meanwhile matches nothing; it is dropped instead.
+  const projectIds = new Set(projects.map((p) => p.id));
+  const projectsPicked = projectList ? projectFilter.filter((id) => id === NO_PROJECT || projectIds.has(id)) : projectFilter;
+  // The server filters the keys.
+  const keyQuery = new URLSearchParams();
+  if (search) keyQuery.set("q", search);
+  setListParam(keyQuery, "tags", tagFilter, NO_TAGS);
+  setListParam(keyQuery, "projects", projectsPicked, NO_PROJECT);
+  const filters = keyQuery.toString().replace(/%2C/g, ",");
+
+  const loadKeys = useCallback(async () => {
     try {
-      const [k, t, p, g] = await Promise.all([
-        api<VirtualKey[]>("/keys"),
+      setKeys(await api<VirtualKey[]>(`/keys${filters ? `?${filters}` : ""}`));
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [filters]);
+
+  // What the cards and the editors need besides the keys: not reloaded as the filters change.
+  const loadContext = useCallback(async () => {
+    try {
+      const [t, p, g] = await Promise.all([
         api<TagInfo[]>("/tags"),
         api<Project[]>("/projects"),
         user ? Promise.resolve([]) : api<Guardrail[]>("/guardrails"),
       ]);
-      setKeys(k);
       setGuardrails(g);
-      setTags(t.map((x) => x.tag));
+      setTags(t);
       setProjects(p);
-      setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
   }, [user]);
 
+  const load = useCallback(async () => {
+    await Promise.all([loadKeys(), loadContext()]);
+  }, [loadKeys, loadContext]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    loadKeys();
+  }, [loadKeys]);
+
+  useEffect(() => {
+    loadContext();
+  }, [loadContext]);
 
   const act = async (fn: () => Promise<unknown>) => {
     try {
@@ -160,20 +176,14 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   });
 
   // Tags the filter offers: those deployments and routers carry, and those keys still hold.
-  const tagOptions = [...new Set([...tags, ...keys.flatMap((k) => k.allowed_tags)])].sort();
+  const tagOptions = tags.map((t) => t.tag).sort();
+  // Keys pick only tags that deployments or routers carry.
+  const pickableTags = tags.filter((t) => t.deployments + t.routers > 0).map((t) => t.tag);
   // Guardrail names by id, for the grid; empty for users, who cannot list them.
   const guardrailNames = new Map(guardrails.map((g) => [g.id, g.name]));
 
-  // A filter for a project deleted meanwhile matches nothing; it is dropped instead.
-  const projectIds = new Set(projects.map((p) => p.id));
-  const projectsPicked = projectFilter.filter((id) => id === NO_PROJECT || projectIds.has(id));
-  const shown = keys.filter(
-    (k) =>
-      keyMatches(k, query) &&
-      (!tagFilter.length || tagFilter.some((t) => (t === NO_TAGS ? !k.allowed_tags.length : k.allowed_tags.includes(t)))) &&
-      (!projectsPicked.length || projectsPicked.includes(k.project_id ?? NO_PROJECT)),
-  );
-  const filtering = !!query.trim() || tagFilter.length > 0 || projectsPicked.length > 0;
+  const shown = keys;
+  const filtering = !!search || tagFilter.length > 0 || projectsPicked.length > 0;
 
   // With projects, each one's keys get a card, and a last card holds those without a project.
   const groups = [
@@ -320,7 +330,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   return (
     <>
       <div className="page-head">
-        {keys.length > 0 && (
+        {(keys.length > 0 || filtering) && (
           <div className="filters">
             <TextInput caption="Search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="name or key" />
             {projects.length > 0 && (
@@ -340,7 +350,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
             />
             {filtering && (
               <span className="muted small">
-                {shown.length} of {keys.length} keys
+                {shown.length} {shown.length === 1 ? "key matches" : "keys match"}
               </span>
             )}
           </div>
@@ -350,7 +360,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
       <ErrorBanner error={error} />
       {shown.length === 0 ? (
         <div className="card list-card">
-          <p className="empty">{keys.length ? "No keys match the filters." : "No keys yet."}</p>
+          <p className="empty">{filtering ? "No keys match the filters." : "No keys yet."}</p>
         </div>
       ) : projects.length > 0 ? (
         groups.map((g) => (
@@ -368,7 +378,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
 
       {editing && (
         <KeyForm
-          tags={tags}
+          tags={pickableTags}
           projects={projects}
           guardrails={guardrails}
           user={user}

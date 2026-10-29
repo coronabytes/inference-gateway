@@ -38,7 +38,7 @@ pub async fn list_models_extended(State(state): State<AppState>, ClientKey(key):
 }
 
 /// The model names `key` may use, sorted.
-fn names<'a>(snap: &'a Snapshot, key: &VirtualKey) -> Vec<&'a String> {
+pub(crate) fn names<'a>(snap: &'a Snapshot, key: &VirtualKey) -> Vec<&'a String> {
     let mut names: Vec<&String> =
         snap.deployments.keys().chain(snap.routers.keys()).chain(snap.aliases.keys()).filter(|m| key_can_use(snap, key, m)).collect();
     names.sort();

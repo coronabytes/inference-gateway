@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type BudgetPeriod, type Guardrail, type Project, type ProjectInput } from "../api";
-import { Button, MenuButton, MultiSelect, PageActions, Select, TextArea, TextInput } from "../components/controls";
+import { Button, MenuButton, MultiSelect, PageActions, Select, TextArea, TextInput, useDebounced } from "../components/controls";
 import { Badge, BudgetMeter, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, optNum, type ConfirmRequest } from "../components/ui";
 import { dateTime } from "../format";
 
@@ -78,15 +78,17 @@ export function Projects({ onShowKeys }: { onShowKeys: (project: Project) => voi
   const [editing, setEditing] = useState<Project | "new" | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
   const [query, setQuery] = useState("");
+  const search = useDebounced(query.trim());
 
+  // The server filters the projects.
   const load = useCallback(async () => {
     try {
-      setProjects(await api<Project[]>("/projects"));
+      setProjects(await api<Project[]>(`/projects${search ? `?q=${encodeURIComponent(search)}` : ""}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [search]);
 
   useEffect(() => {
     load();
@@ -103,13 +105,12 @@ export function Projects({ onShowKeys }: { onShowKeys: (project: Project) => voi
     }
   };
 
-  const needle = query.trim().toLowerCase();
-  const shown = projects.filter((p) => !needle || `${p.name} ${p.description ?? ""}`.toLowerCase().includes(needle));
+  const shown = projects;
 
   return (
     <>
       <div className="page-head">
-        {projects.length > 0 && (
+        {(projects.length > 0 || !!search) && (
           <div className="filters">
             <TextInput caption="Search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="name or description" />
           </div>
@@ -169,7 +170,7 @@ export function Projects({ onShowKeys }: { onShowKeys: (project: Project) => voi
             {shown.length === 0 && (
               <tr>
                 <td colSpan={7} className="empty">
-                  {projects.length ? "No projects match the search." : "No projects yet. Create one to group keys by team, app or customer."}
+                  {search ? "No projects match the search." : "No projects yet. Create one to group keys by team, app or customer."}
                 </td>
               </tr>
             )}

@@ -559,6 +559,16 @@ export function Tabs<T extends string>({ label, options, value, onChange }: { la
   );
 }
 
+/** `value` once it has stopped changing for `ms`: a typed search sent to the server, not every keystroke. */
+export function useDebounced<T>(value: T, ms = 250): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
+}
+
 /**
  * The selected tab of `page`, kept in the address as `#/page/tab` so that links and reloads open
  * it. The first of `tabs` is the default and has no suffix. `tabs` must not change between renders.

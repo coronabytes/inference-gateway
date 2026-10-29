@@ -4,11 +4,10 @@ import {
   type Credential,
   type Guardrail,
   type GuardrailInput,
+  type GuardrailListItem,
   type GuardrailPrices,
   type GuardrailProvider,
   type GuardrailTestResult,
-  type Project,
-  type VirtualKey,
 } from "../api";
 import { Button, MenuButton, MultiSelect, PageActions, Segmented, Select, TextArea, TextInput } from "../components/controls";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
@@ -107,10 +106,8 @@ function target(g: Guardrail): string {
 }
 
 export function Guardrails() {
-  const [rows, setRows] = useState<Guardrail[]>([]);
+  const [rows, setRows] = useState<GuardrailListItem[]>([]);
   const [creds, setCreds] = useState<Credential[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [keys, setKeys] = useState<VirtualKey[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Guardrail | "new" | null>(null);
   const [copyOf, setCopyOf] = useState<Guardrail | null>(null);
@@ -119,16 +116,9 @@ export function Guardrails() {
 
   const load = useCallback(async () => {
     try {
-      const [g, c, p, k] = await Promise.all([
-        api<Guardrail[]>("/guardrails"),
-        api<Credential[]>("/credentials"),
-        api<Project[]>("/projects"),
-        api<VirtualKey[]>("/keys"),
-      ]);
+      const [g, c] = await Promise.all([api<GuardrailListItem[]>("/guardrails"), api<Credential[]>("/credentials")]);
       setRows(g);
       setCreds(c);
-      setProjects(p);
-      setKeys(k);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -185,7 +175,7 @@ export function Guardrails() {
                 </td>
                 <td className="mono">{g.credential_name ?? <Badge tone="warning">Missing</Badge>}</td>
                 <td>
-                  <EnforcedOn guardrail={g} projects={projects} keys={keys} />
+                  <EnforcedOn guardrail={g} />
                 </td>
                 <td className="when">{dateTime(g.updated_at)}</td>
                 <td className="actions">
@@ -250,9 +240,8 @@ export function Guardrails() {
 }
 
 /** How many projects and keys always apply a guardrail (set in their editors); their names are in the tooltip. */
-function EnforcedOn({ guardrail: g, projects, keys }: { guardrail: Guardrail; projects: Project[]; keys: VirtualKey[] }) {
-  const ps = projects.filter((p) => p.guardrail_ids.includes(g.id)).map((p) => p.name);
-  const ks = keys.filter((k) => k.guardrail_ids.includes(g.id)).map((k) => k.name);
+function EnforcedOn({ guardrail: g }: { guardrail: GuardrailListItem }) {
+  const { projects: ps, keys: ks } = g.enforced_on;
   if (!ps.length && !ks.length) return <span className="muted small">On request</span>;
   const count = (n: number, one: string) => (n ? `${n} ${one}${n === 1 ? "" : "s"}` : null);
   const names = [...ps.map((n) => `project ${n}`), ...ks.map((n) => `key ${n}`)].join(", ");

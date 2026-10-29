@@ -55,6 +55,55 @@ pub async fn list_deployments(pool: &PgPool) -> sqlx::Result<Vec<DeploymentRow>>
     .await
 }
 
+/// A list filter on a text array column (tags, projects): rows holding any of `any`, or, with
+/// `none`, rows holding nothing. The default does not narrow the list.
+#[derive(Default)]
+pub struct AnyOf<T> {
+    /// `None`: no filter.
+    pub any: Option<Vec<T>>,
+    pub none: bool,
+}
+
+/// The deployments the console's model list shows: `search` is part of the model name (lower
+/// case); the other filters keep deployments with this mode, tags, credentials, projects or ids.
+pub async fn search_deployments(
+    pool: &PgPool,
+    search: Option<&str>,
+    mode: Option<&str>,
+    tags: &AnyOf<String>,
+    credentials: Option<&[Uuid]>,
+    projects: &AnyOf<Uuid>,
+    ids: Option<&[Uuid]>,
+) -> sqlx::Result<Vec<DeploymentRow>> {
+    sqlx::query_as!(
+        DeploymentRow,
+        r#"SELECT id, model_name, mode, provider, upstream_model, config AS "config: Json<DeploymentConfig>",
+                  credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,
+                  output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,
+                  long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,
+                  long_cache_write_cost_per_mtok, cost_per_k_searches, base_model, tags, project_ids, enabled,
+                  created_at, updated_at
+           FROM deployments
+           WHERE ($1::text IS NULL OR strpos(lower(model_name), $1) > 0)
+             AND ($2::text IS NULL OR mode = $2)
+             AND ($3::text[] IS NULL OR tags && $3 OR ($4 AND cardinality(tags) = 0))
+             AND ($5::uuid[] IS NULL OR credential_id = ANY($5))
+             AND ($6::uuid[] IS NULL OR project_ids && $6 OR ($7 AND cardinality(project_ids) = 0))
+             AND ($8::uuid[] IS NULL OR id = ANY($8))
+           ORDER BY model_name, priority, created_at"#,
+        search,
+        mode,
+        tags.any.as_deref(),
+        tags.none,
+        credentials,
+        projects.any.as_deref(),
+        projects.none,
+        ids,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn get_deployment(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<DeploymentRow>> {
     sqlx::query_as!(
         DeploymentRow,
@@ -432,6 +481,24 @@ pub async fn list_routers(pool: &PgPool) -> sqlx::Result<Vec<RouterRow>> {
     .await
 }
 
+/// The routers the console's model list shows: `search` is part of the model name (lower case).
+pub async fn search_routers(pool: &PgPool, search: Option<&str>, tags: &AnyOf<String>) -> sqlx::Result<Vec<RouterRow>> {
+    sqlx::query_as!(
+        RouterRow,
+        r#"SELECT id, model_name, decision_model, instructions, routes AS "routes: Json<Vec<Route>>",
+                  fallback_route, tags, enabled, sticky, created_at, updated_at
+           FROM routers
+           WHERE ($1::text IS NULL OR strpos(lower(model_name), $1) > 0)
+             AND ($2::text[] IS NULL OR tags && $2 OR ($3 AND cardinality(tags) = 0))
+           ORDER BY model_name"#,
+        search,
+        tags.any.as_deref(),
+        tags.none,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn get_router(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<RouterRow>> {
     sqlx::query_as!(
         RouterRow,
@@ -481,6 +548,22 @@ pub async fn list_aliases(pool: &PgPool) -> sqlx::Result<Vec<AliasRow>> {
         .await
 }
 
+/// The aliases whose name, or whose target's model name, contains `search` (lower case).
+pub async fn search_aliases(pool: &PgPool, search: Option<&str>) -> sqlx::Result<Vec<AliasRow>> {
+    sqlx::query_as!(
+        AliasRow,
+        r#"SELECT a.id, a.model_name, a.target_id, a.enabled, a.created_at, a.updated_at
+           FROM model_aliases a
+           WHERE $1::text IS NULL OR strpos(lower(a.model_name), $1) > 0
+              OR EXISTS (SELECT 1 FROM deployments d WHERE d.id = a.target_id AND strpos(lower(d.model_name), $1) > 0)
+              OR EXISTS (SELECT 1 FROM routers r WHERE r.id = a.target_id AND strpos(lower(r.model_name), $1) > 0)
+           ORDER BY a.model_name"#,
+        search,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn get_alias(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<AliasRow>> {
     sqlx::query_as!(AliasRow, "SELECT id, model_name, target_id, enabled, created_at, updated_at FROM model_aliases WHERE id = $1", id)
         .fetch_optional(pool)
@@ -520,6 +603,21 @@ pub async fn list_credentials(pool: &PgPool) -> sqlx::Result<Vec<CredentialRow>>
         CredentialRow,
         r#"SELECT id, name, provider, secrets, settings AS "settings: Json<CredentialSettings>", created_at, updated_at
            FROM credentials ORDER BY provider, name"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// The credentials whose name contains `search` (lower case), of these providers.
+pub async fn search_credentials(pool: &PgPool, search: Option<&str>, providers: Option<&[String]>) -> sqlx::Result<Vec<CredentialRow>> {
+    sqlx::query_as!(
+        CredentialRow,
+        r#"SELECT id, name, provider, secrets, settings AS "settings: Json<CredentialSettings>", created_at, updated_at
+           FROM credentials
+           WHERE ($1::text IS NULL OR strpos(lower(name), $1) > 0) AND ($2::text[] IS NULL OR provider = ANY($2))
+           ORDER BY provider, name"#,
+        search,
+        providers,
     )
     .fetch_all(pool)
     .await
@@ -578,6 +676,20 @@ pub async fn update_credential(db: impl PgExecutor<'_>, c: &CredentialRow) -> sq
 pub async fn delete_credential(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
     let r = sqlx::query!("DELETE FROM credentials WHERE id = $1", id).execute(pool).await?;
     Ok(r.rows_affected() > 0)
+}
+
+/// The projects and keys that apply guardrails to every request, as (guardrail, `project` or
+/// `key`, name), by name.
+pub async fn guardrail_holders(pool: &PgPool) -> sqlx::Result<Vec<(Uuid, String, String)>> {
+    let rows = sqlx::query!(
+        r#"SELECT g AS "guardrail!", 'project' AS "kind!", name AS "name!" FROM projects, unnest(guardrail_ids) g
+           UNION ALL
+           SELECT g, 'key', name FROM virtual_keys, unnest(guardrail_ids) g
+           ORDER BY 3"#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.guardrail, r.kind, r.name)).collect())
 }
 
 /// Number of guardrails calling with each credential.
@@ -705,13 +817,18 @@ pub async fn rename_model_metadata(pool: &PgPool, old: &str, new: &str) -> sqlx:
 
 // ---------------------------------------------------------------- projects
 
-/// Projects by name, with how many keys each groups.
-pub async fn list_projects(pool: &PgPool) -> sqlx::Result<Vec<(ProjectRow, i64)>> {
+/// Projects by name, with how many keys each groups: those whose name or description contains
+/// `search` (lower case), among `projects` (a user's; `None` for all).
+pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option<&[Uuid]>) -> sqlx::Result<Vec<(ProjectRow, i64)>> {
     let rows = sqlx::query!(
         r#"SELECT p.id, p.name, p.description, p.enabled, p.max_budget_usd, p.budget_period, p.spend_reset_at,
                   p.guardrail_ids, p.created_at, p.updated_at, count(k.id) AS "keys!"
            FROM projects p LEFT JOIN virtual_keys k ON k.project_id = p.id
-           GROUP BY p.id ORDER BY lower(p.name)"#
+           WHERE ($1::text IS NULL OR strpos(lower(p.name || ' ' || coalesce(p.description, '')), $1) > 0)
+             AND ($2::uuid[] IS NULL OR p.id = ANY($2))
+           GROUP BY p.id ORDER BY lower(p.name)"#,
+        search,
+        projects,
     )
     .fetch_all(pool)
     .await?;
@@ -807,6 +924,91 @@ pub async fn list_keys(pool: &PgPool) -> sqlx::Result<Vec<VirtualKey>> {
     )
     .fetch_all(pool)
     .await
+}
+
+/// The keys the console's key list shows, newest first. `search` (lower case) is part of the
+/// name or of the shown prefix (`sk-gw-c9d0…bb2d`), or a whole key, which starts and ends like
+/// its prefix. `visible` limits a user to their projects' keys that fit a project.
+pub async fn search_keys(
+    pool: &PgPool,
+    search: Option<&str>,
+    tags: &AnyOf<String>,
+    projects: &AnyOf<Uuid>,
+    visible: Option<&[Uuid]>,
+) -> sqlx::Result<Vec<VirtualKey>> {
+    sqlx::query_as!(
+        VirtualKey,
+        r#"SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS "scope: KeyScope", k.project_id,
+                  coalesce(p.enabled, true) AS "project_active!", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,
+                  k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,
+                  k.guardrail_ids, k.created_at, k.updated_at
+           FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id
+           WHERE ($1::text IS NULL OR strpos(lower(k.name), $1) > 0 OR strpos(lower(k.key_prefix), $1) > 0
+                  OR (split_part(k.key_prefix, '…', 2) <> ''
+                      AND starts_with($1, lower(split_part(k.key_prefix, '…', 1)))
+                      AND right($1, char_length(split_part(k.key_prefix, '…', 2))) = lower(split_part(k.key_prefix, '…', 2))))
+             AND ($2::text[] IS NULL OR k.allowed_tags && $2 OR ($3 AND cardinality(k.allowed_tags) = 0))
+             AND ($4::uuid[] IS NULL OR k.project_id = ANY($4) OR ($5 AND k.project_id IS NULL))
+             AND ($6::uuid[] IS NULL OR (k.project_id = ANY($6) AND k.scope IN ('inference', 'project')))
+           ORDER BY k.created_at DESC"#,
+        search,
+        tags.any.as_deref(),
+        tags.none,
+        projects.any.as_deref(),
+        projects.none,
+        visible,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// A key or project as a picker offers it.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct NamedItem {
+    pub id: Uuid,
+    pub name: String,
+    /// A key's project.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<Uuid>,
+}
+
+/// The keys a picker offers, by name: those `visible` to a user (as in `search_keys`), and with
+/// `usable` only those that may call models now (enabled, unexpired, an inference scope).
+pub async fn key_names(pool: &PgPool, visible: Option<&[Uuid]>, usable: bool) -> sqlx::Result<Vec<NamedItem>> {
+    sqlx::query_as!(
+        NamedItem,
+        r#"SELECT id, name, project_id FROM virtual_keys
+           WHERE ($1::uuid[] IS NULL OR (project_id = ANY($1) AND scope IN ('inference', 'project')))
+             AND (NOT $2 OR (enabled AND scope IN ('inference', 'all') AND (expires_at IS NULL OR expires_at > now())))
+           ORDER BY lower(name)"#,
+        visible,
+        usable,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// The projects a picker offers, by name: all, or those in `visible`.
+pub async fn project_names(pool: &PgPool, visible: Option<&[Uuid]>) -> sqlx::Result<Vec<NamedItem>> {
+    sqlx::query_as!(
+        NamedItem,
+        r#"SELECT id, name, NULL::uuid AS project_id FROM projects WHERE $1::uuid[] IS NULL OR id = ANY($1) ORDER BY lower(name)"#,
+        visible,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Every tag keys hold, with how many keys hold it, among the keys in `visible` projects.
+pub async fn key_tag_counts(pool: &PgPool, visible: Option<&[Uuid]>) -> sqlx::Result<HashMap<String, i64>> {
+    let rows = sqlx::query!(
+        r#"SELECT t AS "tag!", count(*) AS "n!" FROM virtual_keys, unnest(allowed_tags) t
+           WHERE $1::uuid[] IS NULL OR project_id = ANY($1) GROUP BY t"#,
+        visible,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.tag, r.n)).collect())
 }
 
 pub async fn get_key(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<VirtualKey>> {

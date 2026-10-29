@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AutoRouter, Deployment, ReasoningEffort, Route, RouterInput } from "../api";
+import type { AutoRouter, AutoRouterListItem, Deployment, ReasoningEffort, Route, RouterInput } from "../api";
 import { Button, MenuButton, MultiSelect, Select, TextArea, TextInput, Toggle } from "../components/controls";
 import { Badge, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TrashIcon } from "../components/ui";
 import { TagEditor, TagList } from "../components/Tags";
@@ -26,14 +26,13 @@ const ROUTE_NAMES = ["Simple", "Medium", "Complex", "Reasoning"];
 /** One auto router: its decision model and the routes it chooses from. */
 export function RouterCard({
   router,
-  deployments,
   onEdit,
   onDuplicate,
   onToggle,
   onDelete,
 }: {
-  router: AutoRouter;
-  deployments: Deployment[];
+  /** With the models it names that no deployment serves. */
+  router: AutoRouterListItem;
   onEdit: () => void;
   onDuplicate: () => void;
   /** Activate or deactivate the router. */
@@ -41,8 +40,6 @@ export function RouterCard({
   onDelete: () => void;
 }) {
   const fallback = router.fallback_route ?? router.routes[0]?.name;
-  const chat = modelNames(deployments, "chat");
-  const decision = modelNames(deployments, "decision");
   return (
     <section className="card list-card router-card">
       <header className="list-head">
@@ -64,7 +61,7 @@ export function RouterCard({
           </h3>
           <p className="muted small" title={router.instructions ? `Decision model, asked: “${router.instructions}”` : "Decision model"}>
             <span className="mono">{router.decision_model}</span>
-            <Missing show={!decision.includes(router.decision_model)} />
+            <Missing show={router.missing.includes(router.decision_model)} />
           </p>
         </div>
         <div className="actions">
@@ -96,7 +93,7 @@ export function RouterCard({
               {r.models.map((m) => (
                 <li key={m.model}>
                   <span className="mono">{m.model}</span>
-                  <Missing show={!chat.includes(m.model)} />
+                  <Missing show={router.missing.includes(m.model)} />
                   {m.reasoning_effort && <span className="muted small"> {m.reasoning_effort} effort</span>}
                 </li>
               ))}

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { useIsUser } from "../access";
-import { adminFetch, api, callsModels, GUARDRAILS_HEADER, type AutoRouter, type Guardrail, type Mode, type Project, type ReasoningEffort, type VirtualKey } from "../api";
+import { adminFetch, api, GUARDRAILS_HEADER, type Mode, type NamedItem, type PlaygroundOptions, type ReasoningEffort } from "../api";
 import { Button, FileButton, MultiSelect, Select, SplitButton } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { LabelEditor } from "../components/LabelInput";
@@ -255,11 +254,10 @@ function parseFull(apiId: Api, v: any): Result {
 }
 
 export function Playground() {
-  const [keys, setKeys] = useState<VirtualKey[] | null>(null);
-  /** Model name → mode, for every enabled model. */
-  const [modelModes, setModelModes] = useState<Map<string, Mode>>(new Map());
-  const [routerNames, setRouterNames] = useState<Set<string>>(new Set());
-  const user = useIsUser();
+  /** The keys that may call models now. */
+  const [keys, setKeys] = useState<NamedItem[] | null>(null);
+  /** The chosen key's models and the guardrails its requests may ask for. */
+  const [options, setOptions] = useState<PlaygroundOptions>({ models: [], guardrails: [] });
   const [keyId, setKeyId] = useState("");
   const [model, setModel] = useState("");
   const [apiId, setApiId] = useState<Api>("responses");
@@ -282,9 +280,7 @@ export function Playground() {
   const [curlShown, setCurlShown] = useState<CurlRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Guardrails to apply on top of those enforced on the key; users, who cannot list them, go without. */
-  const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  /** Guardrails to apply on top of those enforced on the key. */
   const [pickedGuardrails, setPickedGuardrails] = useState<string[]>([]);
   const abort = useRef<AbortController | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -292,39 +288,27 @@ export function Playground() {
 
   const load = useCallback(async () => {
     try {
-      // Router names only label models in the list; users, who cannot read the configuration, go without.
-      const [k, r, g, p, d] = await Promise.all([
-        api<VirtualKey[]>("/keys"),
-        user ? Promise.resolve([]) : api<AutoRouter[]>("/routers"),
-        user ? Promise.resolve([]) : api<Guardrail[]>("/guardrails"),
-        user ? Promise.resolve([]) : api<Project[]>("/projects"),
-        api<Record<string, ReasoningEffort[]>>("/efforts"),
-      ]);
-      setGuardrails(g);
+      const [k, d] = await Promise.all([api<NamedItem[]>("/keys/options?usable=true"), api<Record<string, ReasoningEffort[]>>("/efforts")]);
       setModelEfforts(d);
-      setProjects(p);
-      const now = Date.now();
-      const usable = k.filter((x) => x.enabled && callsModels(x.scope) && (!x.expires_at || new Date(x.expires_at).getTime() > now));
-      setKeys(usable);
-      setRouterNames(new Set(r.map((x) => x.model_name)));
-      setKeyId((cur) => cur || usable[0]?.id || "");
+      setKeys(k);
+      setKeyId((cur) => cur || k[0]?.id || "");
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [user]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // The models the chosen key may call and their modes, as the gateway answers `GET /v1/models-extended`
-  // for it: its tags, allowed models and projects all apply.
+  // The models the chosen key may call and their modes (its tags, allowed models and projects all
+  // apply), and the guardrails, those the key or its project enforce marked.
   useEffect(() => {
-    if (!keyId) return setModelModes(new Map());
+    if (!keyId) return setOptions({ models: [], guardrails: [] });
     let current = true;
-    api<{ data: { id: string; mode: Mode }[] }>(`/playground/models-extended?key_id=${encodeURIComponent(keyId)}`, { method: "POST", json: {} })
-      .then((r) => current && setModelModes(new Map(r.data.map((m) => [m.id, m.mode]))))
+    api<PlaygroundOptions>(`/playground/options?key_id=${encodeURIComponent(keyId)}`)
+      .then((o) => current && setOptions(o))
       .catch((e) => current && setError((e as Error).message));
     return () => {
       current = false;
@@ -332,13 +316,14 @@ export function Playground() {
   }, [keyId]);
 
   const key = keys?.find((k) => k.id === keyId);
+  const guardrails = options.guardrails;
   // Applied to every request of the chosen key, whatever the picker says: the key's and its project's.
-  const enforcedIds = [...(key?.guardrail_ids ?? []), ...(projects.find((p) => p.id === key?.project_id)?.guardrail_ids ?? [])];
-  const enforced = guardrails.filter((g) => enforcedIds.includes(g.id)).map((g) => g.name);
+  const enforced = guardrails.filter((g) => g.enforced).map((g) => g.name);
   const asked = pickedGuardrails.filter((n) => !enforced.includes(n) && guardrails.some((g) => g.name === n));
   const guardrailHeaders: Record<string, string> = asked.length ? { [GUARDRAILS_HEADER]: asked.join(",") } : {};
-  const models = useMemo(() => [...modelModes.keys()].sort(), [modelModes]);
-  const mode = modelModes.get(model) ?? "chat";
+  // Sorted by name.
+  const models = useMemo(() => options.models.map((m) => m.name), [options]);
+  const mode: Mode = options.models.find((m) => m.name === model)?.mode ?? "chat";
   // For chat models only: a router sets its own efforts per route.
   const efforts = mode === "chat" ? (modelEfforts[model] ?? null) : null;
   // An effort the newly chosen model does not take goes back to the model's default. A router
@@ -488,9 +473,9 @@ export function Playground() {
           searchable
           empty="No models for this key"
           options={MODES.flatMap((g) =>
-            models
-              .filter((m) => modelModes.get(m) === g.value)
-              .map((m) => ({ value: m, label: m, group: g.label, note: routerNames.has(m) ? "router" : undefined })),
+            options.models
+              .filter((m) => m.mode === g.value)
+              .map((m) => ({ value: m.name, label: m.name, group: g.label, note: m.router ? "router" : undefined })),
           )}
         />
         {mode === "chat" && (

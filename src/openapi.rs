@@ -46,12 +46,12 @@ use utoipa::{
         paths::delete_deployment, paths::test_deployment, paths::clear_cooldown,
         paths::list_routers, paths::create_router, paths::update_router, paths::delete_router,
         paths::list_aliases, paths::create_alias, paths::update_alias, paths::delete_alias,
-        paths::list_keys, paths::create_key, paths::update_key, paths::delete_key, paths::reset_spend, paths::regenerate_key,
-        paths::list_projects, paths::create_project, paths::update_project, paths::delete_project, paths::reset_project_spend,
+        paths::list_keys, paths::key_options, paths::create_key, paths::update_key, paths::delete_key, paths::reset_spend, paths::regenerate_key,
+        paths::list_projects, paths::project_options, paths::create_project, paths::update_project, paths::delete_project, paths::reset_project_spend,
         paths::list_tags, paths::export_config, paths::import_config, paths::model_hub, paths::model_efforts, paths::set_model_metadata,
         paths::status, paths::metrics, paths::logs, paths::log_labels, paths::audit_log, paths::key_usage, paths::cluster,
         paths::get_settings, paths::put_settings,
-        paths::playground,
+        paths::playground, paths::playground_options,
         paths::search_prices, paths::match_price, paths::check_prices, paths::import_prices,
     ),
     modifiers(&SecuritySchemes),
@@ -405,6 +405,8 @@ mod schemas {
         deployments: usize,
         /// Auto routers carrying the tag.
         routers: usize,
+        /// Keys holding the tag (for a user, their projects' keys).
+        keys: usize,
     }
 
     #[derive(Serialize, ToSchema)]
@@ -729,7 +731,7 @@ mod paths {
     /// List credentials
     ///
     /// With which secrets are set; never their values.
-    #[utoipa::path(get, path = "/admin/api/credentials", tag = "Credentials",
+    #[utoipa::path(get, path = "/admin/api/credentials", tag = "Credentials", params(admin::CredentialQuery),
         responses((status = 200, description = "The credentials.", body = Vec<admin::CredentialView>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn list_credentials() {}
@@ -774,8 +776,10 @@ mod paths {
     // ------------------------------------------------------------ guardrails
 
     /// List guardrails
+    ///
+    /// With the projects and keys that apply each one to every request.
     #[utoipa::path(get, path = "/admin/api/guardrails", tag = "Guardrails",
-        responses((status = 200, description = "The guardrails.", body = Vec<admin::guardrails::GuardrailView>)),
+        responses((status = 200, description = "The guardrails.", body = Vec<admin::guardrails::GuardrailListItem>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn list_guardrails() {}
 
@@ -840,8 +844,11 @@ mod paths {
     /// List deployments
     ///
     /// With their cooldowns.
-    #[utoipa::path(get, path = "/admin/api/deployments", tag = "Deployments",
-        responses((status = 200, description = "The deployments.", body = Vec<admin::DeploymentView>)),
+    #[utoipa::path(get, path = "/admin/api/deployments", tag = "Deployments", params(admin::DeploymentQuery),
+        responses(
+            (status = 200, description = "The deployments.", body = Vec<admin::DeploymentView>),
+            (status = 400, description = "An unknown mode, or a filter that is not ids.", body = AdminError),
+        ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn list_deployments() {}
 
@@ -904,8 +911,10 @@ mod paths {
     // ------------------------------------------------------------ auto routers
 
     /// List auto routers
-    #[utoipa::path(get, path = "/admin/api/routers", tag = "Auto routers",
-        responses((status = 200, description = "The routers.", body = Vec<admin::RouterView>)),
+    ///
+    /// With the models each names that no deployment serves.
+    #[utoipa::path(get, path = "/admin/api/routers", tag = "Auto routers", params(admin::RouterQuery),
+        responses((status = 200, description = "The routers.", body = Vec<admin::RouterListItem>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn list_routers() {}
 
@@ -939,7 +948,7 @@ mod paths {
     // ------------------------------------------------------------ model aliases
 
     /// List model aliases
-    #[utoipa::path(get, path = "/admin/api/aliases", tag = "Model aliases",
+    #[utoipa::path(get, path = "/admin/api/aliases", tag = "Model aliases", params(admin::AliasQuery),
         responses((status = 200, description = "The aliases.", body = Vec<admin::AliasView>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn list_aliases() {}
@@ -983,10 +992,21 @@ mod paths {
     /// List virtual keys
     ///
     /// With their current budget period.
-    #[utoipa::path(get, path = "/admin/api/keys", tag = "Virtual keys",
-        responses((status = 200, description = "The keys.", body = Vec<admin::KeyView>)),
+    #[utoipa::path(get, path = "/admin/api/keys", tag = "Virtual keys", params(admin::KeyQuery),
+        responses(
+            (status = 200, description = "The keys.", body = Vec<admin::KeyView>),
+            (status = 400, description = "A project filter that is not ids.", body = AdminError),
+        ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn list_keys() {}
+
+    /// Key names
+    ///
+    /// The keys a picker offers, by name: id, name and project, without settings or budgets.
+    #[utoipa::path(get, path = "/admin/api/keys/options", tag = "Virtual keys", params(admin::KeyOptionsQuery),
+        responses((status = 200, description = "The keys.", body = Vec<db::NamedItem>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_options() {}
 
     /// Create virtual key
     ///
@@ -1020,10 +1040,18 @@ mod paths {
     ///
     /// Projects group keys in the console. An inactive project (`enabled: false`) blocks its keys,
     /// and its budget, if set, comes on top of theirs. By name, with key counts and budget status.
-    #[utoipa::path(get, path = "/admin/api/projects", tag = "Virtual keys",
+    #[utoipa::path(get, path = "/admin/api/projects", tag = "Virtual keys", params(admin::ProjectQuery),
         responses((status = 200, description = "The projects.", body = Vec<admin::ProjectView>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn list_projects() {}
+
+    /// Project names
+    ///
+    /// The projects a picker offers, by name: id and name only.
+    #[utoipa::path(get, path = "/admin/api/projects/options", tag = "Virtual keys",
+        responses((status = 200, description = "The projects.", body = Vec<db::NamedItem>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn project_options() {}
 
     /// Create project
     #[utoipa::path(post, path = "/admin/api/projects", tag = "Virtual keys", request_body = admin::ProjectInput,
@@ -1086,7 +1114,8 @@ mod paths {
 
     /// List tags
     ///
-    /// Every tag on deployments and routers.
+    /// Every tag on deployments and routers, and those keys still hold, with how many of each
+    /// carry it.
     #[utoipa::path(get, path = "/admin/api/tags", tag = "Configuration",
         responses((status = 200, description = "The tags.", body = Vec<TagUsage>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
@@ -1256,6 +1285,18 @@ mod paths {
         responses((status = 200, description = "The endpoint's answer.", body = ProviderAnswer)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn playground() {}
+
+    /// Playground options
+    ///
+    /// The models a key may call, with their modes, and the guardrails a request may ask for,
+    /// those the key or its project enforce marked.
+    #[utoipa::path(get, path = "/admin/api/playground/options", tag = "Playground", params(admin::PlaygroundQuery),
+        responses(
+            (status = 200, description = "The key's models and guardrails.", body = admin::PlaygroundOptions),
+            (status = 404, description = "No such key, or not one of the caller's.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn playground_options() {}
 
     // ------------------------------------------------------------ price catalog
 

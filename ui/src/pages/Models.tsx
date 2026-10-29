@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
+  setListParam,
   type ApiStyle,
   type AutoRouter,
+  type AutoRouterListItem,
   type Credential,
   type Deployment,
   type DeploymentInput,
   type Mode,
   type ModelAlias,
+  type NamedItem,
   type PriceEntry,
-  type Project,
   type Provider,
+  type TagInfo,
 } from "../api";
 import { CatalogPicker } from "../components/CatalogPicker";
-import { Button, MenuButton, MultiSelect, Segmented, Select, SplitButton, Switch, Tabs, TextInput, useHashTab } from "../components/controls";
+import { Button, MenuButton, MultiSelect, Segmented, Select, SplitButton, Switch, Tabs, TextInput, useDebounced, useHashTab } from "../components/controls";
 import { PRICE_FIELDS, catalogScope, deploymentPrices, priceDifferences, suggestModelName, upstreamFromKey, type DeploymentPrices } from "../pricing";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, Section, optInt, optNum, type ConfirmRequest } from "../components/ui";
 import { compact, ms } from "../format";
@@ -124,7 +127,7 @@ function healthText(h: Deployment["health"]): string {
   return ` ${parts.join("; ")}.`;
 }
 
-function projectNames(ids: string[], projects: Project[]): string[] {
+function projectNames(ids: string[], projects: NamedItem[]): string[] {
   return ids.map((id) => projects.find((p) => p.id === id)?.name ?? "unknown project").sort((a, b) => a.localeCompare(b));
 }
 
@@ -132,12 +135,20 @@ function projectNames(ids: string[], projects: Project[]): string[] {
 const TITAN_INPUT_PRICE = "0.02";
 const TITAN_MODEL = "amazon.titan-embed-text-v2:0";
 
+/** Every deployment, router and alias, whatever the list's filters. */
+interface AllModels {
+  deps: Deployment[];
+  routers: AutoRouterListItem[];
+  aliases: ModelAlias[];
+}
+
 const TABS = ["hub", "deployments", "guardrails", "credentials", "pricing", "playground"] as const;
 
 export function Models() {
   const [deps, setDeps] = useState<Deployment[]>([]);
   const [creds, setCreds] = useState<Credential[] | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<NamedItem[]>([]);
+  const [tags, setTags] = useState<TagInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Deployment | "new" | null>(null);
   // The deployment being duplicated while `editing` is "new".
@@ -149,7 +160,7 @@ export function Models() {
   const [credFilter, setCredFilter] = useState<string[]>([]);
   const [projectFilter, setProjectFilter] = useState<string[]>([]);
   const [tab, setTab] = useHashTab("models", TABS);
-  const [routers, setRouters] = useState<AutoRouter[]>([]);
+  const [routers, setRouters] = useState<AutoRouterListItem[]>([]);
   const [editingRouter, setEditingRouter] = useState<AutoRouter | "new" | null>(null);
   const [routerCopyOf, setRouterCopyOf] = useState<AutoRouter | null>(null);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
@@ -158,31 +169,96 @@ export function Models() {
   const [priceCheck, setPriceCheck] = useState<PriceCheck | null>(null);
   const [onlyDrift, setOnlyDrift] = useState(false);
   const [checking, setChecking] = useState(false);
+  // Every deployment, router and alias, whatever the filters: for the router and alias editors,
+  // deleting and the price check. Loaded when first needed, dropped on every reload.
+  const [all, setAll] = useState<AllModels | null>(null);
 
-  const load = useCallback(async () => {
+  const search = useDebounced(filter.trim());
+  const drifting = onlyDrift && priceCheck ? priceCheck.drift : null;
+  // A picked project deleted meanwhile drops out.
+  const projectsPicked = projectFilter.filter((p) => p === NO_PROJECT || projects.some((u) => u.id === p));
+  // The server filters on the public model name only (not the upstream model), the mode, tags,
+  // credentials and projects: it keeps the deployments that carry any picked tag (or none, for
+  // "untagged"), use any picked credential or are limited to any picked project (or to none).
+  // Routers have no credential and no projects, so a credential filter hides them, and a project
+  // filter unless it includes "no project"; aliases have no tags either. "Show only these" after a
+  // price check asks for the drifting deployments by id.
+  const noOwnFilters = !drifting && !credFilter.length && (!projectsPicked.length || projectsPicked.includes(NO_PROJECT));
+  const depQuery = new URLSearchParams();
+  if (search) depQuery.set("q", search);
+  if (modeFilter !== "all") depQuery.set("mode", modeFilter);
+  setListParam(depQuery, "tags", tagFilter, UNTAGGED);
+  setListParam(depQuery, "credentials", credFilter);
+  setListParam(depQuery, "projects", projectsPicked, NO_PROJECT);
+  if (drifting) setListParam(depQuery, "ids", [...drifting.keys()]);
+  const routerQuery = new URLSearchParams();
+  if (search) routerQuery.set("q", search);
+  setListParam(routerQuery, "tags", tagFilter, UNTAGGED);
+  const aliasQuery = new URLSearchParams();
+  if (search) aliasQuery.set("q", search);
+  // Null when the filters leave none of them.
+  const listed = (shown: boolean, path: string, q: URLSearchParams) => (shown ? `${path}${q.size ? `?${q.toString().replace(/%2C/g, ",")}` : ""}` : null);
+  const depPath = listed(modeFilter === "all" || MODES.some((m) => m.value === modeFilter), "/deployments", depQuery);
+  const routerPath = listed(noOwnFilters && (modeFilter === "all" || modeFilter === "router"), "/routers", routerQuery);
+  const aliasPath = listed(
+    noOwnFilters && (modeFilter === "all" || modeFilter === "alias") && (!tagFilter.length || tagFilter.includes(UNTAGGED)),
+    "/aliases",
+    aliasQuery,
+  );
+
+  const loadList = useCallback(async () => {
     try {
-      const [d, c, r, a, p] = await Promise.all([
-        api<Deployment[]>("/deployments"),
-        api<Credential[]>("/credentials"),
-        api<AutoRouter[]>("/routers"),
-        api<ModelAlias[]>("/aliases"),
-        api<Project[]>("/projects"),
+      const [d, r, a] = await Promise.all([
+        depPath ? api<Deployment[]>(depPath) : [],
+        routerPath ? api<AutoRouterListItem[]>(routerPath) : [],
+        aliasPath ? api<ModelAlias[]>(aliasPath) : [],
       ]);
       setDeps(d);
-      setProjects(p);
-      setCreds(c);
       setRouters(r);
       setAliases(a);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
+  }, [depPath, routerPath, aliasPath]);
+
+  // What the filters and the deployment editor offer: not reloaded as the filters change.
+  const loadContext = useCallback(async () => {
+    try {
+      const [c, p, t] = await Promise.all([api<Credential[]>("/credentials"), api<NamedItem[]>("/projects/options"), api<TagInfo[]>("/tags")]);
+      setCreds(c);
+      setProjects(p);
+      setTags(t);
+      setAll(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }, []);
+
+  const load = useCallback(async () => {
+    await Promise.all([loadList(), loadContext()]);
+  }, [loadList, loadContext]);
 
   // Again on returning from another tab, where credentials or prices may have changed.
   useEffect(() => {
-    if (tab === "deployments") load();
-  }, [load, tab]);
+    if (tab === "deployments") loadContext();
+  }, [loadContext, tab]);
+
+  useEffect(() => {
+    if (tab === "deployments") loadList();
+  }, [loadList, tab]);
+
+  const loadAll = async (): Promise<AllModels> => {
+    const [d, r, a] = await Promise.all([api<Deployment[]>("/deployments"), api<AutoRouterListItem[]>("/routers"), api<ModelAlias[]>("/aliases")]);
+    const every = { deps: d, routers: r, aliases: a };
+    setAll(every);
+    return every;
+  };
+
+  // The router and alias editors pick among every model.
+  useEffect(() => {
+    if ((editingRouter || editingAlias) && !all) loadAll().catch((e) => setError((e as Error).message));
+  }, [editingRouter, editingAlias, all]);
 
   const groups = useMemo(() => {
     const m = new Map<string, Deployment[]>();
@@ -190,63 +266,23 @@ export function Models() {
     return [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [deps]);
 
-  const knownTags = useMemo(() => [...new Set([...deps, ...routers].flatMap((x) => x.tags))].sort(), [deps, routers]);
-
-  // Filters on the public model name only (not the upstream model), the mode, tags, credentials and
-  // projects. The tag, credential and project filters keep a model's deployments that carry any
-  // picked tag (or none, for "untagged"), use any picked credential or are limited to any picked
-  // project (or to none). Routers have no credential and no projects, so a credential filter hides
-  // them, and a project filter unless it includes "no project".
-  const drifting = onlyDrift && priceCheck ? priceCheck.drift : null;
-  const tagged = (tags: string[]) => !tagFilter.length || tagFilter.some((t) => (t === UNTAGGED ? !tags.length : tags.includes(t)));
-  // Only projects that some deployment is limited to; a picked one that no longer is drops out.
-  const usedProjects = projects.filter((p) => deps.some((d) => d.project_ids.includes(p.id))).sort((a, b) => a.name.localeCompare(b.name));
-  const projectsPicked = usedProjects.length ? projectFilter.filter((p) => p === NO_PROJECT || usedProjects.some((u) => u.id === p)) : [];
-  const inProject = (ids: string[]) =>
-    !projectsPicked.length || projectsPicked.some((p) => (p === NO_PROJECT ? !ids.length : ids.includes(p)));
-  const visible = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return groups
-      .filter(([name, list]) => name.toLowerCase().includes(q) && (modeFilter === "all" || list[0].mode === modeFilter))
-      .map(
-        ([name, list]) =>
-          [
-            name,
-            list.filter(
-              (d) =>
-                tagged(d.tags) &&
-                inProject(d.project_ids) &&
-                (!credFilter.length || credFilter.includes(d.credential_id)) &&
-                (!drifting || drifting.has(d.id)),
-            ),
-          ] as const,
-      )
-      .filter(([, list]) => list.length > 0);
-  }, [groups, filter, modeFilter, tagFilter, credFilter, projectsPicked.join(), drifting]);
-  const visibleRouters = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return drifting || credFilter.length || (projectsPicked.length && !projectsPicked.includes(NO_PROJECT))
-      ? []
-      : routers.filter((r) => r.model_name.toLowerCase().includes(q) && (modeFilter === "all" || modeFilter === "router") && tagged(r.tags));
-  }, [routers, filter, modeFilter, tagFilter, credFilter, projectsPicked.join(), drifting]);
-  // Aliases have no tags, credentials or projects of their own; like routers, those filters hide them.
-  const visibleAliases = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return drifting || credFilter.length || (projectsPicked.length && !projectsPicked.includes(NO_PROJECT))
-      ? []
-      : aliases.filter(
-          (a) => (a.model_name.toLowerCase().includes(q) || !!a.target?.toLowerCase().includes(q)) && (modeFilter === "all" || modeFilter === "alias") && tagged([]),
-        );
-  }, [aliases, filter, modeFilter, tagFilter, credFilter, projectsPicked.join(), drifting]);
-  // Only credentials that some deployment uses.
-  const usedCreds = (creds ?? []).filter((c) => deps.some((d) => d.credential_id === c.id)).sort((a, b) => a.name.localeCompare(b.name));
+  // Tags deployments and routers carry, not those only keys still hold.
+  const knownTags = tags.filter((t) => t.deployments + t.routers > 0).map((t) => t.tag);
+  // Only credentials that some deployment uses; their counts also tell whether there are models at all.
+  const usedCreds = (creds ?? []).filter((c) => c.deployments > 0).sort((a, b) => a.name.localeCompare(b.name));
+  const hasModels = usedCreds.length > 0;
+  const filtering = !!search || modeFilter !== "all" || tagFilter.length > 0 || credFilter.length > 0 || projectsPicked.length > 0;
+  const shownCount = groups.length + routers.length + aliases.length;
 
   /** Compare every deployment's prices with its catalog entry, as the deployment form would fill them in. */
   const checkPrices = async () => {
     setChecking(true);
     try {
-      const entries = await api<{ deployment_id: string; key: string | null; data: Record<string, unknown> | null }[]>("/prices/check");
-      const byId = new Map(deps.map((d) => [d.id, d]));
+      const [entries, every] = await Promise.all([
+        api<{ deployment_id: string; key: string | null; data: Record<string, unknown> | null }[]>("/prices/check"),
+        all ?? loadAll(),
+      ]);
+      const byId = new Map(every.deps.map((d) => [d.id, d]));
       const drift = new Map<string, PriceDrift>();
       let unmatched = 0;
       for (const e of entries) {
@@ -293,7 +329,14 @@ export function Models() {
     }
   };
 
-  const askDelete = (d: Deployment, siblings: number) =>
+  const askDelete = async (d: Deployment) => {
+    // The model's deployments, whatever the filters show.
+    let siblings: number;
+    try {
+      siblings = (all ?? (await loadAll())).deps.filter((x) => x.model_name === d.model_name).length;
+    } catch (e) {
+      return setError((e as Error).message);
+    }
     setConfirming({
       title: "Delete deployment",
       message: (
@@ -309,6 +352,7 @@ export function Models() {
         await load();
       },
     });
+  };
 
   /** Activate or deactivate a deployment, keeping everything else as it is. */
   const setDeploymentEnabled = (d: Deployment, enabled: boolean) =>
@@ -317,9 +361,9 @@ export function Models() {
       return api(`/deployments/${id}`, { method: "PUT", json: { ...input, enabled } });
     });
 
-  const setRouterEnabled = (r: AutoRouter, enabled: boolean) =>
+  const setRouterEnabled = (r: AutoRouterListItem, enabled: boolean) =>
     act(() => {
-      const { id, created_at: _c, updated_at: _u, ...input } = r;
+      const { id, created_at: _c, updated_at: _u, missing: _m, ...input } = r;
       return api(`/routers/${id}`, { method: "PUT", json: { ...input, enabled } });
     });
 
@@ -395,7 +439,7 @@ export function Models() {
       {tabs}
       <div className="page-head">
         <div className="filters">
-          {groups.length > 0 && (
+          {hasModels && (
             <>
               <Select
                 caption="Mode"
@@ -415,18 +459,18 @@ export function Models() {
                 values={credFilter}
                 onChange={setCredFilter}
               />
-              {usedProjects.length > 0 && (
+              {projects.length > 0 && (
                 <MultiSelect
                   caption="Projects"
-                  options={[...usedProjects.map((p) => ({ value: p.id, label: p.name })), { value: NO_PROJECT, label: "No project" }]}
+                  options={[...projects.map((p) => ({ value: p.id, label: p.name })), { value: NO_PROJECT, label: "No project" }]}
                   values={projectsPicked}
                   onChange={setProjectFilter}
                 />
               )}
               <TextInput caption="Model" type="search" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="filter by name" />
-              {(filter.trim() || modeFilter !== "all" || tagFilter.length > 0 || credFilter.length > 0 || projectsPicked.length > 0) && (
+              {filtering && (
                 <span className="muted small">
-                  {visible.length + visibleRouters.length + visibleAliases.length} of {groups.length + routers.length + aliases.length} models
+                  {shownCount} {shownCount === 1 ? "model matches" : "models match"}
                 </span>
               )}
             </>
@@ -442,16 +486,16 @@ export function Models() {
               {
                 label: "Add router",
                 onClick: () => (setRouterCopyOf(null), setEditingRouter("new")),
-                disabled: !deps.some((d) => d.mode === "decision"),
+                disabled: !hasModels,
                 title: "Routes each request to one of several models; needs a decision deployment",
               },
               {
                 label: "Add alias",
                 onClick: () => (setAliasCopyOf(null), setEditingAlias("new")),
-                disabled: !deps.length,
+                disabled: !hasModels,
                 title: "Another model name for an existing model",
               },
-              { label: checking ? "Checking prices…" : "Check prices", onClick: checkPrices, disabled: checking || !deps.length, title: "Compare prices with the price catalog" },
+              { label: checking ? "Checking prices…" : "Check prices", onClick: checkPrices, disabled: checking || !hasModels, title: "Compare prices with the price catalog" },
             ]}
           >
             Add deployment
@@ -489,11 +533,9 @@ export function Models() {
           Deployments authenticate with a stored credential. <a href="#/models/credentials">Create a credential</a> first, then add deployments that use it.
         </div>
       )}
-      {groups.length === 0 && <div className="empty-card">No models yet. Add a deployment to start routing traffic.</div>}
-      {groups.length > 0 && visible.length + visibleRouters.length + visibleAliases.length === 0 && (
-        <div className="empty-card">No model matches the filter.</div>
-      )}
-      {visibleAliases.map((a) => (
+      {creds && !hasModels && <div className="empty-card">No models yet. Add a deployment to start routing traffic.</div>}
+      {hasModels && shownCount === 0 && <div className="empty-card">No model matches the filter.</div>}
+      {aliases.map((a) => (
         <AliasCard
           key={a.id}
           alias={a}
@@ -503,18 +545,17 @@ export function Models() {
           onToggle={() => setAliasEnabled(a, !a.enabled)}
         />
       ))}
-      {visibleRouters.map((r) => (
+      {routers.map((r) => (
         <RouterCard
           key={r.id}
           router={r}
-          deployments={deps}
           onEdit={() => setEditingRouter(r)}
           onDuplicate={() => (setRouterCopyOf(r), setEditingRouter("new"))}
           onDelete={() => askDeleteRouter(r)}
           onToggle={() => setRouterEnabled(r, !r.enabled)}
         />
       ))}
-      {visible.map(([name, list]) => (
+      {groups.map(([name, list]) => (
         <section key={name} className="card list-card deployment-group">
           <header className="list-head">
             <div className="list-title">
@@ -608,7 +649,7 @@ export function Models() {
                       items={[
                         { label: "Duplicate", onClick: () => (setCopyOf(d), setEditing("new")) },
                         { label: d.enabled ? "Deactivate" : "Activate", onClick: () => setDeploymentEnabled(d, !d.enabled) },
-                        { label: "Delete", onClick: () => askDelete(d, list.length), danger: true },
+                        { label: "Delete", onClick: () => askDelete(d), danger: true },
                       ]}
                     >
                       <MenuIcon />
@@ -634,7 +675,7 @@ export function Models() {
               ? undefined
               : () => {
                   setEditing(null);
-                  askDelete(editing, deps.filter((d) => d.model_name === editing.model_name).length);
+                  askDelete(editing);
                 }
           }
           onSave={async (input) => {
@@ -645,9 +686,9 @@ export function Models() {
           }}
         />
       )}
-      {editingRouter && (
+      {editingRouter && all && (
         <RouterForm
-          deployments={deps}
+          deployments={all.deps}
           knownTags={knownTags}
           initial={editingRouter === "new" ? undefined : editingRouter}
           copyOf={editingRouter === "new" ? (routerCopyOf ?? undefined) : undefined}
@@ -668,11 +709,11 @@ export function Models() {
           }}
         />
       )}
-      {editingAlias && (
+      {editingAlias && all && (
         <AliasForm
-          deployments={deps}
-          routers={routers}
-          taken={aliases.filter((a) => editingAlias === "new" || a.id !== editingAlias.id).map((a) => a.model_name)}
+          deployments={all.deps}
+          routers={all.routers}
+          taken={all.aliases.filter((a) => editingAlias === "new" || a.id !== editingAlias.id).map((a) => a.model_name)}
           initial={editingAlias === "new" ? undefined : editingAlias}
           copyOf={editingAlias === "new" ? (aliasCopyOf ?? undefined) : undefined}
           onClose={() => setEditingAlias(null)}
@@ -713,7 +754,7 @@ function DeploymentForm({
   /** Tags other deployments use, offered while typing. */
   knownTags: string[];
   /** Projects the deployment can be limited to. */
-  projects: Project[];
+  projects: NamedItem[];
   credentials: Credential[];
   onSave: (d: DeploymentInput) => Promise<void>;
   /** Offered when editing: closes the dialog and asks for confirmation. */

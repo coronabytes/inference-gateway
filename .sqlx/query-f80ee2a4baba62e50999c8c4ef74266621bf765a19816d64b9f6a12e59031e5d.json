@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT p.id, p.name, p.description, p.enabled, p.max_budget_usd, p.budget_period, p.spend_reset_at,\n                  p.guardrail_ids, p.created_at, p.updated_at, count(k.id) AS \"keys!\"\n           FROM projects p LEFT JOIN virtual_keys k ON k.project_id = p.id\n           GROUP BY p.id ORDER BY lower(p.name)",
+  "query": "SELECT p.id, p.name, p.description, p.enabled, p.max_budget_usd, p.budget_period, p.spend_reset_at,\n                  p.guardrail_ids, p.created_at, p.updated_at, count(k.id) AS \"keys!\"\n           FROM projects p LEFT JOIN virtual_keys k ON k.project_id = p.id\n           WHERE ($1::text IS NULL OR strpos(lower(p.name || ' ' || coalesce(p.description, '')), $1) > 0)\n             AND ($2::uuid[] IS NULL OR p.id = ANY($2))\n           GROUP BY p.id ORDER BY lower(p.name)",
   "describe": {
     "columns": [
       {
@@ -121,7 +121,10 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text",
+        "UuidArray"
+      ]
     },
     "nullable": [
       false,
@@ -137,5 +140,5 @@
       null
     ]
   },
-  "hash": "29a1c1bc00a8667eb56ea959ce014922fa988d2a3075f3f6eefbeb384044f547"
+  "hash": "f80ee2a4baba62e50999c8c4ef74266621bf765a19816d64b9f6a12e59031e5d"
 }

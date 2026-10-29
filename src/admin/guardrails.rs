@@ -1,6 +1,8 @@
 //! Admin API for guardrails: which guardrail at a provider to call, with which credential, and at
 //! what prices; and trying one on a text.
 
+use std::collections::HashMap;
+
 use axum::{
     Extension, Json,
     extract::{Path, State},
@@ -183,10 +185,38 @@ async fn credential_name(state: &AppState, id: Uuid) -> R<Option<String>> {
     Ok(db::get_credential(&state.db, id).await?.map(|c| c.name))
 }
 
-pub(crate) async fn list_guardrails(State(state): State<AppState>) -> R<Json<Vec<GuardrailView>>> {
-    let (rows, creds) = tokio::try_join!(db::list_guardrails(&state.db), db::list_credentials(&state.db))?;
+/// A guardrail in the list, with the projects and keys that apply it to every request.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct GuardrailListItem {
+    #[serde(flatten)]
+    guardrail: GuardrailView,
+    enforced_on: EnforcedOn,
+}
+
+/// The names of the projects and keys whose every request goes through a guardrail.
+#[derive(Serialize, Default, utoipa::ToSchema)]
+pub(crate) struct EnforcedOn {
+    projects: Vec<String>,
+    keys: Vec<String>,
+}
+
+pub(crate) async fn list_guardrails(State(state): State<AppState>) -> R<Json<Vec<GuardrailListItem>>> {
+    let (rows, creds, holders) = tokio::try_join!(db::list_guardrails(&state.db), db::list_credentials(&state.db), db::guardrail_holders(&state.db))?;
     let name = |id: Uuid| creds.iter().find(|c| c.id == id).map(|c| c.name.clone());
-    Ok(Json(rows.into_iter().map(|g| { let n = name(g.credential_id); view(g, n) }).collect()))
+    let mut enforced: HashMap<Uuid, EnforcedOn> = HashMap::new();
+    for (guardrail, kind, holder) in holders {
+        let on = enforced.entry(guardrail).or_default();
+        if kind == "project" { on.projects.push(holder) } else { on.keys.push(holder) }
+    }
+    Ok(Json(
+        rows.into_iter()
+            .map(|g| {
+                let enforced_on = enforced.remove(&g.id).unwrap_or_default();
+                let n = name(g.credential_id);
+                GuardrailListItem { guardrail: view(g, n), enforced_on }
+            })
+            .collect(),
+    ))
 }
 
 pub(crate) async fn create_guardrail(
