@@ -1,0 +1,77 @@
+[package]
+name = "inference-gateway"
+version = "1.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+rust-version = "1.99"
+publish = false
+
+[dependencies]
+aes-gcm = "0.11"
+arc-swap = "1"
+async-trait = "0.1"
+# Official AWS SDK crates: credential chain (env, profile, SSO, web identity/IRSA, ECS, IMDS),
+# SigV4 signing and event stream framing for Bedrock. `credential_process` is left disabled so
+# a profile cannot make the gateway spawn programs.
+aws-config = { version = "1.13", default-features = false, features = ["default-https-client", "rt-tokio", "sso", "behavior-version-latest"] }
+aws-credential-types = "1.3"
+aws-sigv4 = { version = "1.6", default-features = false, features = ["sign-http", "http1"] }
+aws-smithy-eventstream = "0.61"
+aws-smithy-runtime-api = { version = "1.19", features = ["client"] }
+aws-smithy-types = "1.9"
+# RS256 signing of Google service account assertions (Vertex AI). Already in the build through rustls.
+aws-lc-rs = { version = "1.18", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "matched-path", "query", "tokio", "tracing"] }
+axum-login = "0.18"
+base64 = "0.23"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+# Loads a local `.env` in debug builds only; release builds ignore it.
+dotenvy = "0.15"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+getrandom = "0.4"
+hex = "0.4"
+# Wraps response bodies so a request's trace span ends once its body has been sent.
+http-body = "1"
+# The server loop: hyper with a timer, so header read timeouts apply (see src/server.rs).
+hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio", "http1", "http2"] }
+openidconnect = { version = "4", default-features = false }
+# OpenTelemetry: traces, metrics and logs pushed over OTLP/HTTP (protobuf) when an OTLP endpoint is
+# configured (see src/telemetry.rs). The exporter's blocking client is the gateway's own reqwest.
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs"] }
+opentelemetry-appender-tracing = { version = "0.33", default-features = false }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "metrics", "logs", "internal-logs"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs", "internal-logs"] }
+percent-encoding = "2"
+# Valkey: one primary, or a cluster (`VALKEY_CLUSTER`); `rediss://` uses rustls with the system roots.
+redis = { version = "1", default-features = false, features = ["aio", "tokio-comp", "tokio-rustls-comp", "connection-manager", "cluster-async", "script"] }
+# The process-wide TLS crypto provider (see main): two are compiled in, so rustls cannot pick one.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.11"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "macros", "uuid", "chrono", "json"] }
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net"] }
+# `Layer`, to apply the body limit in effect to each new connection. Already in the build through axum.
+tower = { version = "0.5", default-features = false }
+tower-http = { version = "0.7", features = ["fs", "trace", "set-header", "limit", "timeout"] }
+tower-sessions = { version = "0.14", default-features = false, features = ["axum-core"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+# The OpenAPI document at /openapi.json, generated from the handlers and types at compile time.
+utoipa = { version = "6", features = ["chrono", "uuid", "preserve_order"] }
+
+[dev-dependencies]
+# `ServiceExt::oneshot` to drive the router in tests.
+tower = { version = "0.5", default-features = false, features = ["util"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+# Unwind (the default) so a panic ends only the request that hit it, not the whole process.

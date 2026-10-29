@@ -1,0 +1,15 @@
+# cargo-audit settings. `cargo audit` runs in CI (.github/workflows/checks.yml) and fails on any
+# advisory not listed here. Each entry says why it does not apply; revisit them when
+# openidconnect moves to a newer RustCrypto release line.
+[advisories]
+ignore = [
+    # rsa 0.9: Marvin attack, a timing side channel in RSA private-key operations. Pulled in by
+    # openidconnect, which uses it only to verify ID-token signatures with the provider's public
+    # key; the gateway holds no RSA private key. No fixed release exists.
+    "RUSTSEC-2023-0071",
+    # crypto-bigint 0.5: timing variability in operations meant to be constant-time. Same path
+    # (p256/p384 through openidconnect 4), again only verifying ES256/ES384 ID-token signatures
+    # with public keys. The fix (crypto-bigint 0.7) needs an elliptic-curve release line that
+    # openidconnect does not use yet.
+    "RUSTSEC-2026-0387",
+]

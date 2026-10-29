@@ -1,0 +1,263 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS \"scope: KeyScope\", k.project_id,\n                  coalesce(p.enabled, true) AS \"project_active!\", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,\n                  k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,\n                  k.guardrail_ids, k.created_at, k.updated_at\n           FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id WHERE k.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "key_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "key_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "key_prefix",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "key_prefix"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "scope: KeyScope",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "scope"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "project_active!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "allowed_models",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "allowed_models"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "allowed_tags",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "allowed_tags"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "rpm_limit",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "rpm_limit"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "tpm_limit",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "tpm_limit"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "max_budget_usd",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "max_budget_usd"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "budget_period",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "budget_period"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "spend_usd",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "spend_usd"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "spend_reset_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "spend_reset_at"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "metadata",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "metadata"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "guardrail_ids",
+        "type_info": "UuidArray",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "guardrail_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      null,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "6c410573eebd511635486a62cc382f882d1a03aac8482e0cd60d25dfbd791b47"
+}

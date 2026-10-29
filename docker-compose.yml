@@ -1,0 +1,70 @@
+# Local development stack. Reads `.env` (gitignored; template in `.env.example`).
+#
+#   docker compose up -d                              # Postgres + Valkey for `cargo run` / your debugger
+#   docker compose --profile replicas up -d --build   # plus two gateway replicas (HA demo)
+#
+# Postgres and Valkey listen on 127.0.0.1 only. The replicas (ports 8081/8082) share them with a
+# locally run gateway (8080); admin changes made on any one are pushed to the others over Valkey.
+name: inference-gateway
+
+x-gateway: &gateway
+  build: .
+  image: inference-gateway:local
+  profiles: [replicas]
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment: &gateway-env
+    DATABASE_URL: postgres://gateway:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/gateway
+    VALKEY_URL: redis://valkey:6379
+    GATEWAY_MASTER_KEY: ${GATEWAY_MASTER_KEY:-}
+    GATEWAY_ENCRYPTION_KEY: ${GATEWAY_ENCRYPTION_KEY:?set GATEWAY_ENCRYPTION_KEY}
+    # From .env. To reach a mock upstream on the host (host.docker.internal), add the Docker
+    # host's private network to the list.
+    GATEWAY_UPSTREAM_ALLOWED_NETWORKS: ${GATEWAY_UPSTREAM_ALLOWED_NETWORKS:-}
+  depends_on:
+    postgres: { condition: service_healthy }
+    valkey: { condition: service_healthy }
+
+services:
+  gateway-a:
+    <<: *gateway
+    environment:
+      <<: *gateway-env
+      GATEWAY_INSTANCE_ID: gateway-a
+    ports: ["127.0.0.1:${GATEWAY_A_PORT:-8081}:8080"]
+
+  gateway-b:
+    <<: *gateway
+    environment:
+      <<: *gateway-env
+      GATEWAY_INSTANCE_ID: gateway-b
+    ports: ["127.0.0.1:${GATEWAY_B_PORT:-8082}:8080"]
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: gateway
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 3s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:9-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:${VALKEY_PORT:-6379}:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+volumes:
+  pgdata:

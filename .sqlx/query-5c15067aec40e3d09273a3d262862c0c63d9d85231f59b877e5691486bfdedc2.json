@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE guardrails SET name = $2, description = $3, credential_id = $4, config = $5, prices = $6, updated_at = now()\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Uuid",
+        "Jsonb",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5c15067aec40e3d09273a3d262862c0c63d9d85231f59b877e5691486bfdedc2"
+}

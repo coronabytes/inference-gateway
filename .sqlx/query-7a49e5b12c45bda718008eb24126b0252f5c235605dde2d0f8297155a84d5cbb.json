@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO deployments (id, model_name, mode, provider, upstream_model, config, credential_id, weight, priority,\n             rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok, output_cost_per_mtok,\n             cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold, long_input_cost_per_mtok,\n             long_output_cost_per_mtok, long_cache_read_cost_per_mtok, long_cache_write_cost_per_mtok,\n             cost_per_k_searches, base_model, tags, project_ids, enabled, created_at, updated_at)\n         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,now())\n         ON CONFLICT (id) DO UPDATE SET\n             model_name = EXCLUDED.model_name, mode = EXCLUDED.mode, provider = EXCLUDED.provider,\n             upstream_model = EXCLUDED.upstream_model, config = EXCLUDED.config,\n             credential_id = EXCLUDED.credential_id, weight = EXCLUDED.weight, priority = EXCLUDED.priority,\n             rpm_limit = EXCLUDED.rpm_limit, tpm_limit = EXCLUDED.tpm_limit,\n             timeout_secs = EXCLUDED.timeout_secs, input_cost_per_mtok = EXCLUDED.input_cost_per_mtok,\n             output_cost_per_mtok = EXCLUDED.output_cost_per_mtok,\n             cache_read_cost_per_mtok = EXCLUDED.cache_read_cost_per_mtok,\n             cache_write_cost_per_mtok = EXCLUDED.cache_write_cost_per_mtok,\n             long_context_threshold = EXCLUDED.long_context_threshold,\n             long_input_cost_per_mtok = EXCLUDED.long_input_cost_per_mtok,\n             long_output_cost_per_mtok = EXCLUDED.long_output_cost_per_mtok,\n             long_cache_read_cost_per_mtok = EXCLUDED.long_cache_read_cost_per_mtok,\n             long_cache_write_cost_per_mtok = EXCLUDED.long_cache_write_cost_per_mtok,\n             cost_per_k_searches = EXCLUDED.cost_per_k_searches,\n             base_model = EXCLUDED.base_model, tags = EXCLUDED.tags, project_ids = EXCLUDED.project_ids,\n             enabled = EXCLUDED.enabled,\n             updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Int4",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Text",
+        "TextArray",
+        "UuidArray",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7a49e5b12c45bda718008eb24126b0252f5c235605dde2d0f8297155a84d5cbb"
+}

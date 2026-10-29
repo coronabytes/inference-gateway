@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(sum(cost_usd), 0) AS \"spent!\" FROM request_logs\n           WHERE project_id = $1 AND ts >= $2 AND parent_id IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "spent!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ca54c308fd7f2a8cc1e53397044407c9326e9399c441aa4ef0a0064f20e30c20"
+}

@@ -1,0 +1,602 @@
+import { useCallback, useEffect, useState } from "react";
+import { useIsUser } from "../access";
+import { api, callsModels, type BudgetPeriod, type Guardrail, type KeyInput, type KeyScope, type Project, type TagInfo, type VirtualKey } from "../api";
+import { Button, MultiSelect, PageActions, Select, Tabs, TextInput, useHashTab } from "../components/controls";
+import { GuardrailList, TagList, TagPicker } from "../components/Tags";
+import {
+  Badge,
+  BudgetMeter,
+  ConfirmDialog,
+  EditIcon,
+  ErrorBanner,
+  IconButton,
+  Modal,
+  PauseIcon,
+  PlayIcon,
+  ResetIcon,
+  optInt,
+  optNum,
+  type ConfirmRequest,
+} from "../components/ui";
+import { dateTime } from "../format";
+import { ProjectForm, Projects, setProjectEnabled } from "./Projects";
+import { Admins } from "./Settings";
+
+type Editing = { mode: "create" } | { mode: "edit"; key: VirtualKey };
+
+
+const SCOPE_LABEL: Record<KeyScope, string> = { inference: "Inference", admin: "Admin", all: "Inference + admin", project: "Project admin" };
+
+/** The scopes a key may have: in a project, none with every right an admin has. */
+const scopesFor = (inProject: boolean): KeyScope[] => (inProject ? ["inference", "project"] : ["inference", "admin", "all"]);
+
+const SCOPE_HINT: Record<KeyScope, string> = {
+  inference: "Calls models through the inference API (/v1/…).",
+  admin: "Calls the admin API (/admin/api/…) with the same rights as the master key, including managing keys and credentials.",
+  all: "Calls the admin API (/admin/api/…) with the same rights as the master key, including managing keys and credentials. Also calls models through the inference API.",
+  project:
+    "Calls the admin API (/admin/api/…) for this project only, with the rights of a user who works in it: its keys, playground, request log and metrics. It does not call models.",
+};
+
+/** The tag filter's value for keys without tags; tags never contain spaces. */
+const NO_TAGS = " none";
+
+/**
+ * Whether a key matches the search: by name, by part of its shown prefix ("sk-gw-c9d0…bb2d"), or
+ * by a whole pasted key, which starts and ends like the prefix.
+ */
+function keyMatches(k: VirtualKey, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const prefix = k.key_prefix.toLowerCase();
+  const [head, tail] = prefix.split("…");
+  return k.name.toLowerCase().includes(q) || prefix.includes(q) || (!!tail && q.startsWith(head) && q.endsWith(tail));
+}
+
+/** The project filter's value for keys without a project. */
+const NO_PROJECT = " none";
+
+const TABS = ["keys", "projects", "users"] as const;
+
+export function Keys() {
+  const [tab, setTab] = useHashTab("access", TABS);
+  const [projectFilter, setProjectFilter] = useState<string[]>([]);
+  // Users see their projects' keys only, not the projects themselves.
+  if (useIsUser()) {
+    return (
+      <div className="page">
+        <KeyList projectFilter={projectFilter} onProjectFilter={setProjectFilter} />
+      </div>
+    );
+  }
+  return (
+    <div className="page">
+      <Tabs
+        label="Keys"
+        options={[
+          { value: "keys", label: "Keys" },
+          { value: "projects", label: "Projects" },
+          { value: "users", label: "Users" },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+      {tab === "users" ? (
+        <Admins />
+      ) : tab === "projects" ? (
+        <Projects
+          onShowKeys={(p) => {
+            setProjectFilter([p.id]);
+            setTab("keys");
+          }}
+        />
+      ) : (
+        <KeyList projectFilter={projectFilter} onProjectFilter={setProjectFilter} />
+      )}
+    </div>
+  );
+}
+
+function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; onProjectFilter: (ids: string[]) => void }) {
+  const user = useIsUser();
+  const [keys, setKeys] = useState<VirtualKey[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  // Only admins choose guardrails, and only they can list them.
+  const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [issued, setIssued] = useState<{ title: string; key: string } | null>(null);
+  const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [query, setQuery] = useState("");
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const [k, t, p, g] = await Promise.all([
+        api<VirtualKey[]>("/keys"),
+        api<TagInfo[]>("/tags"),
+        api<Project[]>("/projects"),
+        user ? Promise.resolve([]) : api<Guardrail[]>("/guardrails"),
+      ]);
+      setKeys(k);
+      setGuardrails(g);
+      setTags(t.map((x) => x.tag));
+      setProjects(p);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const act = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  // The UI restricts keys by tags only; saving from it clears any allowed_models list.
+  const toInput = (k: VirtualKey): KeyInput => ({
+    name: k.name,
+    scope: k.scope,
+    project_id: k.project_id,
+    allowed_models: [],
+    allowed_tags: k.allowed_tags,
+    rpm_limit: k.rpm_limit,
+    tpm_limit: k.tpm_limit,
+    max_budget_usd: k.max_budget_usd,
+    budget_period: k.budget_period,
+    expires_at: k.expires_at,
+    enabled: k.enabled,
+    guardrail_ids: k.guardrail_ids,
+  });
+
+  // Tags the filter offers: those deployments and routers carry, and those keys still hold.
+  const tagOptions = [...new Set([...tags, ...keys.flatMap((k) => k.allowed_tags)])].sort();
+  // Guardrail names by id, for the grid; empty for users, who cannot list them.
+  const guardrailNames = new Map(guardrails.map((g) => [g.id, g.name]));
+
+  // A filter for a project deleted meanwhile matches nothing; it is dropped instead.
+  const projectIds = new Set(projects.map((p) => p.id));
+  const projectsPicked = projectFilter.filter((id) => id === NO_PROJECT || projectIds.has(id));
+  const shown = keys.filter(
+    (k) =>
+      keyMatches(k, query) &&
+      (!tagFilter.length || tagFilter.some((t) => (t === NO_TAGS ? !k.allowed_tags.length : k.allowed_tags.includes(t)))) &&
+      (!projectsPicked.length || projectsPicked.includes(k.project_id ?? NO_PROJECT)),
+  );
+  const filtering = !!query.trim() || tagFilter.length > 0 || projectsPicked.length > 0;
+
+  // With projects, each one's keys get a card, and a last card holds those without a project.
+  const groups = [
+    ...projects.map((p) => ({ id: p.id, name: p.name, description: p.description, project: p as Project | null })),
+    { id: NO_PROJECT, name: "No project", description: null, project: null },
+  ]
+    .map((g) => ({ ...g, keys: shown.filter((k) => (k.project_id ?? NO_PROJECT) === g.id) }))
+    .filter((g) => g.keys.length > 0);
+  // A new key starts in the project the list is filtered to, if just one.
+  const filteredProject = projectsPicked.length === 1 && projectsPicked[0] !== NO_PROJECT ? projectsPicked[0] : null;
+
+  // A project card's header, on the keys' grid: the project's name and description over the
+  // keys' name and access, then its budget, state and commands over theirs.
+  const cardHead = (g: (typeof groups)[number]) => {
+    const p = g.project;
+    return (
+      <header className="list-head on-grid">
+        <div className="list-title">
+          <h3>{g.name}</h3>
+          {g.description && <p className="muted small">{g.description}</p>}
+          {p && <GuardrailList ids={p.guardrail_ids} names={guardrailNames} />}
+        </div>
+        {p && (
+          <>
+            <div className="key-budget">{p.budget ? <BudgetMeter budget={p.budget} /> : <span className="muted small">No budget</span>}</div>
+            <div className="stat">{p.enabled ? <Badge tone="good">Active</Badge> : <Badge tone="warning">Inactive</Badge>}</div>
+            {/* Only admins change projects. */}
+            <div className="actions">
+              {!user && (
+                <>
+                  <IconButton label={`Edit project ${p.name}`} title="Edit project" onClick={() => setEditingProject(p)}>
+                    <EditIcon />
+                  </IconButton>
+                  {/* While inactive, every key in the project is refused, on the inference API and the admin API. */}
+                  <IconButton
+                    label={`${p.enabled ? "Deactivate" : "Activate"} project ${p.name}`}
+                    title={p.enabled ? "Deactivate project" : "Activate project"}
+                    onClick={() => act(() => setProjectEnabled(p, !p.enabled, setConfirming, load))}
+                  >
+                    {p.enabled ? <PauseIcon /> : <PlayIcon />}
+                  </IconButton>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </header>
+    );
+  };
+
+  // A key: who it is, what it may call, its budget and spend, its state, and its commands. The
+  // parts line up from key to key through a shared grid, without the look of a table.
+  const keyItem = (k: VirtualKey) => {
+    const expired = k.expires_at != null && new Date(k.expires_at) < new Date();
+    const b = k.budget;
+    const frac = b ? Math.min(1, b.limit_usd > 0 ? b.spent_usd / b.limit_usd : 1) : null;
+    // Tags, limits and budgets only apply to inference calls.
+    const adminOnly = !callsModels(k.scope);
+    const pb = projects.find((p) => p.id === k.project_id)?.budget;
+    const projectSpent = !adminOnly && !!pb && pb.spent_usd >= pb.limit_usd;
+    return (
+      <li key={k.id} className="list-item">
+        <div className="key-ident">
+          <div className="mono key-name-text">{k.name}</div>
+          <div className="mono muted small">{k.key_prefix}</div>
+        </div>
+        {/* What the key may call: its scope, and for inference the tags it holds. */}
+        <div className="key-access">
+          <div className="key-scope">{SCOPE_LABEL[k.scope]}</div>
+          {!adminOnly && <TagList tags={k.allowed_tags} empty="all models" />}
+          {!adminOnly && (
+            <GuardrailList ids={k.guardrail_ids} inherited={projects.find((p) => p.id === k.project_id)?.guardrail_ids} names={guardrailNames} />
+          )}
+        </div>
+        <div className="key-budget">
+          {adminOnly ? <span className="muted small">–</span> : b ? <BudgetMeter budget={b} /> : <span className="muted small">No budget</span>}
+        </div>
+        <div className="stat">
+          {!k.project_active ? (
+            <Badge tone="warning">Project inactive</Badge>
+          ) : !k.enabled ? (
+            <Badge tone="warning">Inactive</Badge>
+          ) : expired ? (
+            <Badge tone="warning">Expired</Badge>
+          ) : frac != null && frac >= 1 ? (
+            <Badge tone="critical">Budget hit</Badge>
+          ) : projectSpent ? (
+            <Badge tone="critical">Project budget hit</Badge>
+          ) : (
+            <Badge tone="good">Active</Badge>
+          )}
+          {k.expires_at && !expired && <span className="muted small">expires {dateTime(k.expires_at)}</span>}
+        </div>
+        <div className="actions">
+          <IconButton label={`Edit ${k.name}`} title="Edit" onClick={() => setEditing({ mode: "edit", key: k })}>
+            <EditIcon />
+          </IconButton>
+          <IconButton
+            label={`${k.enabled ? "Disable" : "Enable"} ${k.name}`}
+            title={k.enabled ? "Disable" : "Enable"}
+            onClick={() => {
+              const save = () => act(() => api(`/keys/${k.id}`, { method: "PUT", json: { ...toInput(k), enabled: !k.enabled } }));
+              // Disabling a key in use cuts its clients off, so it asks first; enabling, or disabling
+              // a key its inactive project already blocks, does not.
+              if (!k.enabled || !k.project_active) return save();
+              setConfirming({
+                title: "Disable key",
+                message: <>Disable <strong>{k.name}</strong>? Clients using it are refused immediately, on every replica, until it is enabled again.</>,
+                confirmLabel: "Disable",
+                action: save,
+              });
+            }}
+          >
+            {k.enabled ? <PauseIcon /> : <PlayIcon />}
+          </IconButton>
+          <IconButton
+            label={`Regenerate ${k.name}`}
+            title="Regenerate key"
+            onClick={() =>
+              setConfirming({
+                title: "Regenerate key",
+                message: (
+                  <>
+                    Issue a new secret for <strong>{k.name}</strong>? The current secret stops working immediately, on every replica.
+                    Limits, budget and spend stay with the key.
+                  </>
+                ),
+                confirmLabel: "Regenerate",
+                action: () =>
+                  act(async () => {
+                    const r = await api<{ key: string }>(`/keys/${k.id}/regenerate`, { method: "POST" });
+                    setIssued({ title: "Key regenerated", key: r.key });
+                  }),
+              })
+            }
+          >
+            <ResetIcon />
+          </IconButton>
+        </div>
+      </li>
+    );
+  };
+
+  return (
+    <>
+      <div className="page-head">
+        {keys.length > 0 && (
+          <div className="filters">
+            <TextInput caption="Search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="name or key" />
+            {projects.length > 0 && (
+              <MultiSelect
+                caption="Project"
+                // A user's keys are always in one of their projects.
+                options={[...projects.map((p) => ({ value: p.id, label: p.name })), ...(user ? [] : [{ value: NO_PROJECT, label: "No project" }])]}
+                values={projectsPicked}
+                onChange={onProjectFilter}
+              />
+            )}
+            <MultiSelect
+              caption="Tags"
+              options={[...tagOptions.map((t) => ({ value: t, label: t })), { value: NO_TAGS, label: "No tags" }]}
+              values={tagFilter}
+              onChange={setTagFilter}
+            />
+            {filtering && (
+              <span className="muted small">
+                {shown.length} of {keys.length} keys
+              </span>
+            )}
+          </div>
+        )}
+        <PageActions actions={[{ label: "New key", onClick: () => setEditing({ mode: "create" }), primary: true }]} />
+      </div>
+      <ErrorBanner error={error} />
+      {shown.length === 0 ? (
+        <div className="card list-card">
+          <p className="empty">{keys.length ? "No keys match the filters." : "No keys yet."}</p>
+        </div>
+      ) : projects.length > 0 ? (
+        groups.map((g) => (
+          // An inactive project's keys are refused; its card shows them greyed out.
+          <section key={g.id} className={g.project && !g.project.enabled ? "card list-card key-group inactive" : "card list-card key-group"}>
+            {cardHead(g)}
+            <ul className="list">{g.keys.map(keyItem)}</ul>
+          </section>
+        ))
+      ) : (
+        <section className="card list-card key-group">
+          <ul className="list">{shown.map(keyItem)}</ul>
+        </section>
+      )}
+
+      {editing && (
+        <KeyForm
+          tags={tags}
+          projects={projects}
+          guardrails={guardrails}
+          user={user}
+          defaultProject={filteredProject}
+          initial={editing.mode === "edit" ? toInput(editing.key) : undefined}
+          onClose={() => setEditing(null)}
+          onDelete={
+            editing.mode === "edit"
+              ? () => {
+                  const k = editing.key;
+                  setEditing(null);
+                  setConfirming({
+                    title: "Delete virtual key",
+                    message: <>Delete <strong>{k.name}</strong>? Clients using this key stop working immediately, on every replica.</>,
+                    action: () => act(() => api(`/keys/${k.id}`, { method: "DELETE" })),
+                  });
+                }
+              : undefined
+          }
+          onSave={async (input) => {
+            if (editing.mode === "create") {
+              const r = await api<{ key: string }>("/keys", { method: "POST", json: input });
+              setIssued({ title: "Key created", key: r.key });
+            } else {
+              await api(`/keys/${editing.key.id}`, { method: "PUT", json: input });
+            }
+            setEditing(null);
+            await load();
+          }}
+        />
+      )}
+
+      {editingProject && (
+        <ProjectForm
+          initial={editingProject}
+          onClose={() => setEditingProject(null)}
+          onSaved={async () => {
+            setEditingProject(null);
+            await load();
+          }}
+        />
+      )}
+      {confirming && <ConfirmDialog request={confirming} onClose={() => setConfirming(null)} />}
+      {issued && (
+        <Modal title={issued.title} onClose={() => setIssued(null)} footer={<button onClick={() => setIssued(null)}>Done</button>}>
+          <p>Copy this key now. It is stored only as a hash and cannot be shown again.</p>
+          <div className="secret">
+            <code>{issued.key}</code>
+            <button className="primary" onClick={() => navigator.clipboard?.writeText(issued.key)}>Copy</button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function KeyForm({
+  tags,
+  projects,
+  guardrails,
+  user,
+  defaultProject,
+  initial,
+  onSave,
+  onDelete,
+  onClose,
+}: {
+  /** Tags deployments carry; keys can only pick from these. */
+  tags: string[];
+  projects: Project[];
+  /** Empty for users, who do not choose guardrails. */
+  guardrails: Guardrail[];
+  /** A user's keys are in one of their projects. */
+  user: boolean;
+  /** A new key's project. */
+  defaultProject: string | null;
+  initial?: KeyInput;
+  onSave: (k: KeyInput) => Promise<void>;
+  /** Offered when editing: closes the dialog and asks for confirmation. */
+  onDelete?: () => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [scope, setScope] = useState<KeyScope>(initial?.scope ?? "inference");
+  const [project, setProject] = useState(initial ? (initial.project_id ?? "") : (defaultProject ?? (user ? (projects[0]?.id ?? "") : "")));
+  const [allowedTags, setAllowedTags] = useState<string[]>(initial?.allowed_tags ?? []);
+  const [guardrailIds, setGuardrailIds] = useState<string[]>(initial?.guardrail_ids ?? []);
+  const [rpm, setRpm] = useState(initial?.rpm_limit?.toString() ?? "");
+  const [tpm, setTpm] = useState(initial?.tpm_limit?.toString() ?? "");
+  const [period, setPeriod] = useState<BudgetPeriod | "">(initial?.budget_period ?? "");
+  const [budget, setBudget] = useState(initial?.max_budget_usd?.toString() ?? "");
+  const [expires, setExpires] = useState(initial?.expires_at ? initial.expires_at.slice(0, 10) : "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Moving a key into a project narrows an admin key to the project; out of one, a project admin
+  // key falls back to inference rather than gaining every right an admin has.
+  const changeProject = (p: string) => {
+    setProject(p);
+    if (p && !scopesFor(true).includes(scope)) setScope("project");
+    if (!p && !scopesFor(false).includes(scope)) setScope("inference");
+  };
+
+  // Tags, limits and budget only apply to inference calls; an admin-only key saves without them.
+  const inference = callsModels(scope);
+  const projectGuardrails = guardrails.filter((g) => projects.find((p) => p.id === project)?.guardrail_ids.includes(g.id)).map((g) => g.name);
+  const amount = optNum(budget);
+  const budgetMissing = inference && period !== "" && amount == null;
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await onSave({
+        name,
+        scope,
+        project_id: project || null,
+        allowed_models: [],
+        allowed_tags: inference ? allowedTags : [],
+        rpm_limit: inference ? optInt(rpm) : null,
+        tpm_limit: inference ? optInt(tpm) : null,
+        max_budget_usd: inference && period ? amount : null,
+        budget_period: (inference && period) || null,
+        expires_at: expires ? new Date(`${expires}T23:59:59Z`).toISOString() : null,
+        enabled: initial?.enabled ?? true,
+        // Users keep the key's guardrails as they are.
+        ...(guardrails.length > 0 && { guardrail_ids: inference ? guardrailIds : [] }),
+      });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={initial ? "Edit key" : "New key"}
+      onClose={onClose}
+      footer={
+        <>
+          {onDelete && (
+            <Button variant="danger" onClick={onDelete}>
+              Delete
+            </Button>
+          )}
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" disabled={busy || !name.trim() || budgetMissing} onClick={submit}>
+            {initial ? "Save" : "Create key"}
+          </Button>
+        </>
+      }
+    >
+      <ErrorBanner error={error} />
+      <div className="form">
+        <TextInput caption="Name" value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. team-search-prod" required />
+        {projects.length > 0 && (
+          <Select
+            caption="Project"
+            hint="Groups the key on the Access page. While the project is inactive, the key is refused."
+            value={project}
+            onChange={changeProject}
+            options={[
+              ...(user ? [] : [{ value: "", label: "None" }]),
+              ...projects.map((p) => ({ value: p.id, label: p.name, note: p.enabled ? undefined : "inactive" })),
+            ]}
+          />
+        )}
+        <Select
+          caption="Scope"
+          hint={SCOPE_HINT[scope]}
+          value={scope}
+          onChange={(s) => setScope(s as KeyScope)}
+          options={scopesFor(!!project).map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
+        />
+        {inference && (
+          <>
+            <TagPicker
+              caption="Tags"
+              hint={
+                allowedTags.length
+                  ? "This key can use deployments and routers without tags, and those whose tags are all selected here."
+                  : "No tags selected: this key can use every model, except deployments limited to other projects."
+              }
+              options={tags}
+              value={allowedTags}
+              onChange={setAllowedTags}
+            />
+            {guardrails.length > 0 && (
+              <MultiSelect
+                caption="Guardrails"
+                hint={
+                  projectGuardrails.length
+                    ? `Every request of this key goes through these, and through its project's: ${projectGuardrails.join(", ")}.`
+                    : "Every request of this key goes through these, whatever it asks for. Requests can ask for more by name."
+                }
+                values={guardrailIds}
+                onChange={setGuardrailIds}
+                none="None"
+                options={guardrails.map((g) => ({ value: g.id, label: g.name, note: g.description }))}
+              />
+            )}
+            <div className="row">
+              <TextInput caption="Requests / minute" inputMode="numeric" value={rpm} onChange={(e) => setRpm(e.target.value)} placeholder="unlimited" />
+              <TextInput caption="Tokens / minute" inputMode="numeric" value={tpm} onChange={(e) => setTpm(e.target.value)} placeholder="unlimited" />
+            </div>
+            <div className="row">
+              <Select
+                caption="Budget"
+                hint={period ? "Resets at the start of each UTC day, week (Monday) or month." : undefined}
+                value={period}
+                onChange={(p) => setPeriod(p as BudgetPeriod | "")}
+                options={[
+                  { value: "", label: "Unlimited" },
+                  { value: "day", label: "Per day" },
+                  { value: "week", label: "Per week" },
+                  { value: "month", label: "Per month" },
+                ]}
+              />
+              {period ? (
+                <TextInput caption="Amount (USD)" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="required" required autoFocus={!initial} />
+              ) : (
+                <div />
+              )}
+            </div>
+          </>
+        )}
+        <TextInput caption="Expires" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
+      </div>
+    </Modal>
+  );
+}

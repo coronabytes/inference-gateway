@@ -1,0 +1,38 @@
+# The workflows pin actions to commit SHAs and the Dockerfile pins its base images to digests;
+# Dependabot proposes the bumps. Rust and npm dependencies get one grouped pull request a week for
+# minor and patch updates, and one each for major updates. Security updates come as soon as an
+# advisory is published.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      rust:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    groups:
+      ui:
+        update-types: [minor, patch]
+
+  # The image's base images (Dockerfile).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Postgres and Valkey in the local development stack (docker-compose.yml).
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

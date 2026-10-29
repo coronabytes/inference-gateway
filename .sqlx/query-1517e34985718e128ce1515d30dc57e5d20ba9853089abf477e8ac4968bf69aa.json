@@ -1,0 +1,120 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT '' AS \"subject!\", 0::bigint AS \"bucket!\",\n                  count(*) AS \"requests!\", count(*) FILTER (WHERE status_code >= 400) AS \"errors!\",\n                  coalesce(sum(input_tokens), 0)::bigint AS \"input_tokens!\", coalesce(sum(output_tokens), 0)::bigint AS \"output_tokens!\",\n                  coalesce(sum(cache_read_tokens), 0)::bigint AS \"cache_read_tokens!\",\n                  coalesce(sum(cache_write_tokens), 0)::bigint AS \"cache_write_tokens!\",\n                  coalesce(sum(cost_usd), 0) AS \"cost_usd!\", coalesce(sum(latency_ms), 0)::bigint AS \"latency_ms_sum!\",\n                  coalesce(sum(ttft_ms), 0)::bigint AS \"ttft_ms_sum!\", count(ttft_ms) AS \"ttft_count!\",\n                  percentile_disc(0.5) WITHIN GROUP (ORDER BY latency_ms) AS \"p50_latency_ms?\",\n                  percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms) AS \"p95_latency_ms?\"\n           FROM request_logs\n           WHERE ts >= $1 AND ts < $4 AND ($2::uuid IS NULL OR key_id = $2) AND NOT (model_name = ANY($3))\n             AND ($5::uuid[] IS NULL OR project_id = ANY($5)) AND ($6::jsonb IS NULL OR labels @> $6)\n             AND (NOT $7 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subject!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "bucket!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "requests!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "errors!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "input_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "output_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "cache_read_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "cache_write_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "cost_usd!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "latency_ms_sum!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "ttft_ms_sum!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "ttft_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "p50_latency_ms?",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "p95_latency_ms?",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Uuid",
+        "TextArray",
+        "Timestamptz",
+        "UuidArray",
+        "Jsonb",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "1517e34985718e128ce1515d30dc57e5d20ba9853089abf477e8ac4968bf69aa"
+}

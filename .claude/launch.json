@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gateway",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run"],
+      "port": 8080
+    },
+    {
+      "name": "ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "ui"],
+      "port": 5173
+    },
+    {
+      "name": "ui-build",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview", "--prefix", "ui", "--", "--port", "4173", "--strictPort"],
+      "port": 4173
+    }
+  ]
+}

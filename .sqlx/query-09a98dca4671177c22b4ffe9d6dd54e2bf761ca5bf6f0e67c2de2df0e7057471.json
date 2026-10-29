@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO oidc_settings (id, enabled, display_name, issuer_url, client_id, client_secret, public_url,\n             roles_claim, allowed_role, user_role, updated_at)\n         VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, now())\n         ON CONFLICT (id) DO UPDATE SET\n             enabled = EXCLUDED.enabled, display_name = EXCLUDED.display_name, issuer_url = EXCLUDED.issuer_url,\n             client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret, public_url = EXCLUDED.public_url,\n             roles_claim = EXCLUDED.roles_claim, allowed_role = EXCLUDED.allowed_role, user_role = EXCLUDED.user_role,\n             updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bool",
+        "Text",
+        "Text",
+        "Text",
+        "Bytea",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09a98dca4671177c22b4ffe9d6dd54e2bf761ca5bf6f0e67c2de2df0e7057471"
+}

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO credentials (id, name, provider, secrets, settings, created_at, updated_at)\n         VALUES ($1, $2, $3, $4, $5, now(), now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Bytea",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7bc6f531b5a3f5153b182c24c46b39dabf0ef256cf75f66bba1eff140e337885"
+}

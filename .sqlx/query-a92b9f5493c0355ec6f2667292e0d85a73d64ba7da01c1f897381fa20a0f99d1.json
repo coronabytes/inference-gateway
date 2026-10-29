@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE projects SET guardrail_ids = array_remove(guardrail_ids, $1) WHERE $1 = ANY(guardrail_ids)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a92b9f5493c0355ec6f2667292e0d85a73d64ba7da01c1f897381fa20a0f99d1"
+}

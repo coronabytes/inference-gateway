@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE virtual_keys SET guardrail_ids = array_remove(guardrail_ids, $1) WHERE $1 = ANY(guardrail_ids)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dfdd0c69ba3eb03b4401e1a8bec61dc5b9a8033683205112694e0a1d63a18fc8"
+}

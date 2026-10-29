@@ -1,0 +1,124 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, description, provider, credential_id, config AS \"config: Json<GuardrailConfig>\",\n                  prices AS \"prices: Json<GuardrailPrices>\", created_at, updated_at\n           FROM guardrails WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "credential_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "credential_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "config: Json<GuardrailConfig>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "config"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "prices: Json<GuardrailPrices>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "prices"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "guardrails",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "670f4b96b3d2a303cd61c174d26698b44e4836efd7a9aa9e044b181f9c8bed77"
+}

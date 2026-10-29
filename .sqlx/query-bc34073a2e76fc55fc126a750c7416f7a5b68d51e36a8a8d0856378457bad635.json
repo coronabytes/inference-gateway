@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT data->>'litellm_provider' AS \"p!\" FROM model_prices\n           WHERE data->>'litellm_provider' IS NOT NULL ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "p!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bc34073a2e76fc55fc126a750c7416f7a5b68d51e36a8a8d0856378457bad635"
+}

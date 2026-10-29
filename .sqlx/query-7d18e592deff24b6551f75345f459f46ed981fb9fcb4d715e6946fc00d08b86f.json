@@ -1,0 +1,86 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT imported_at, source, total, added, updated, removed FROM model_price_imports ORDER BY id DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "imported_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "model_price_imports",
+            "name": "imported_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_price_imports",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "total",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "model_price_imports",
+            "name": "total"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "added",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "model_price_imports",
+            "name": "added"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "updated",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "model_price_imports",
+            "name": "updated"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "removed",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "model_price_imports",
+            "name": "removed"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7d18e592deff24b6551f75345f459f46ed981fb9fcb4d715e6946fc00d08b86f"
+}

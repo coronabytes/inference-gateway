@@ -1,0 +1,352 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, model_name, mode, provider, upstream_model, config AS \"config: Json<DeploymentConfig>\",\n                  credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,\n                  output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,\n                  long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,\n                  long_cache_write_cost_per_mtok, cost_per_k_searches, base_model, tags, project_ids, enabled,\n                  created_at, updated_at\n           FROM deployments WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "model_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "model_name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "mode",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "mode"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "upstream_model",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "upstream_model"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "config: Json<DeploymentConfig>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "config"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "credential_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "credential_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "weight",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "weight"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "priority",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "priority"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "rpm_limit",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "rpm_limit"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "tpm_limit",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "tpm_limit"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "timeout_secs",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "timeout_secs"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "input_cost_per_mtok",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "input_cost_per_mtok"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "output_cost_per_mtok",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "output_cost_per_mtok"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "cache_read_cost_per_mtok",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "cache_read_cost_per_mtok"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "cache_write_cost_per_mtok",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "cache_write_cost_per_mtok"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "long_context_threshold",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "long_context_threshold"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "long_input_cost_per_mtok",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "long_input_cost_per_mtok"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "long_output_cost_per_mtok",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "long_output_cost_per_mtok"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "long_cache_read_cost_per_mtok",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "long_cache_read_cost_per_mtok"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "long_cache_write_cost_per_mtok",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "long_cache_write_cost_per_mtok"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "cost_per_k_searches",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "cost_per_k_searches"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "base_model",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "base_model"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "tags",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "tags"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "project_ids",
+        "type_info": "UuidArray",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "project_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e4a86704393bcd0b067c35c6a98db509615b2687966a893603e69ef778a87c61"
+}

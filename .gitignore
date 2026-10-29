@@ -1,0 +1,6 @@
+/target
+/ui/node_modules
+/ui/dist
+# Fetched by ui/scripts/fetch-scalar.mjs.
+/ui/public/docs/scalar.js
+.env

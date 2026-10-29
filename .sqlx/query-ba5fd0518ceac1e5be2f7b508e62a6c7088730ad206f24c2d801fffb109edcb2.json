@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE virtual_keys SET spend_usd = 0, spend_reset_at = now(), updated_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ba5fd0518ceac1e5be2f7b508e62a6c7088730ad206f24c2d801fffb109edcb2"
+}

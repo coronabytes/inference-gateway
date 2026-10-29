@@ -1,0 +1,125 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT model_name AS \"subject!\",\n                  (floor(extract(epoch FROM ts) / $2) * $2)::bigint AS \"bucket!\",\n                  count(*) AS \"requests!\", count(*) FILTER (WHERE status_code >= 400) AS \"errors!\",\n                  sum(input_tokens)::bigint AS \"input_tokens!\", sum(output_tokens)::bigint AS \"output_tokens!\",\n                  sum(cache_read_tokens)::bigint AS \"cache_read_tokens!\", sum(cache_write_tokens)::bigint AS \"cache_write_tokens!\",\n                  sum(cost_usd) AS \"cost_usd!\", sum(latency_ms)::bigint AS \"latency_ms_sum!\",\n                  coalesce(sum(ttft_ms), 0)::bigint AS \"ttft_ms_sum!\", count(ttft_ms) AS \"ttft_count!\",\n                  NULL::int AS \"p50_latency_ms?\", NULL::int AS \"p95_latency_ms?\"\n           FROM request_logs\n           WHERE ts >= $1 AND ts < $4 AND ($3::uuid IS NULL OR key_id = $3) AND ($5::uuid[] IS NULL OR project_id = ANY($5))\n             AND ($6::jsonb IS NULL OR labels @> $6)\n             AND (NOT $7 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))\n           GROUP BY 1, 2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subject!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "model_name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "bucket!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "requests!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "errors!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "input_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "output_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "cache_read_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "cache_write_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "cost_usd!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "latency_ms_sum!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "ttft_ms_sum!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "ttft_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "p50_latency_ms?",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "p95_latency_ms?",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Numeric",
+        "Uuid",
+        "Timestamptz",
+        "UuidArray",
+        "Jsonb",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "22080aef9822ce6d7bb05b86953d1e9cad9325e2af0eca72ac8ff220cc622c01"
+}

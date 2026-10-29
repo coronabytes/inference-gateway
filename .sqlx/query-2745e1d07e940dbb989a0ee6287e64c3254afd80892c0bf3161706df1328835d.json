@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT key, data, count(*) OVER () AS \"total!\"\n           FROM model_prices\n           WHERE NOT EXISTS (SELECT 1 FROM unnest($1::text[]) AS t(term) WHERE strpos(lower(key), t.term) = 0)\n             AND ($2::text[] IS NULL OR data->>'litellm_provider' = ANY($2))\n             AND ($3::text[] IS NULL OR data->>'mode' = ANY($3))\n           ORDER BY CASE WHEN $6 THEN length(key) END, key LIMIT $4 OFFSET $5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_prices",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "data",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "model_prices",
+            "name": "data"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "Int8",
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "2745e1d07e940dbb989a0ee6287e64c3254afd80892c0bf3161706df1328835d"
+}

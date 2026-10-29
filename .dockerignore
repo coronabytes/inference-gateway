@@ -1,0 +1,9 @@
+target
+ui/node_modules
+ui/dist
+ui/public/docs/scalar.js
+.git
+.env
+*.md
+!README.md
+dev

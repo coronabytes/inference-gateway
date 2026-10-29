@@ -1,0 +1,134 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT enabled, display_name, issuer_url, client_id, client_secret, public_url, roles_claim,\n                allowed_role, user_role, updated_at\n         FROM oidc_settings WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "display_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "issuer_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "issuer_url"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "client_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "client_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "client_secret",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "client_secret"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "public_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "public_url"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "roles_claim",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "roles_claim"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "allowed_role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "allowed_role"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "user_role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "user_role"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oidc_settings",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "aace1af97bd02cda7e5ff00d2782bc286f046d892fcea11960bd99bd7a7d7c2b"
+}

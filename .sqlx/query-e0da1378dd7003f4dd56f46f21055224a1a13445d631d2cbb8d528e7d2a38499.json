@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO model_prices (key, data, updated_at)\n           SELECT key, data, now() FROM unnest($1::text[], $2::jsonb[]) AS t(key, data)\n           ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()\n               WHERE model_prices.data IS DISTINCT FROM EXCLUDED.data\n           RETURNING (xmax = 0) AS \"inserted!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "inserted!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "JsonbArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e0da1378dd7003f4dd56f46f21055224a1a13445d631d2cbb8d528e7d2a38499"
+}

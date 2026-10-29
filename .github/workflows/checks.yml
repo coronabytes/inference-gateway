@@ -1,0 +1,94 @@
+# Tests the gateway and the admin UI, checks the sqlx query metadata against a live database and
+# scans the dependencies for advisories.
+#
+# Runs on pushes to main and on pull requests, and as the first stage of the release workflow.
+# Actions are pinned to commit SHAs (Dependabot proposes the bumps); the comment names the version.
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway
+          POSTGRES_DB: gateway
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gateway"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://gateway:gateway@localhost:5432/gateway
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-binstall
+
+      - name: Install sqlx-cli
+        run: cargo binstall --no-confirm sqlx-cli@^0.9
+
+      # The committed .sqlx/ metadata must match the queries, or the Docker build (offline) breaks.
+      - name: Check sqlx query metadata
+        run: |
+          sqlx migrate run
+          cargo sqlx prepare --check -- --all-targets
+
+      - name: Test gateway
+        env:
+          # Test against the committed metadata, as the Docker build does.
+          SQLX_OFFLINE: "true"
+        run: cargo test --locked
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Check admin UI
+        working-directory: ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run build
+
+  audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit
+
+      # Accepted advisories, with reasons, are listed in .cargo/audit.toml.
+      - name: Audit Rust dependencies
+        run: cargo audit
+
+      # Only what the browser bundle ships; build tooling is not deployed.
+      - name: Audit admin UI dependencies
+        working-directory: ui
+        run: npm audit --omit=dev

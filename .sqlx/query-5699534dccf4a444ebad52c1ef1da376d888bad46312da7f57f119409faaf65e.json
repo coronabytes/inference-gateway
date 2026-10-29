@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE virtual_keys k SET spend_usd = k.spend_usd + s.amount\n             FROM UNNEST($1::uuid[], $2::float8[]) AS s(id, amount) WHERE k.id = s.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Float8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5699534dccf4a444ebad52c1ef1da376d888bad46312da7f57f119409faaf65e"
+}
