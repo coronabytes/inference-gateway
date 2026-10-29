@@ -7,7 +7,7 @@ A self-hosted gateway for large language models. Your apps keep using the OpenAI
 Single Rust service · distroless, locked-down container image · Postgres + Valkey · AGPL-3.0
 
 > [!IMPORTANT]
-> After the latest LiteLLM incident we designed to just roll our own. 
+> After the latest LiteLLM incident we decided to just roll our own. 
 > Claude finished all features we required within 3 days including Enterprise.
 > Use at your own discretion.
 
