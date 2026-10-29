@@ -194,12 +194,25 @@ fn clean_settings(state: &AppState, provider: ProviderKind, s: CredentialSetting
         auth_header: tidy(s.auth_header),
         tenant_id: tidy(s.tenant_id),
         client_id: tidy(s.client_id),
+        identity: s.identity,
     };
+    let environment = s.identity == Some(crate::model::Identity::Environment);
+    if environment && !matches!(provider, ProviderKind::Azure | ProviderKind::Vertex) {
+        return Err(AdminError::bad_request("identity only applies to Azure and Vertex AI credentials"));
+    }
     if provider != ProviderKind::Azure && (s.tenant_id.is_some() || s.client_id.is_some()) {
         return Err(AdminError::bad_request("tenant_id and client_id only apply to Azure credentials"));
     }
-    if s.tenant_id.is_some() != s.client_id.is_some() {
+    // The environment's identity: at most a client ID, for a user-assigned managed identity or a
+    // workload identity app. The tenant comes from the environment.
+    if environment && s.tenant_id.is_some() {
+        return Err(AdminError::bad_request("with the environment's identity, the tenant comes from the environment; leave tenant_id empty"));
+    }
+    if !environment && s.tenant_id.is_some() != s.client_id.is_some() {
         return Err(AdminError::bad_request("Entra ID needs both tenant_id and client_id"));
+    }
+    if environment && provider == ProviderKind::Vertex && s.project_id.is_none() {
+        return Err(AdminError::bad_request("a Vertex AI credential with Application Default Credentials needs its project_id"));
     }
     if s.tenant_id.as_deref().is_some_and(|t| !crate::entra::valid_tenant(t)) {
         return Err(AdminError::bad_request("tenant_id must be a directory (tenant) ID or domain, e.g. contoso.onmicrosoft.com"));
@@ -264,7 +277,13 @@ fn validate_credential(provider: ProviderKind, name: &str, s: &Secrets, settings
         return Err(AdminError::bad_request("a client_secret only applies to Azure credentials (Entra ID)"));
     }
     let entra = settings.tenant_id.is_some();
+    let environment = settings.identity == Some(crate::model::Identity::Environment);
+    if environment && (s.api_key.is_some() || s.client_secret.is_some() || s.google_service_account.is_some() || has_aws) {
+        return Err(AdminError::bad_request("a credential with the environment's identity stores no secrets"));
+    }
     match provider {
+        // The gateway's own identity: nothing stored.
+        ProviderKind::Azure | ProviderKind::Vertex if environment => {}
         // Entra ID: the app's client credentials instead of the resource's key.
         ProviderKind::Azure if entra && s.client_secret.is_none() => {
             return Err(AdminError::bad_request("Entra ID needs the app registration's client_secret"));
@@ -450,10 +469,10 @@ async fn foundry_deployments(State(state): State<AppState>, Path(id): Path<Uuid>
     let secrets = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref())
         .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let settings = &row.settings.0;
-    let client = crate::entra::client(settings, &secrets)
+    let source = crate::entra::source(settings, &secrets)
         .ok_or_else(|| AdminError::bad_request("listing deployments needs a credential that uses Entra ID; an API key cannot read them"))?;
     let base = settings.base_url.as_deref().ok_or_else(|| AdminError::bad_request("the credential has no resource endpoint"))?;
-    let found = crate::entra::list_deployments(&state, &client, base).await.map_err(|e| AdminError(StatusCode::BAD_GATEWAY, e))?;
+    let found = crate::entra::list_deployments(&state, &source, base).await.map_err(|e| AdminError(StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(found))
 }
 
@@ -2529,6 +2548,28 @@ async fn playground(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn environment_identity_credentials() {
+        use crate::model::Identity;
+        let state = crate::state::test_state();
+        let env = |provider, s: CredentialSettings| clean_settings(&state, provider, CredentialSettings { identity: Some(Identity::Environment), ..s });
+        let azure = CredentialSettings { base_url: Some("https://r.openai.azure.com".into()), ..Default::default() };
+        // Azure: nothing stored; an optional client ID for a user-assigned identity, but no tenant.
+        let s = env(ProviderKind::Azure, azure.clone()).unwrap();
+        assert!(validate_credential(ProviderKind::Azure, "a", &Secrets::default(), &s).is_ok());
+        let uai = CredentialSettings { client_id: Some("00000000-0000-0000-0000-000000000001".into()), ..azure.clone() };
+        assert!(env(ProviderKind::Azure, uai).is_ok());
+        assert!(env(ProviderKind::Azure, CredentialSettings { tenant_id: Some("contoso.onmicrosoft.com".into()), ..azure }).is_err());
+        let key = Secrets { api_key: Some("k".into()), ..Default::default() };
+        assert!(validate_credential(ProviderKind::Azure, "a", &key, &s).is_err(), "no secrets with the environment's identity");
+        // Vertex AI: the project is required, the key file not.
+        assert!(env(ProviderKind::Vertex, CredentialSettings::default()).is_err());
+        let v = env(ProviderKind::Vertex, CredentialSettings { project_id: Some("p1".into()), ..Default::default() }).unwrap();
+        assert!(validate_credential(ProviderKind::Vertex, "v", &Secrets::default(), &v).is_ok());
+        // Other providers have their own chains (Bedrock) or none.
+        assert!(env(ProviderKind::Openai, CredentialSettings::default()).is_err());
+    }
 
     #[test]
     fn metric_series_fill_empty_buckets() {

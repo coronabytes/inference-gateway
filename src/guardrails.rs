@@ -521,20 +521,11 @@ async fn model_armor(state: &AppState, g: &Callable<'_>, source: Source, texts: 
     let missing = || GatewayError::internal("guardrail has no Model Armor template or location");
     let template = g.row.config.template.as_deref().ok_or_else(missing)?;
     let location = g.row.config.location.as_deref().ok_or_else(missing)?;
-    let sa = g
-        .secrets
-        .google_service_account
-        .as_deref()
-        .ok_or_else(|| GatewayError::internal("the guardrail's Vertex AI credential has no service account key"))
-        .and_then(|j| crate::google::ServiceAccount::parse(j).map_err(GatewayError::internal))?;
-    let project = g
-        .row
-        .config
-        .project_id
-        .clone()
-        .or_else(|| g.settings.project_id.clone())
-        .or_else(|| sa.project_id.clone())
-        .ok_or_else(|| GatewayError::internal("no Google Cloud project for the Model Armor template"))?;
+    let project = match g.row.config.project_id.clone() {
+        Some(p) => p,
+        None => crate::google::project(g.settings, g.secrets)
+            .map_err(|_| GatewayError::internal("no Google Cloud project for the Model Armor template"))?,
+    };
     let seg = |s: &str| utf8_percent_encode(s, PATH_SEGMENT).to_string();
     let (method, field) = match source {
         Source::Input => ("sanitizeUserPrompt", "userPromptData"),
@@ -549,7 +540,7 @@ async fn model_armor(state: &AppState, g: &Callable<'_>, source: Source, texts: 
     if let Err(why) = state.cfg.upstream_policy.check_url(&url) {
         return Err(GatewayError::internal(format!("guardrail address not allowed: {why}")));
     }
-    let token = state.google.access_token(state, &sa).await?;
+    let token = state.google.access_token(g.settings, g.secrets).await?;
     let mut auth = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| GatewayError::internal("invalid Google access token"))?;
     auth.set_sensitive(true);
     let calls = texts.iter().map(|t| {

@@ -853,12 +853,17 @@ fn token_payload(jwt: &str) -> Option<serde_json::Map<String, Value>> {
     serde_json::from_slice(&bytes).ok()
 }
 
+/// An error and its causes, `a: b: c`. A cause whose text the message already includes (as some
+/// libraries' errors do) is not repeated.
 pub fn error_chain(e: &dyn std::error::Error) -> String {
     let mut s = e.to_string();
     let mut cur = e.source();
     while let Some(c) = cur {
-        s.push_str(": ");
-        s.push_str(&c.to_string());
+        let text = c.to_string();
+        if !s.contains(&text) {
+            s.push_str(": ");
+            s.push_str(&text);
+        }
         cur = c.source();
     }
     s
@@ -1140,6 +1145,26 @@ async fn delete_admin(State(state): State<AppState>, Extension(actor): Extension
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_chains_skip_repeated_causes() {
+        #[derive(Debug)]
+        struct E(String, Option<Box<E>>);
+        impl std::fmt::Display for E {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+        impl std::error::Error for E {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                self.1.as_deref().map(|e| e as _)
+            }
+        }
+        let inner = E("HTTP 400".into(), None);
+        let middle = E("refresh failed: HTTP 400".into(), Some(Box::new(inner)));
+        let outer = E("token failed".into(), Some(Box::new(middle)));
+        assert_eq!(error_chain(&outer), "token failed: refresh failed: HTTP 400");
+    }
 
     fn sso() -> Sso {
         Sso {

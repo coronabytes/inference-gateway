@@ -178,8 +178,7 @@ async fn api_base(state: &AppState, d: &Deployment) -> Result<String, GatewayErr
         ProviderKind::Mistral => custom.unwrap_or_else(|| mistral_base(d.connection.region.as_deref())),
         ProviderKind::Gemini => custom.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai".into()),
         ProviderKind::Vertex => {
-            let sa = google::service_account(d)?;
-            let project = google::project(d, &sa)?;
+            let project = google::project(&d.connection, &d.secrets)?;
             let location = d.connection.region.as_deref().unwrap_or("global");
             let host = custom.unwrap_or_else(|| google::vertex_host(location));
             let seg = |s: &str| utf8_percent_encode(s, PATH_SEGMENT).to_string();
@@ -318,7 +317,7 @@ pub fn headers(d: &Deployment) -> Result<HeaderMap, GatewayError> {
             }
         }
         // Entra ID: an access token is added when the request is sent (see `post`).
-        ProviderKind::Azure if key.is_none() && entra::client(&d.connection, &d.secrets).is_some() => {}
+        ProviderKind::Azure if key.is_none() && entra::source(&d.connection, &d.secrets).is_some() => {}
         // Foundry's System One route takes the resource key as a bearer token.
         ProviderKind::Azure if d.style == ApiStyle::Systemone => {
             let k = key.ok_or_else(|| GatewayError::internal("azure deployment has no api_key"))?;
@@ -385,17 +384,17 @@ pub async fn post(
         state.aws.sign(d, url, &mut headers, &body).await?;
     }
     if d.provider == ProviderKind::Vertex {
-        let token = state.google.access_token(state, &google::service_account(d)?).await?;
+        let token = state.google.access_token(&d.connection, &d.secrets).await?;
         let mut v = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| GatewayError::internal("invalid Google access token"))?;
         v.set_sensitive(true);
         headers.insert("authorization", v);
     }
     if d.provider == ProviderKind::Azure
         && d.secrets.api_key.is_none()
-        && let Some(client) = entra::client(&d.connection, &d.secrets)
+        && let Some(source) = entra::source(&d.connection, &d.secrets)
     {
         let scope = entra::scope_for(d.connection.base_url.as_deref());
-        let token = state.entra.access_token(state, &client, scope).await?;
+        let token = state.entra.access_token(&source, scope).await?;
         let mut v = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| GatewayError::internal("invalid Entra ID access token"))?;
         v.set_sensitive(true);
         headers.insert("authorization", v);

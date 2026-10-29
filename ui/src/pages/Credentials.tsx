@@ -6,10 +6,14 @@ import { dateTime } from "../format";
 import { MISTRAL_REGIONS, PROVIDERS, PROVIDER_LABEL, VERTEX_REGIONS } from "../providers";
 
 type BedrockAuth = "chain" | "keys" | "api_key";
-type AzureAuth = "api_key" | "entra";
+type AzureAuth = "api_key" | "entra" | "environment";
+type VertexAuth = "key" | "environment";
 
-/** An Azure credential that signs in with an Entra ID app registration instead of an API key. */
-export const usesEntra = (c: Credential) => c.provider === "azure" && !!c.settings.tenant_id;
+/** A credential that signs in as the gateway's own identity (Azure, Vertex AI), storing no secret. */
+const usesEnvironment = (c: Credential) => c.settings.identity === "environment";
+
+/** An Azure credential that signs in with Entra ID (an app registration or the gateway's identity) instead of an API key. */
+export const usesEntra = (c: Credential) => c.provider === "azure" && (!!c.settings.tenant_id || usesEnvironment(c));
 
 function authSummary(c: Credential): string {
   if (c.provider === "bedrock") {
@@ -17,13 +21,15 @@ function authSummary(c: Credential): string {
     if (c.secrets_set.aws_access_key_id) return `AWS access keys${c.secrets_set.aws_session_token ? " + session token" : ""}`;
     return "AWS credential chain";
   }
-  if (c.provider === "vertex") return "Service account";
+  if (c.provider === "vertex") return usesEnvironment(c) ? "Application Default Credentials" : "Service account";
+  if (c.provider === "azure" && usesEnvironment(c)) return c.settings.client_id ? "Managed identity (user-assigned)" : "Managed identity";
   if (usesEntra(c)) return "Entra ID app";
   return c.secrets_set.api_key ? "API key" : "No authentication";
 }
 
 /** A credential that cannot work yet, for example one created by an import, which brings no secrets. */
 function missingSecret(c: Credential): boolean {
+  if (usesEnvironment(c)) return false;
   if (c.provider === "vertex") return !c.secrets_set.google_service_account;
   if (usesEntra(c)) return !c.secrets_set.client_secret;
   // OpenAI-compatible servers may need no key, and Bedrock can use the AWS credential chain.
@@ -90,9 +96,8 @@ export function connectionSummary(c: Credential): string {
 }
 
 /** The roles an Entra ID app needs, assigned on the resource (or its resource group). */
-const ENTRA_PERMISSIONS = (
-  <ul className="hint-list">
-    <li>An app registration&apos;s client credentials, used instead of the resource&apos;s key. Assign its roles on the resource or its resource group.</li>
+const ENTRA_ROLES = (
+  <>
     <li>
       <strong>Model calls:</strong> Cognitive Services OpenAI User for Azure OpenAI models, or Cognitive Services User for every Foundry model
       (also Claude, Cohere rerank and Microsoft-Decision).
@@ -100,6 +105,41 @@ const ENTRA_PERMISSIONS = (
     <li>
       <strong>Deployment list with RPM and TPM</strong> when adding a deployment: read access to the resource in Azure Resource Manager.
       Cognitive Services User includes it; with only Cognitive Services OpenAI User, add Reader. Without it, type the values in.
+    </li>
+  </>
+);
+
+/** How the gateway finds its own Azure identity, and the roles it needs. */
+const AZURE_ENVIRONMENT = (
+  <ul className="hint-list">
+    <li>
+      The gateway&apos;s own identity, through Microsoft&apos;s Azure SDK; nothing is stored. It tries, in order: AKS workload identity (
+      <code>AZURE_FEDERATED_TOKEN_FILE</code>, <code>AZURE_CLIENT_ID</code>, <code>AZURE_TENANT_ID</code>), a client secret in{" "}
+      <code>AZURE_TENANT_ID</code>, <code>AZURE_CLIENT_ID</code> and <code>AZURE_CLIENT_SECRET</code>, then the managed identity of App
+      Service, Container Apps or the VM.
+    </li>
+    {ENTRA_ROLES}
+    <li>Assign the roles to that identity on the resource or its resource group.</li>
+  </ul>
+);
+
+const ENTRA_PERMISSIONS = (
+  <ul className="hint-list">
+    <li>An app registration&apos;s client credentials, used instead of the resource&apos;s key. Assign its roles on the resource or its resource group.</li>
+    {ENTRA_ROLES}
+  </ul>
+);
+
+/** How the gateway finds its own Google identity, and the roles it needs. */
+const GOOGLE_ENVIRONMENT = (
+  <ul className="hint-list">
+    <li>
+      The gateway&apos;s own identity, through Google&apos;s Cloud SDK; nothing is stored. Application Default Credentials:{" "}
+      <code>GOOGLE_APPLICATION_CREDENTIALS</code> (a key file or workload identity federation config), the gcloud ADC file, or the metadata
+      server on GKE (Workload Identity), Cloud Run and Compute Engine.
+    </li>
+    <li>
+      Give that identity <strong>Vertex AI User</strong> in the project, and <strong>Model Armor User</strong> for Model Armor guardrails.
     </li>
   </ul>
 );
@@ -405,7 +445,10 @@ function CredentialForm({
   );
   const [projectId, setProjectId] = useState(initial?.settings.project_id ?? "");
   const [authHeader, setAuthHeader] = useState(initial?.settings.auth_header ?? "");
-  const [azureAuth, setAzureAuth] = useState<AzureAuth>(initial && usesEntra(initial) ? "entra" : "api_key");
+  const [azureAuth, setAzureAuth] = useState<AzureAuth>(
+    initial?.provider === "azure" && usesEnvironment(initial) ? "environment" : initial && usesEntra(initial) ? "entra" : "api_key",
+  );
+  const [vertexAuth, setVertexAuth] = useState<VertexAuth>(initial?.provider === "vertex" && usesEnvironment(initial) ? "environment" : "key");
   const [tenantId, setTenantId] = useState(initial?.settings.tenant_id ?? "");
   const [clientId, setClientId] = useState(initial?.settings.client_id ?? "");
   const [keyFile, setKeyFile] = useState<KeyFileInfo | null>(null);
@@ -447,17 +490,19 @@ function CredentialForm({
       // Only send what the user typed for this provider; on edit, untouched fields keep their stored values.
       // Fields hidden by a provider switch (or filled in by the browser) still hold values, so drop those.
       const applies: (keyof Secrets)[] =
-        provider === "vertex"
-          ? ["google_service_account"]
-          : provider === "bedrock"
-            ? bedrockAuth === "api_key"
-              ? ["api_key"]
-              : bedrockAuth === "keys"
-                ? ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"]
-                : []
-            : provider === "azure" && azureAuth === "entra"
-              ? ["client_secret"]
-              : ["api_key"];
+        environment
+          ? []
+          : provider === "vertex"
+            ? ["google_service_account"]
+            : provider === "bedrock"
+              ? bedrockAuth === "api_key"
+                ? ["api_key"]
+                : bedrockAuth === "keys"
+                  ? ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"]
+                  : []
+              : provider === "azure" && azureAuth === "entra"
+                ? ["client_secret"]
+                : ["api_key"];
       const out: Secrets = Object.fromEntries(
         Object.entries(secrets).filter(([k, v]) => v !== "" && applies.includes(k as keyof Secrets)),
       );
@@ -466,11 +511,13 @@ function CredentialForm({
         if (bedrockAuth !== "api_key") out.api_key = "";
         if (bedrockAuth !== "keys") Object.assign(out, { aws_access_key_id: "", aws_secret_access_key: "", aws_session_token: "" });
       }
-      // Likewise for Azure: an API key or the app's client secret, never both.
+      // Likewise for Azure: an API key or the app's client secret, never both, and neither with the
+      // environment's identity; nor a key file for Vertex AI with Application Default Credentials.
       if (provider === "azure" && initial) {
-        if (azureAuth === "entra" && initial.secrets_set.api_key) out.api_key = "";
-        if (azureAuth === "api_key" && initial.secrets_set.client_secret) out.client_secret = "";
+        if (azureAuth !== "api_key" && initial.secrets_set.api_key) out.api_key = "";
+        if (azureAuth !== "entra" && initial.secrets_set.client_secret) out.client_secret = "";
       }
+      if (provider === "vertex" && environment && initial?.secrets_set.google_service_account) out.google_service_account = "";
       const entra = provider === "azure" && azureAuth === "entra";
       // Settings are not secret and always sent in full; only those that apply to the provider.
       const settings: CredentialSettings = {
@@ -480,6 +527,8 @@ function CredentialForm({
         ...(provider === "vertex" && projectId.trim() && { project_id: projectId.trim() }),
         ...(provider === "openai" && authHeader.trim() && { auth_header: authHeader.trim() }),
         ...(entra && { tenant_id: tenantId.trim(), client_id: clientId.trim() }),
+        ...(environment && { identity: "environment" as const }),
+        ...(environment && provider === "azure" && clientId.trim() && { client_id: clientId.trim() }),
       };
       await onSave({ name: name.trim(), provider, settings, secrets: out });
     } catch (e) {
@@ -491,13 +540,17 @@ function CredentialForm({
 
   const hasRegion = provider === "bedrock" || provider === "mistral" || provider === "vertex";
   const entraAuth = provider === "azure" && azureAuth === "entra";
-  const keyRequired = ["azure", "anthropic", "typesafe", "mistral", "gemini"].includes(provider) && !entraAuth && !initial?.secrets_set.api_key;
+  // The gateway's own identity: nothing to store.
+  const environment = (provider === "azure" && azureAuth === "environment") || (provider === "vertex" && vertexAuth === "environment");
+  const keyRequired =
+    ["azure", "anthropic", "typesafe", "mistral", "gemini"].includes(provider) && !entraAuth && !environment && !initial?.secrets_set.api_key;
   const secretRequired = entraAuth && !initial?.secrets_set.client_secret;
   const storedAccount = initial?.service_account;
   const missing =
     !name.trim() ||
     (provider === "azure" && !baseUrl.trim()) ||
-    (provider === "vertex" && !initial?.secrets_set.google_service_account && !secrets.google_service_account) ||
+    (provider === "vertex" && !environment && !initial?.secrets_set.google_service_account && !secrets.google_service_account) ||
+    (provider === "vertex" && environment && !projectId.trim()) ||
     (provider === "vertex" && vertexOther && !region.trim()) ||
     (provider === "bedrock" && awsOther && !region.trim()) ||
     (keyRequired && !secrets.api_key) ||
@@ -634,11 +687,12 @@ function CredentialForm({
             </div>
             <TextInput
               caption="Project ID"
-              hint="Leave empty to use the service account's project."
+              hint={environment ? "The Google Cloud project to call." : "Leave empty to use the service account's project."}
               mono
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              placeholder={keyFile?.project ?? storedAccount?.project_id ?? "from the key file"}
+              placeholder={environment ? "e.g. my-project-123" : (keyFile?.project ?? storedAccount?.project_id ?? "from the key file")}
+              required={environment}
             />
             <TextInput
               caption="Endpoint override"
@@ -678,6 +732,22 @@ function CredentialForm({
         )}
 
         {provider === "vertex" && (
+          <Segmented
+            caption="Authentication"
+            hint={
+              vertexAuth === "environment"
+                ? GOOGLE_ENVIRONMENT
+                : "A service account key file, stored encrypted. The account needs Vertex AI User (and Model Armor User for Model Armor guardrails)."
+            }
+            value={vertexAuth}
+            onChange={setVertexAuth}
+            options={[
+              { value: "key", label: "Key file" },
+              { value: "environment", label: "Application Default Credentials" },
+            ]}
+          />
+        )}
+        {provider === "vertex" && vertexAuth === "key" && (
           <div className="field">
             <FileButton
               caption="Service account key"
@@ -727,13 +797,27 @@ function CredentialForm({
         {provider === "azure" && (
           <Segmented
             caption="Authentication"
-            hint={azureAuth === "entra" ? ENTRA_PERMISSIONS : "The resource's key (Keys and Endpoint in the Azure portal)."}
+            hint={
+              azureAuth === "entra" ? ENTRA_PERMISSIONS : azureAuth === "environment" ? AZURE_ENVIRONMENT : "The resource's key (Keys and Endpoint in the Azure portal)."
+            }
             value={azureAuth}
             onChange={setAzureAuth}
             options={[
               { value: "api_key", label: "API key" },
-              { value: "entra", label: "Entra ID" },
+              { value: "entra", label: "Entra ID app" },
+              { value: "environment", label: "Managed identity" },
             ]}
+          />
+        )}
+        {provider === "azure" && azureAuth === "environment" && (
+          <TextInput
+            caption="Client ID"
+            hint="Optional. A user-assigned managed identity's client ID, or the workload identity's app. Leave empty for the system-assigned identity or AZURE_CLIENT_ID."
+            mono
+            autoComplete="off"
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            placeholder="system-assigned or AZURE_CLIENT_ID"
           />
         )}
         {entraAuth && (
@@ -772,7 +856,7 @@ function CredentialForm({
           </>
         )}
 
-        {provider !== "vertex" && !entraAuth && (provider !== "bedrock" || bedrockAuth === "api_key") && (
+        {provider !== "vertex" && !entraAuth && !environment && (provider !== "bedrock" || bedrockAuth === "api_key") && (
           <TextInput
             caption={provider === "bedrock" ? "Bedrock API key" : "API key"}
             hint={provider === "openai" ? "Leave empty for servers without authentication." : undefined}

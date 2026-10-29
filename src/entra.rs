@@ -1,21 +1,35 @@
-//! Microsoft Entra ID authentication for Azure AI Foundry, and its deployment listing.
+//! Microsoft Entra ID authentication for Azure AI Foundry, with Microsoft's official
+//! `azure_identity` crate, and the resource's deployment listing.
 //!
-//! An Azure credential can use an app registration's client credentials (tenant, client ID and
-//! client secret) instead of an API key. For each request the gateway sends an access token for
-//! Azure AI services, fetched with the client credentials grant and cached until shortly before it
-//! expires. The app needs the Cognitive Services OpenAI User role (Azure OpenAI models) or
-//! Cognitive Services User (all Foundry models) on the resource.
+//! An Azure credential can sign in with Entra ID instead of an API key:
 //!
-//! The same credentials read the resource's deployments from Azure Resource Manager (Cognitive
+//! - an app registration's client credentials (tenant, client ID and client secret), stored with
+//!   the credential;
+//! - or the gateway's own identity from its environment, storing no secret: AKS workload identity
+//!   (`AZURE_FEDERATED_TOKEN_FILE`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`), a client secret in
+//!   `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`, or else the managed identity of
+//!   App Service, Container Apps or a VM (a user-assigned one by the credential's client ID, or
+//!   `AZURE_CLIENT_ID`).
+//!
+//! For each request the gateway sends an access token for Azure AI services; the crate caches
+//! tokens until shortly before they expire. The identity needs the Cognitive Services OpenAI User
+//! role (Azure OpenAI models) or Cognitive Services User (all Foundry models) on the resource.
+//!
+//! The same identity reads the resource's deployments from Azure Resource Manager (Cognitive
 //! Services User includes read access), so the console can fill in a deployment's name, model and
-//! rate limits. Tokens are only ever sent to Microsoft's own hosts.
+//! rate limits.
 
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
+use azure_core::credentials::{Secret, TokenCredential};
+use azure_identity::{
+    ClientSecretCredential, ManagedIdentityCredential, ManagedIdentityCredentialOptions, UserAssignedId, WorkloadIdentityCredential,
+    WorkloadIdentityCredentialOptions,
+};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;
 use serde_json::Value;
@@ -23,11 +37,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     error::GatewayError,
-    model::{ApiStyle, CredentialSettings, Mode, Secrets},
+    model::{ApiStyle, CredentialSettings, Identity, Mode, Secrets},
     state::AppState,
 };
 
-const LOGIN_HOST: &str = "https://login.microsoftonline.com";
 const ARM_HOST: &str = "https://management.azure.com";
 /// Azure OpenAI and Foundry resources (`*.openai.azure.com`, `*.services.ai.azure.com`, ...).
 const COGNITIVE_SCOPE: &str = "https://cognitiveservices.azure.com/.default";
@@ -36,21 +49,26 @@ const ML_SCOPE: &str = "https://ml.azure.com/.default";
 const ARM_SCOPE: &str = "https://management.azure.com/.default";
 const ACCOUNTS_API: &str = "2024-10-01";
 const SUBSCRIPTIONS_API: &str = "2022-12-01";
-/// Tokens live about an hour; a new one is fetched this long before the old one expires.
-const REFRESH_MARGIN: Duration = Duration::from_secs(300);
+/// A token request that takes longer (an unreachable managed identity endpoint, retried) fails,
+/// so requests can go to another deployment instead of waiting.
+const TOKEN_TIMEOUT: Duration = Duration::from_secs(15);
 /// List pages followed at most, so a misbehaving listing cannot keep a request going.
 const MAX_PAGES: usize = 20;
 
-/// An app registration's client credentials, from an Azure credential.
-pub struct Client<'a> {
-    tenant_id: &'a str,
-    client_id: &'a str,
-    secret: &'a str,
+/// Where an Azure credential's Entra ID tokens come from.
+pub enum Source<'a> {
+    /// An app registration's client secret, stored with the credential.
+    Secret { tenant_id: &'a str, client_id: &'a str, secret: &'a str },
+    /// The gateway's environment; `client_id` picks a user-assigned identity or workload identity app.
+    Environment { client_id: Option<&'a str> },
 }
 
-/// The credential's client credentials, when it uses Entra ID rather than an API key.
-pub fn client<'a>(settings: &'a CredentialSettings, secrets: &'a Secrets) -> Option<Client<'a>> {
-    Some(Client {
+/// The credential's Entra ID source, when it uses Entra ID rather than an API key.
+pub fn source<'a>(settings: &'a CredentialSettings, secrets: &'a Secrets) -> Option<Source<'a>> {
+    if settings.identity == Some(Identity::Environment) {
+        return Some(Source::Environment { client_id: settings.client_id.as_deref() });
+    }
+    Some(Source::Secret {
         tenant_id: settings.tenant_id.as_deref()?,
         client_id: settings.client_id.as_deref()?,
         secret: secrets.client_secret.as_deref()?,
@@ -75,72 +93,83 @@ pub fn scope_for(base_url: Option<&str>) -> &'static str {
     if serverless { ML_SCOPE } else { COGNITIVE_SCOPE }
 }
 
-struct Token {
-    value: String,
-    refresh_at: Instant,
-}
-
-/// One app's cached token for one scope, behind a lock held while a new one is fetched.
-type TokenSlot = Arc<tokio::sync::Mutex<Option<Token>>>;
-/// Tenant, client ID, SHA-256 of the client secret, scope.
-type TokenKey = (String, String, [u8; 32], &'static str);
-
-/// Access tokens per app registration, secret and scope. The secret is part of the key (as a
+/// Credentials per source, kept for their token caches. A stored secret is part of the key (as a
 /// hash), so a credential with a wrong secret never gets another credential's token.
 #[derive(Default)]
 pub struct Entra {
-    tokens: Mutex<HashMap<TokenKey, TokenSlot>>,
+    credentials: Mutex<HashMap<String, Arc<dyn TokenCredential>>>,
 }
 
 impl Entra {
-    pub async fn access_token(&self, state: &AppState, c: &Client<'_>, scope: &'static str) -> Result<String, GatewayError> {
-        let slot = {
-            let secret: [u8; 32] = Sha256::digest(c.secret.as_bytes()).into();
-            let mut map = self.tokens.lock().expect("token map");
-            map.entry((c.tenant_id.to_ascii_lowercase(), c.client_id.to_ascii_lowercase(), secret, scope)).or_default().clone()
+    pub async fn access_token(&self, source: &Source<'_>, scope: &str) -> Result<String, GatewayError> {
+        let key = Self::key(source);
+        let credential = self.credential(&key, source)?;
+        let why = match tokio::time::timeout(TOKEN_TIMEOUT, credential.get_token(&[scope], None)).await {
+            Ok(Ok(t)) => return Ok(t.token.secret().to_string()),
+            Ok(Err(e)) => crate::admin_auth::error_chain(&e),
+            Err(_) => format!("no answer within {} s", TOKEN_TIMEOUT.as_secs()),
         };
-        let mut slot = slot.lock().await;
-        if let Some(t) = slot.as_ref()
-            && t.refresh_at > Instant::now()
-        {
-            return Ok(t.value.clone());
+        // The next request builds the credential anew, so fixing the environment takes effect.
+        self.credentials.lock().expect("entra credentials").remove(&key);
+        tracing::error!(error = %why, source = source.describe(), "Entra ID token request failed");
+        Err(GatewayError::unavailable(format!("could not get an Entra ID access token for {}: {why}", source.describe())))
+    }
+
+    fn key(source: &Source<'_>) -> String {
+        match source {
+            Source::Secret { tenant_id, client_id, secret } => {
+                format!("secret:{}:{}:{}", tenant_id.to_ascii_lowercase(), client_id.to_ascii_lowercase(), hex::encode(Sha256::digest(secret.as_bytes())))
+            }
+            Source::Environment { client_id } => format!("environment:{}", client_id.unwrap_or_default().to_ascii_lowercase()),
         }
-        let token = fetch(state, c, scope).await?;
-        let value = token.value.clone();
-        *slot = Some(token);
-        Ok(value)
+    }
+
+    fn credential(&self, key: &str, source: &Source<'_>) -> Result<Arc<dyn TokenCredential>, GatewayError> {
+        if let Some(c) = self.credentials.lock().expect("entra credentials").get(key) {
+            return Ok(c.clone());
+        }
+        let built: azure_core::Result<Arc<dyn TokenCredential>> = match source {
+            Source::Secret { tenant_id, client_id, secret } => {
+                ClientSecretCredential::new(tenant_id, client_id.to_string(), Secret::new(secret.to_string()), None).map(|c| c as _)
+            }
+            Source::Environment { client_id } => environment(*client_id),
+        };
+        let built = built.map_err(|e| {
+            GatewayError::unavailable(format!("no Entra ID credential for {}: {}", source.describe(), e.to_string().lines().next().unwrap_or_default()))
+        })?;
+        self.credentials.lock().expect("entra credentials").insert(key.to_string(), built.clone());
+        Ok(built)
     }
 }
 
-async fn fetch(state: &AppState, c: &Client<'_>, scope: &str) -> Result<Token, GatewayError> {
-    let enc = |s: &str| utf8_percent_encode(s, NON_ALPHANUMERIC).to_string();
-    let url = format!("{LOGIN_HOST}/{}/oauth2/v2.0/token", enc(c.tenant_id));
-    let body = format!(
-        "grant_type=client_credentials&client_id={}&client_secret={}&scope={}",
-        enc(c.client_id),
-        enc(c.secret),
-        enc(scope)
-    );
-    let resp = state
-        .http
-        .post(url)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .timeout(Duration::from_secs(30))
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| GatewayError::from_reqwest(&e))?;
-    let status = resp.status();
-    let v: Value = resp.json().await.unwrap_or_default();
-    let Some(token) = v["access_token"].as_str().filter(|_| status.is_success()) else {
-        // Entra's descriptions end with trace and correlation IDs on further lines.
-        let why = v["error_description"].as_str().or(v["error"].as_str()).unwrap_or("no access token in the response");
-        let why = why.lines().next().unwrap_or(why);
-        tracing::error!(status = status.as_u16(), client_id = %c.client_id, error = %why, "Entra ID token request failed");
-        return Err(GatewayError::unavailable(format!("could not get an Entra ID access token for app {}: {why}", c.client_id)));
+impl Source<'_> {
+    /// Who signs in, for logs and errors; never the secret.
+    fn describe(&self) -> String {
+        match self {
+            Source::Secret { client_id, .. } => format!("app {client_id}"),
+            Source::Environment { client_id: Some(id) } => format!("the gateway's identity {id}"),
+            Source::Environment { client_id: None } => "the gateway's identity".into(),
+        }
+    }
+}
+
+/// The gateway's own identity, like the Azure SDKs' default chain without developer tools (which
+/// would start programs): workload identity, a client secret in the environment, managed identity.
+fn environment(client_id: Option<&str>) -> azure_core::Result<Arc<dyn TokenCredential>> {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let client_id = client_id.map(str::to_string);
+    if env("AZURE_FEDERATED_TOKEN_FILE").is_some() {
+        let options = WorkloadIdentityCredentialOptions { client_id, ..Default::default() };
+        return WorkloadIdentityCredential::new(Some(options)).map(|c| c as _);
+    }
+    if let (Some(tenant), Some(client), Some(secret)) = (env("AZURE_TENANT_ID"), client_id.clone().or_else(|| env("AZURE_CLIENT_ID")), env("AZURE_CLIENT_SECRET")) {
+        return ClientSecretCredential::new(&tenant, client, Secret::new(secret), None).map(|c| c as _);
+    }
+    let options = ManagedIdentityCredentialOptions {
+        user_assigned_id: client_id.or_else(|| env("AZURE_CLIENT_ID")).map(UserAssignedId::ClientId),
+        ..Default::default()
     };
-    let lifetime = Duration::from_secs(v["expires_in"].as_u64().unwrap_or(3600));
-    Ok(Token { value: token.to_string(), refresh_at: Instant::now() + lifetime.saturating_sub(REFRESH_MARGIN) })
+    ManagedIdentityCredential::new(Some(options)).map(|c| c as _)
 }
 
 /// A deployment on a Foundry resource, as Azure Resource Manager describes it.
@@ -191,8 +220,8 @@ pub struct FoundryDeployments {
 
 /// Find the resource behind `base_url` among the subscriptions the app can see, and list its
 /// deployments.
-pub async fn list_deployments(state: &AppState, c: &Client<'_>, base_url: &str) -> Result<FoundryDeployments, String> {
-    let token = state.entra.access_token(state, c, ARM_SCOPE).await.map_err(|e| e.message)?;
+pub async fn list_deployments(state: &AppState, source: &Source<'_>, base_url: &str) -> Result<FoundryDeployments, String> {
+    let token = state.entra.access_token(source, ARM_SCOPE).await.map_err(|e| e.message)?;
     let endpoint = reqwest::Url::parse(base_url).map_err(|_| "the resource endpoint is not a URL".to_string())?;
     let host = endpoint.host_str().unwrap_or_default().to_ascii_lowercase();
     if host.ends_with(".models.ai.azure.com") {

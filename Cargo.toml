@@ -72,6 +72,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 # The OpenAPI document at /openapi.json, generated from the handlers and types at compile time.
 utoipa = { version = "6", features = ["chrono", "uuid", "preserve_order"] }
+azure_identity = "1.0"
+azure_core = "1"
+google-cloud-auth = "1.18"
 
 [build-dependencies]
 # build.rs reads the AWS SDK's built-in region list (JSON) for the console.

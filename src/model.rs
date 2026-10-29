@@ -193,6 +193,10 @@ pub struct CredentialSettings {
     /// `Authorization: Bearer` (for example `X-Api-Key`). The header name is not secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_header: Option<String>,
+    /// Azure and Vertex AI: authenticate as the gateway's own identity from its environment
+    /// instead of a stored secret (see `Identity`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<Identity>,
     /// Azure with Entra ID: the app registration's directory (tenant) ID or domain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
@@ -231,6 +235,17 @@ pub struct DeploymentConfig {
     /// Bedrock with the Anthropic Messages protocol: how Claude is called (see `BedrockApi`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bedrock_api: Option<BedrockApi>,
+}
+
+/// Where a credential without stored secrets gets its identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Identity {
+    /// The gateway's environment, through the provider's official SDK. Azure: AKS workload
+    /// identity (`AZURE_FEDERATED_TOKEN_FILE`), a client secret in `AZURE_TENANT_ID`,
+    /// `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`, or else the managed identity (App Service,
+    /// Container Apps, VMs). Google: Application Default Credentials.
+    Environment,
 }
 
 /// How a Bedrock deployment with the Anthropic Messages protocol calls Claude.

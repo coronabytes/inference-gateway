@@ -1,37 +1,37 @@
-//! Google service account authentication for Vertex AI.
+//! Google Cloud authentication for Vertex AI and Model Armor, with Google's official
+//! `google-cloud-auth` crate.
 //!
-//! A credential stores the service account key file as uploaded. For each request the gateway
-//! uses an OAuth access token, minted from a self-signed RS256 assertion (JWT bearer grant) and
-//! cached until shortly before it expires. The token endpoint is always Google's own: the key
-//! file's `token_uri` is ignored, so an uploaded file cannot send the signed assertion elsewhere.
+//! A credential either stores a service account key file as uploaded, or uses the gateway's own
+//! identity from its environment: Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`,
+//! the gcloud ADC file, workload identity federation, or the metadata server on GKE, Cloud Run and
+//! Compute Engine). With a key file the crate signs its own JWT access tokens and calls no token
+//! endpoint, so the file's `token_uri` is never used. Both kinds cache their tokens.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+use std::{collections::HashMap, sync::Mutex};
+
+use aws_lc_rs::signature::RsaKeyPair;
+use base64::Engine;
+use google_cloud_auth::credentials::{AccessTokenCredentials, Builder, service_account};
+use serde::Deserialize;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+use crate::{
+    error::GatewayError,
+    model::{CredentialSettings, Identity, Secrets},
 };
 
-use aws_lc_rs::{rand::SystemRandom, signature::RsaKeyPair};
-use base64::Engine;
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use serde::Deserialize;
-use serde_json::{Value, json};
-
-use crate::{error::GatewayError, model::Deployment, state::AppState};
-
-const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
-/// Tokens live an hour; a new one is fetched this long before the old one expires.
-const REFRESH_MARGIN: Duration = Duration::from_secs(300);
+/// A token request that takes longer (an unreachable metadata server, retried) fails, so requests
+/// can go to another deployment instead of waiting.
+const TOKEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// The fields of a service account key file the gateway uses.
+/// The fields of a service account key file the gateway checks and shows.
 #[derive(Deserialize)]
 pub struct ServiceAccount {
     #[serde(rename = "type")]
     kind: String,
     pub project_id: Option<String>,
-    #[serde(default)]
-    private_key_id: String,
     private_key: String,
     pub client_email: String,
 }
@@ -57,97 +57,86 @@ impl ServiceAccount {
             .map_err(|_| "the key file's private_key is not a PEM key".to_string())?;
         RsaKeyPair::from_pkcs8(&der).map_err(|_| "the key file's private_key is not an RSA PKCS#8 key".to_string())
     }
-
-    /// The signed JWT bearer assertion exchanged for an access token.
-    fn assertion(&self, now: u64) -> Result<String, String> {
-        let b64 = |v: &Value| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).expect("json"));
-        let header = json!({ "alg": "RS256", "typ": "JWT", "kid": self.private_key_id });
-        let claims = json!({ "iss": self.client_email, "scope": SCOPE, "aud": TOKEN_URL, "iat": now, "exp": now + 3600 });
-        let message = format!("{}.{}", b64(&header), b64(&claims));
-        let key = self.key_pair()?;
-        let mut signature = vec![0; key.public_modulus_len()];
-        key.sign(&aws_lc_rs::signature::RSA_PKCS1_SHA256, &SystemRandom::new(), message.as_bytes(), &mut signature)
-            .map_err(|_| "signing the service account assertion failed".to_string())?;
-        Ok(format!("{message}.{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature)))
-    }
 }
 
-/// A deployment's service account. Checked when the credential is saved.
-pub fn service_account(d: &Deployment) -> Result<ServiceAccount, GatewayError> {
-    let json = d
-        .secrets
+/// Whether a credential uses the gateway's Application Default Credentials.
+pub fn uses_environment(settings: &CredentialSettings) -> bool {
+    settings.identity == Some(Identity::Environment)
+}
+
+/// The project a credential calls: its own setting, else its key file's. A credential with
+/// Application Default Credentials names it (checked when saved).
+pub fn project(settings: &CredentialSettings, secrets: &Secrets) -> Result<String, GatewayError> {
+    if let Some(p) = &settings.project_id {
+        return Ok(p.clone());
+    }
+    secrets
         .google_service_account
         .as_deref()
-        .ok_or_else(|| GatewayError::internal("vertex credential has no service account key"))?;
-    ServiceAccount::parse(json).map_err(|e| GatewayError::internal(format!("vertex credential: {e}")))
+        .and_then(|j| ServiceAccount::parse(j).ok())
+        .and_then(|sa| sa.project_id)
+        .ok_or_else(|| GatewayError::internal("google credential has no project_id and its key file names none"))
 }
 
-/// The project a Vertex deployment calls: the credential's setting, else the service account's.
-pub fn project(d: &Deployment, sa: &ServiceAccount) -> Result<String, GatewayError> {
-    d.connection
-        .project_id
-        .clone()
-        .or_else(|| sa.project_id.clone())
-        .ok_or_else(|| GatewayError::internal("vertex credential has no project_id and the key file names none"))
-}
-
-struct Token {
-    value: String,
-    refresh_at: Instant,
-}
-
-/// One key's cached token, behind a lock held while a new one is fetched.
-type TokenSlot = Arc<tokio::sync::Mutex<Option<Token>>>;
-
-/// Access tokens per service account key (client email, key ID). Each key has its own lock, so
-/// one key's token fetch does not hold up requests that use another.
+/// Built credentials per key file (by hash) or for the environment, kept for their token caches.
 #[derive(Default)]
 pub struct Google {
-    tokens: Mutex<HashMap<(String, String), TokenSlot>>,
+    credentials: Mutex<HashMap<Option<[u8; 32]>, AccessTokenCredentials>>,
 }
 
 impl Google {
-    pub async fn access_token(&self, state: &AppState, sa: &ServiceAccount) -> Result<String, GatewayError> {
-        let slot = {
-            let mut map = self.tokens.lock().expect("token map");
-            map.entry((sa.client_email.clone(), sa.private_key_id.clone())).or_default().clone()
+    /// An access token for a credential: its key file's, or the environment's.
+    pub async fn access_token(&self, settings: &CredentialSettings, secrets: &Secrets) -> Result<String, GatewayError> {
+        let key = self.key(settings, secrets)?;
+        let credentials = self.credentials(key, secrets)?;
+        let why = match tokio::time::timeout(TOKEN_TIMEOUT, credentials.access_token()).await {
+            Ok(Ok(t)) => return Ok(t.token),
+            Ok(Err(e)) => crate::admin_auth::error_chain(&e),
+            Err(_) => format!("no answer within {} s", TOKEN_TIMEOUT.as_secs()),
         };
-        let mut slot = slot.lock().await;
-        if let Some(t) = slot.as_ref()
-            && t.refresh_at > Instant::now()
-        {
-            return Ok(t.value.clone());
+        // A failed credential stays failed ("subsequent calls will also fail"): the next request
+        // builds a new one, so fixing the environment (a new login, a granted role) takes effect.
+        self.credentials.lock().expect("google credentials").remove(&key);
+        tracing::error!(error = %why, environment = uses_environment(settings), "Google access token request failed");
+        Err(GatewayError::unavailable(format!("could not get a Google access token: {why}")))
+    }
+
+    fn key(&self, settings: &CredentialSettings, secrets: &Secrets) -> Result<Option<[u8; 32]>, GatewayError> {
+        Ok(if uses_environment(settings) {
+            None
+        } else {
+            let json = secrets
+                .google_service_account
+                .as_deref()
+                .ok_or_else(|| GatewayError::internal("google credential has no service account key"))?;
+            Some(Sha256::digest(json.as_bytes()).into())
+        })
+    }
+
+    fn credentials(&self, key: Option<[u8; 32]>, secrets: &Secrets) -> Result<AccessTokenCredentials, GatewayError> {
+        if let Some(c) = self.credentials.lock().expect("google credentials").get(&key) {
+            return Ok(c.clone());
         }
-        let token = fetch(state, sa).await?;
-        let value = token.value.clone();
-        *slot = Some(token);
-        Ok(value)
+        let built = match key {
+            None => Builder::default().with_scopes([SCOPE]).build_access_token_credentials().map_err(|e| {
+                GatewayError::unavailable(format!("no Google Application Default Credentials in the gateway's environment: {}", first_line(&e.to_string())))
+            })?,
+            Some(_) => {
+                let json = secrets.google_service_account.as_deref().unwrap_or_default();
+                ServiceAccount::parse(json).map_err(|e| GatewayError::internal(format!("google credential: {e}")))?;
+                let value: Value = serde_json::from_str(json).map_err(|e| GatewayError::internal(format!("google credential: {e}")))?;
+                service_account::Builder::new(value)
+                    .build_access_token_credentials()
+                    .map_err(|e| GatewayError::internal(format!("google credential: {}", first_line(&e.to_string()))))?
+            }
+        };
+        self.credentials.lock().expect("google credentials").insert(key, built.clone());
+        Ok(built)
     }
 }
 
-async fn fetch(state: &AppState, sa: &ServiceAccount) -> Result<Token, GatewayError> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let assertion = sa.assertion(now).map_err(GatewayError::internal)?;
-    let enc = |s: &str| utf8_percent_encode(s, NON_ALPHANUMERIC).to_string();
-    let body = format!("grant_type={}&assertion={}", enc("urn:ietf:params:oauth:grant-type:jwt-bearer"), enc(&assertion));
-    let resp = state
-        .http
-        .post(TOKEN_URL)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .timeout(Duration::from_secs(30))
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| GatewayError::from_reqwest(&e))?;
-    let status = resp.status();
-    let v: Value = resp.json().await.unwrap_or_default();
-    let Some(token) = v["access_token"].as_str().filter(|_| status.is_success()) else {
-        let why = v["error_description"].as_str().or(v["error"].as_str()).unwrap_or("no access token in the response");
-        tracing::error!(status = status.as_u16(), client_email = %sa.client_email, error = %why, "Google token request failed");
-        return Err(GatewayError::unavailable(format!("could not get a Google access token for {}: {why}", sa.client_email)));
-    };
-    let lifetime = Duration::from_secs(v["expires_in"].as_u64().unwrap_or(3600));
-    Ok(Token { value: token.to_string(), refresh_at: Instant::now() + lifetime.saturating_sub(REFRESH_MARGIN) })
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or(s)
 }
 
 /// Vertex AI REST host for a location: the global endpoint, the `eu`/`us` multi-region
@@ -162,6 +151,8 @@ pub fn vertex_host(location: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     /// A throwaway 2048-bit key, generated for this test only.
@@ -174,24 +165,42 @@ mod tests {
         format!("-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n", lines.join("\n"))
     }
 
-    #[test]
-    fn parses_and_signs() {
-        let file = json!({
+    fn key_file() -> String {
+        json!({
             "type": "service_account", "project_id": "p1", "private_key_id": "k1",
             "private_key": test_key(), "client_email": "gw@p1.iam.gserviceaccount.com",
             "token_uri": "https://attacker.example/token",
         })
-        .to_string();
-        let sa = ServiceAccount::parse(&file).unwrap();
+        .to_string()
+    }
+
+    #[test]
+    fn parses_key_files() {
+        let sa = ServiceAccount::parse(&key_file()).unwrap();
         assert_eq!(sa.project_id.as_deref(), Some("p1"));
-        let jwt = sa.assertion(1_700_000_000).unwrap();
-        let parts: Vec<&str> = jwt.split('.').collect();
-        assert_eq!(parts.len(), 3);
-        let claims: Value =
-            serde_json::from_slice(&base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
-        assert_eq!(claims["aud"], TOKEN_URL);
+        assert_eq!(sa.client_email, "gw@p1.iam.gserviceaccount.com");
+    }
+
+    #[tokio::test]
+    async fn key_files_sign_their_own_tokens() {
+        // No token endpoint is called (the file's points elsewhere): the token is a signed JWT.
+        let secrets = Secrets { google_service_account: Some(key_file()), ..Default::default() };
+        let token = Google::default().access_token(&CredentialSettings::default(), &secrets).await.unwrap();
+        let claims: Value = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(token.split('.').nth(1).unwrap()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(claims["iss"], "gw@p1.iam.gserviceaccount.com");
-        assert_eq!(claims["exp"], 1_700_003_600);
+        assert_eq!(claims["scope"], SCOPE);
+    }
+
+    #[test]
+    fn projects() {
+        let secrets = Secrets { google_service_account: Some(key_file()), ..Default::default() };
+        assert_eq!(project(&CredentialSettings::default(), &secrets).unwrap(), "p1");
+        let own = CredentialSettings { project_id: Some("p2".into()), ..Default::default() };
+        assert_eq!(project(&own, &secrets).unwrap(), "p2");
+        assert!(project(&CredentialSettings::default(), &Secrets::default()).is_err());
     }
 
     #[test]

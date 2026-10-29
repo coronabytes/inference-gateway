@@ -213,6 +213,11 @@ export interface CredentialSettings {
   project_id?: string;
   /** OpenAI-compatible only: the header the API key is sent in, as is, instead of `Authorization: Bearer`. */
   auth_header?: string;
+  /**
+   * Azure and Vertex AI: "environment" signs in as the gateway's own identity, storing no secret.
+   * Azure: workload identity, AZURE_* variables or managed identity; Vertex AI: Application Default Credentials.
+   */
+  identity?: "environment";
   /** Azure with Entra ID: the app registration's directory (tenant) ID or domain. */
   tenant_id?: string;
   /** Azure with Entra ID: the app registration's application (client) ID. */
