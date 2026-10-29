@@ -6,6 +6,11 @@ A self-hosted gateway for large language models. Your apps keep using the OpenAI
 
 Single Rust service · distroless, locked-down container image · Postgres + Valkey · AGPL-3.0
 
+> [!IMPORTANT]
+> After the latest LiteLLM incident we designed to just roll our own. 
+> Claude finished all features we required within 3 days including Enterprise.
+> Use at your own discretion.
+
 ## Features
 
 - **Every provider, one API.** OpenAI, Anthropic and Cohere APIs in front of OpenAI, Azure AI Foundry, Amazon Bedrock, Anthropic, Google Vertex AI, Google AI Studio, Mistral and any OpenAI-compatible server (vLLM, Ollama).
