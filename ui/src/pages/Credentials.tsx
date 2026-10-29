@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, setListParam, type Credential, type CredentialInput, type CredentialSettings, type Provider, type Secrets } from "../api";
-import { Button, FileButton, MultiSelect, Select, TextInput, useDebounced } from "../components/controls";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, setListParam, type AwsRegion, type Credential, type CredentialInput, type CredentialSettings, type Provider, type Secrets } from "../api";
+import { Button, FileButton, MultiSelect, Segmented, Select, TextInput, useDebounced } from "../components/controls";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, Modal, type ConfirmRequest } from "../components/ui";
 import { dateTime } from "../format";
 import { MISTRAL_REGIONS, PROVIDERS, PROVIDER_LABEL, VERTEX_REGIONS } from "../providers";
 
 type BedrockAuth = "chain" | "keys" | "api_key";
+type AzureAuth = "api_key" | "entra" | "environment";
+type VertexAuth = "key" | "environment";
+
+/** A credential that signs in as the gateway's own identity (Azure, Vertex AI), storing no secret. */
+const usesEnvironment = (c: Credential) => c.settings.identity === "environment";
+
+/** An Azure credential that signs in with Entra ID (an app registration or the gateway's identity) instead of an API key. */
+export const usesEntra = (c: Credential) => c.provider === "azure" && (!!c.settings.tenant_id || usesEnvironment(c));
 
 function authSummary(c: Credential): string {
   if (c.provider === "bedrock") {
@@ -13,13 +21,17 @@ function authSummary(c: Credential): string {
     if (c.secrets_set.aws_access_key_id) return `AWS access keys${c.secrets_set.aws_session_token ? " + session token" : ""}`;
     return "AWS credential chain";
   }
-  if (c.provider === "vertex") return "Service account";
+  if (c.provider === "vertex") return usesEnvironment(c) ? "Application Default Credentials" : "Service account";
+  if (c.provider === "azure" && usesEnvironment(c)) return c.settings.client_id ? "Managed identity (user-assigned)" : "Managed identity";
+  if (usesEntra(c)) return "Entra ID app";
   return c.secrets_set.api_key ? "API key" : "No authentication";
 }
 
 /** A credential that cannot work yet, for example one created by an import, which brings no secrets. */
 function missingSecret(c: Credential): boolean {
+  if (usesEnvironment(c)) return false;
   if (c.provider === "vertex") return !c.secrets_set.google_service_account;
+  if (usesEntra(c)) return !c.secrets_set.client_secret;
   // OpenAI-compatible servers may need no key, and Bedrock can use the AWS credential chain.
   if (c.provider === "openai" || c.provider === "bedrock") return false;
   return !c.secrets_set.api_key;
@@ -81,6 +93,179 @@ export function connectionSummary(c: Credential): string {
       return `${project} · ${regionLabel(VERTEX_REGIONS, s.region)}${s.base_url ? ` via ${host(s.base_url)}` : ""}`;
     }
   }
+}
+
+/** The roles an Entra ID app needs, assigned on the resource (or its resource group). */
+const ENTRA_ROLES = (
+  <>
+    <li>
+      <strong>Model calls:</strong> Cognitive Services OpenAI User for Azure OpenAI models, or Cognitive Services User for every Foundry model
+      (also Claude, Cohere rerank and Microsoft-Decision).
+    </li>
+    <li>
+      <strong>Deployment list with RPM and TPM</strong> when adding a deployment: read access to the resource in Azure Resource Manager.
+      Cognitive Services User includes it; with only Cognitive Services OpenAI User, add Reader. Without it, type the values in.
+    </li>
+  </>
+);
+
+/** How the gateway finds its own Azure identity, and the roles it needs. */
+const AZURE_ENVIRONMENT = (
+  <ul className="hint-list">
+    <li>
+      The gateway&apos;s own identity, through Microsoft&apos;s Azure SDK; nothing is stored. It tries, in order: AKS workload identity (
+      <code>AZURE_FEDERATED_TOKEN_FILE</code>, <code>AZURE_CLIENT_ID</code>, <code>AZURE_TENANT_ID</code>), a client secret in{" "}
+      <code>AZURE_TENANT_ID</code>, <code>AZURE_CLIENT_ID</code> and <code>AZURE_CLIENT_SECRET</code>, then the managed identity of App
+      Service, Container Apps or the VM.
+    </li>
+    {ENTRA_ROLES}
+    <li>Assign the roles to that identity on the resource or its resource group.</li>
+  </ul>
+);
+
+const ENTRA_PERMISSIONS = (
+  <ul className="hint-list">
+    <li>An app registration&apos;s client credentials, used instead of the resource&apos;s key. Assign its roles on the resource or its resource group.</li>
+    {ENTRA_ROLES}
+  </ul>
+);
+
+/** How the gateway finds its own Google identity, and the roles it needs. */
+const GOOGLE_ENVIRONMENT = (
+  <ul className="hint-list">
+    <li>
+      The gateway&apos;s own identity, through Google&apos;s Cloud SDK; nothing is stored. Application Default Credentials:{" "}
+      <code>GOOGLE_APPLICATION_CREDENTIALS</code> (a key file or workload identity federation config), the gcloud ADC file, or the metadata
+      server on GKE (Workload Identity), Cloud Run and Compute Engine.
+    </li>
+    <li>
+      Give that identity <strong>Vertex AI User</strong> in the project, and <strong>Model Armor User</strong> for Model Armor guardrails.
+    </li>
+  </ul>
+);
+
+/** AWS partitions in the order the region list shows them, and their names. */
+const AWS_PARTITIONS = ["aws", "aws-eusc", "aws-us-gov", "aws-cn"];
+const AWS_PARTITION_LABEL: Record<string, string> = {
+  aws: "AWS",
+  "aws-eusc": "AWS European Sovereign Cloud",
+  "aws-us-gov": "AWS GovCloud (US)",
+  "aws-cn": "AWS China",
+};
+
+/** The IAM permissions a Bedrock credential needs, for what. */
+const BEDROCK_PERMISSIONS = (
+  <ul className="hint-list">
+    <li>
+      <strong>Model calls:</strong> <span className="mono">bedrock:InvokeModel</span> and{" "}
+      <span className="mono">bedrock:InvokeModelWithResponseStream</span>, also used by Converse; for rerank models also{" "}
+      <span className="mono">bedrock:Rerank</span>; for token counting with Claude via InvokeModel also{" "}
+      <span className="mono">bedrock:CountTokens</span>. For an inference profile, on the profile and on its model in every region it routes
+      to.
+    </li>
+    <li>
+      <strong>Model list</strong> when adding a deployment: <span className="mono">bedrock:ListFoundationModels</span> and{" "}
+      <span className="mono">bedrock:ListInferenceProfiles</span>.
+    </li>
+    <li>
+      <strong>RPM and TPM from the account&apos;s quotas:</strong> <span className="mono">servicequotas:ListServiceQuotas</span>.
+    </li>
+    <li>
+      <strong>Guardrails</strong> using this credential: <span className="mono">bedrock:ApplyGuardrail</span> on the guardrail.
+    </li>
+    <li>Without the list permissions, or with a Bedrock API key, which cannot list, type the values in.</li>
+  </ul>
+);
+
+/** The partition of a region, for ARNs: from the SDK's list, else from the region's name. */
+function awsPartition(region: string, regions: AwsRegion[] | null): string {
+  const known = regions?.find((r) => r.id === region)?.partition;
+  if (known) return known;
+  if (region.startsWith("cn-")) return "aws-cn";
+  if (region.startsWith("us-gov-")) return "aws-us-gov";
+  if (region.startsWith("eusc-")) return "aws-eusc";
+  return "aws";
+}
+
+/**
+ * An IAM policy with everything the gateway does with a Bedrock credential. Inference profiles are
+ * called in the credential's region and route to the model in other regions (a global profile to
+ * any region, whose model ARN has no region), so models are allowed in every region. Rerank and the
+ * listings take no resource; guardrails may live in another region (a guardrail ARN names it).
+ */
+export function bedrockPolicy(region: string, partition: string) {
+  const arn = (rest: string) => `arn:${partition}:bedrock:${rest}`;
+  const here = region || "*";
+  return {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Sid: "GatewayModelCalls",
+        Effect: "Allow",
+        Action: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:CountTokens"],
+        Resource: [arn("*::foundation-model/*"), arn(`${here}:*:inference-profile/*`), arn(`${here}:*:application-inference-profile/*`)],
+      },
+      { Sid: "GatewayRerank", Effect: "Allow", Action: ["bedrock:Rerank"], Resource: "*" },
+      { Sid: "GatewayGuardrails", Effect: "Allow", Action: ["bedrock:ApplyGuardrail"], Resource: arn("*:*:guardrail/*") },
+      { Sid: "ConsoleModelList", Effect: "Allow", Action: ["bedrock:ListFoundationModels", "bedrock:ListInferenceProfiles"], Resource: "*" },
+      { Sid: "ConsoleQuotas", Effect: "Allow", Action: ["servicequotas:ListServiceQuotas"], Resource: "*" },
+    ],
+  };
+}
+
+/** The IAM policy for a Bedrock credential, with a Copy button. */
+function BedrockPolicyDialog({ region, partition, onClose }: { region: string; partition: string; onClose: () => void }) {
+  const [copied, setCopied] = useState<"yes" | "select" | null>(null);
+  const text = useRef<HTMLPreElement>(null);
+  const policy = JSON.stringify(bedrockPolicy(region, partition), null, 2);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(policy);
+      setCopied("yes");
+    } catch {
+      // The browser refused (no clipboard permission): select the policy for Ctrl+C instead.
+      const range = document.createRange();
+      if (text.current) range.selectNodeContents(text.current);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+      setCopied("select");
+    }
+  };
+  return (
+    <Modal
+      title="IAM policy for Bedrock"
+      size="wide"
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Close</Button>
+          <Button variant="primary" onClick={copy}>
+            {copied === "yes" ? "Copied" : "Copy"}
+          </Button>
+        </>
+      }
+    >
+      <ul className="hint-list">
+        <li>
+          Attach it to the IAM user of the access keys, or to the role the gateway runs as (IRSA, Pod Identity, ECS task role, instance
+          profile). A Bedrock API key brings its own permissions.
+        </li>
+        <li>
+          <strong>Model calls</strong> (Converse, Claude via InvokeModel, token counting, Titan embeddings): models in every region, since an
+          inference profile in {region || "the credential's region"} routes requests to other regions, and a global one to any.
+        </li>
+        <li>
+          <strong>Rerank</strong> and <strong>guardrails</strong>, if you use them. <strong>Console</strong>: the model list and the RPM and
+          TPM quotas when adding a deployment; leave these out to type the values in.
+        </li>
+        <li>To narrow it down, replace the <code>*</code> after <code>foundation-model/</code> and the profiles with the models you use.</li>
+      </ul>
+      {copied === "select" && <p className="muted small">The browser does not allow copying here. The policy is selected: press Ctrl+C (⌘C).</p>}
+      <pre className="raw" ref={text}>
+        {policy}
+      </pre>
+    </Modal>
+  );
 }
 
 export function Credentials() {
@@ -243,11 +428,29 @@ function CredentialForm({
   const [apiVersion, setApiVersion] = useState(initial?.settings.api_version ?? "");
   const [region, setRegion] = useState(initial?.settings.region ?? "");
   // Vertex: a single region typed in, rather than one of the named locations.
+  // Bedrock: the regions of the gateway's AWS SDK, loaded once; a region the SDK does not list
+  // (newer than the gateway) is typed in.
+  const [awsRegions, setAwsRegions] = useState<AwsRegion[] | null>(null);
+  const [awsOther, setAwsOther] = useState(false);
+  const [showPolicy, setShowPolicy] = useState(false);
+  useEffect(() => {
+    if (provider !== "bedrock" || awsRegions) return;
+    api<AwsRegion[]>("/aws-regions")
+      .then(setAwsRegions)
+      .catch(() => setAwsRegions([]));
+  }, [provider, awsRegions]);
+  const regionUnlisted = !!region && !!awsRegions && !awsRegions.some((r) => r.id === region);
   const [vertexOther, setVertexOther] = useState(
     initial?.provider === "vertex" && !!initial.settings.region && !VERTEX_REGIONS.some((r) => r.value === initial.settings.region),
   );
   const [projectId, setProjectId] = useState(initial?.settings.project_id ?? "");
   const [authHeader, setAuthHeader] = useState(initial?.settings.auth_header ?? "");
+  const [azureAuth, setAzureAuth] = useState<AzureAuth>(
+    initial?.provider === "azure" && usesEnvironment(initial) ? "environment" : initial && usesEntra(initial) ? "entra" : "api_key",
+  );
+  const [vertexAuth, setVertexAuth] = useState<VertexAuth>(initial?.provider === "vertex" && usesEnvironment(initial) ? "environment" : "key");
+  const [tenantId, setTenantId] = useState(initial?.settings.tenant_id ?? "");
+  const [clientId, setClientId] = useState(initial?.settings.client_id ?? "");
   const [keyFile, setKeyFile] = useState<KeyFileInfo | null>(null);
   const [secrets, setSecrets] = useState<Secrets>({});
   const [error, setError] = useState<string | null>(null);
@@ -264,6 +467,7 @@ function CredentialForm({
     // Regions mean something different for each provider.
     setRegion("");
     setVertexOther(false);
+    setAwsOther(false);
   };
 
   const loadKeyFile = async (file: File | undefined) => {
@@ -286,15 +490,19 @@ function CredentialForm({
       // Only send what the user typed for this provider; on edit, untouched fields keep their stored values.
       // Fields hidden by a provider switch (or filled in by the browser) still hold values, so drop those.
       const applies: (keyof Secrets)[] =
-        provider === "vertex"
-          ? ["google_service_account"]
-          : provider === "bedrock"
-            ? bedrockAuth === "api_key"
-              ? ["api_key"]
-              : bedrockAuth === "keys"
-                ? ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"]
-                : []
-            : ["api_key"];
+        environment
+          ? []
+          : provider === "vertex"
+            ? ["google_service_account"]
+            : provider === "bedrock"
+              ? bedrockAuth === "api_key"
+                ? ["api_key"]
+                : bedrockAuth === "keys"
+                  ? ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"]
+                  : []
+              : provider === "azure" && azureAuth === "entra"
+                ? ["client_secret"]
+                : ["api_key"];
       const out: Secrets = Object.fromEntries(
         Object.entries(secrets).filter(([k, v]) => v !== "" && applies.includes(k as keyof Secrets)),
       );
@@ -303,6 +511,14 @@ function CredentialForm({
         if (bedrockAuth !== "api_key") out.api_key = "";
         if (bedrockAuth !== "keys") Object.assign(out, { aws_access_key_id: "", aws_secret_access_key: "", aws_session_token: "" });
       }
+      // Likewise for Azure: an API key or the app's client secret, never both, and neither with the
+      // environment's identity; nor a key file for Vertex AI with Application Default Credentials.
+      if (provider === "azure" && initial) {
+        if (azureAuth !== "api_key" && initial.secrets_set.api_key) out.api_key = "";
+        if (azureAuth !== "entra" && initial.secrets_set.client_secret) out.client_secret = "";
+      }
+      if (provider === "vertex" && environment && initial?.secrets_set.google_service_account) out.google_service_account = "";
+      const entra = provider === "azure" && azureAuth === "entra";
       // Settings are not secret and always sent in full; only those that apply to the provider.
       const settings: CredentialSettings = {
         ...(baseUrl.trim() && { base_url: baseUrl.trim() }),
@@ -310,6 +526,9 @@ function CredentialForm({
         ...(hasRegion && region.trim() && { region: region.trim() }),
         ...(provider === "vertex" && projectId.trim() && { project_id: projectId.trim() }),
         ...(provider === "openai" && authHeader.trim() && { auth_header: authHeader.trim() }),
+        ...(entra && { tenant_id: tenantId.trim(), client_id: clientId.trim() }),
+        ...(environment && { identity: "environment" as const }),
+        ...(environment && provider === "azure" && clientId.trim() && { client_id: clientId.trim() }),
       };
       await onSave({ name: name.trim(), provider, settings, secrets: out });
     } catch (e) {
@@ -320,14 +539,23 @@ function CredentialForm({
   };
 
   const hasRegion = provider === "bedrock" || provider === "mistral" || provider === "vertex";
-  const keyRequired = ["azure", "anthropic", "typesafe", "mistral", "gemini"].includes(provider) && !initial?.secrets_set.api_key;
+  const entraAuth = provider === "azure" && azureAuth === "entra";
+  // The gateway's own identity: nothing to store.
+  const environment = (provider === "azure" && azureAuth === "environment") || (provider === "vertex" && vertexAuth === "environment");
+  const keyRequired =
+    ["azure", "anthropic", "typesafe", "mistral", "gemini"].includes(provider) && !entraAuth && !environment && !initial?.secrets_set.api_key;
+  const secretRequired = entraAuth && !initial?.secrets_set.client_secret;
   const storedAccount = initial?.service_account;
   const missing =
     !name.trim() ||
     (provider === "azure" && !baseUrl.trim()) ||
-    (provider === "vertex" && !initial?.secrets_set.google_service_account && !secrets.google_service_account) ||
+    (provider === "vertex" && !environment && !initial?.secrets_set.google_service_account && !secrets.google_service_account) ||
+    (provider === "vertex" && environment && !projectId.trim()) ||
     (provider === "vertex" && vertexOther && !region.trim()) ||
+    (provider === "bedrock" && awsOther && !region.trim()) ||
     (keyRequired && !secrets.api_key) ||
+    (entraAuth && (!tenantId.trim() || !clientId.trim())) ||
+    (secretRequired && !secrets.client_secret) ||
     (provider === "bedrock" && bedrockAuth === "api_key" && !initial?.secrets_set.api_key && !secrets.api_key) ||
     (provider === "bedrock" && bedrockAuth === "keys" && !initial?.secrets_set.aws_access_key_id && (!secrets.aws_access_key_id || !secrets.aws_secret_access_key));
 
@@ -384,7 +612,32 @@ function CredentialForm({
         )}
         {provider === "bedrock" && (
           <>
-            <TextInput caption="Region" hint="Leave empty to use the AWS environment's region." value={region} onChange={(e) => setRegion(e.target.value)} placeholder="from the AWS environment" />
+            {awsRegions?.length ? (
+              <div className="row">
+                <Select
+                  caption="Region"
+                  hint="The regions of the AWS SDK this gateway was built with. From the AWS environment uses the region of the gateway's environment (AWS_REGION, profile or instance)."
+                  value={awsOther || regionUnlisted ? "other" : region}
+                  onChange={(v) => {
+                    const other = v === "other";
+                    setAwsOther(other);
+                    setRegion(other ? "" : v);
+                  }}
+                  options={[
+                    { value: "", label: "From the AWS environment" },
+                    ...[...awsRegions]
+                      .sort((a, b) => AWS_PARTITIONS.indexOf(a.partition) - AWS_PARTITIONS.indexOf(b.partition) || a.name.localeCompare(b.name))
+                      .map((r) => ({ value: r.id, label: r.name, note: r.id, group: AWS_PARTITION_LABEL[r.partition] ?? r.partition })),
+                    { value: "other", label: "Other region…", group: "Other" },
+                  ]}
+                />
+                {(awsOther || regionUnlisted) && (
+                  <TextInput caption="Region" hint="A region this gateway's SDK does not list yet." mono value={region} onChange={(e) => setRegion(e.target.value)} placeholder="e.g. eu-central-1" required />
+                )}
+              </div>
+            ) : (
+              <TextInput caption="Region" hint="Leave empty to use the AWS environment's region." value={region} onChange={(e) => setRegion(e.target.value)} placeholder="from the AWS environment" />
+            )}
             <TextInput
               caption="Endpoint override"
               hint="Optional, for example a VPC endpoint."
@@ -434,11 +687,12 @@ function CredentialForm({
             </div>
             <TextInput
               caption="Project ID"
-              hint="Leave empty to use the service account's project."
+              hint={environment ? "The Google Cloud project to call." : "Leave empty to use the service account's project."}
               mono
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              placeholder={keyFile?.project ?? storedAccount?.project_id ?? "from the key file"}
+              placeholder={environment ? "e.g. my-project-123" : (keyFile?.project ?? storedAccount?.project_id ?? "from the key file")}
+              required={environment}
             />
             <TextInput
               caption="Endpoint override"
@@ -478,6 +732,22 @@ function CredentialForm({
         )}
 
         {provider === "vertex" && (
+          <Segmented
+            caption="Authentication"
+            hint={
+              vertexAuth === "environment"
+                ? GOOGLE_ENVIRONMENT
+                : "A service account key file, stored encrypted. The account needs Vertex AI User (and Model Armor User for Model Armor guardrails)."
+            }
+            value={vertexAuth}
+            onChange={setVertexAuth}
+            options={[
+              { value: "key", label: "Key file" },
+              { value: "environment", label: "Application Default Credentials" },
+            ]}
+          />
+        )}
+        {provider === "vertex" && vertexAuth === "key" && (
           <div className="field">
             <FileButton
               caption="Service account key"
@@ -505,19 +775,88 @@ function CredentialForm({
         )}
 
         {provider === "bedrock" && (
-          <Select
+          <div className="row with-action">
+            <Select
+              caption="Authentication"
+              hint={BEDROCK_PERMISSIONS}
+              value={bedrockAuth}
+              onChange={(a) => setBedrockAuth(a as BedrockAuth)}
+              options={[
+                { value: "chain", label: "AWS credential chain (IAM role: IRSA, Pod Identity, ECS task role, instance profile)" },
+                { value: "keys", label: "Access key pair" },
+                { value: "api_key", label: "Bedrock API key" },
+              ]}
+            />
+            <Button title="The IAM permissions everything here needs, to copy" onClick={() => setShowPolicy(true)}>
+              IAM policy
+            </Button>
+            {showPolicy && <BedrockPolicyDialog region={region} partition={awsPartition(region, awsRegions)} onClose={() => setShowPolicy(false)} />}
+          </div>
+        )}
+
+        {provider === "azure" && (
+          <Segmented
             caption="Authentication"
-            value={bedrockAuth}
-            onChange={(a) => setBedrockAuth(a as BedrockAuth)}
+            hint={
+              azureAuth === "entra" ? ENTRA_PERMISSIONS : azureAuth === "environment" ? AZURE_ENVIRONMENT : "The resource's key (Keys and Endpoint in the Azure portal)."
+            }
+            value={azureAuth}
+            onChange={setAzureAuth}
             options={[
-              { value: "chain", label: "AWS credential chain (IAM role: IRSA, Pod Identity, ECS task role, instance profile)" },
-              { value: "keys", label: "Access key pair" },
-              { value: "api_key", label: "Bedrock API key" },
+              { value: "api_key", label: "API key" },
+              { value: "entra", label: "Entra ID app" },
+              { value: "environment", label: "Managed identity" },
             ]}
           />
         )}
+        {provider === "azure" && azureAuth === "environment" && (
+          <TextInput
+            caption="Client ID"
+            hint="Optional. A user-assigned managed identity's client ID, or the workload identity's app. Leave empty for the system-assigned identity or AZURE_CLIENT_ID."
+            mono
+            autoComplete="off"
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            placeholder="system-assigned or AZURE_CLIENT_ID"
+          />
+        )}
+        {entraAuth && (
+          <>
+            <div className="row">
+              <TextInput
+                caption="Tenant ID"
+                hint="Directory (tenant) ID of the app registration, or a domain such as contoso.onmicrosoft.com."
+                mono
+                autoComplete="off"
+                value={tenantId}
+                onChange={(e) => setTenantId(e.target.value)}
+                placeholder="00000000-0000-0000-0000-000000000000"
+                required
+              />
+              <TextInput
+                caption="Client ID"
+                hint="Application (client) ID of the app registration."
+                mono
+                autoComplete="off"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                placeholder="00000000-0000-0000-0000-000000000000"
+                required
+              />
+            </div>
+            <TextInput
+              caption="Client secret"
+              hint="A secret's value from the app registration (Certificates & secrets), not its ID."
+              secret
+              value={secrets.client_secret ?? ""}
+              onChange={set("client_secret")}
+              placeholder={placeholder("client_secret")}
+              required={secretRequired}
+            />
+          </>
+        )}
 
-        {provider !== "vertex" && (provider !== "bedrock" || bedrockAuth === "api_key") && (
+        {provider !== "vertex" && !entraAuth && !environment && (provider !== "bedrock" || bedrockAuth === "api_key") && (
           <TextInput
             caption={provider === "bedrock" ? "Bedrock API key" : "API key"}
             hint={provider === "openai" ? "Leave empty for servers without authentication." : undefined}

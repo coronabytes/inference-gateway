@@ -170,8 +170,7 @@ async fn per_text<'a>(
 
 async fn titan(state: &AppState, d: &Deployment, raw: &Value) -> Result<(Bytes, Usage), GatewayError> {
     let req = titan_request(raw)?;
-    let url = providers::url(state, d, Op::Embeddings).await?;
-    per_text(d, &req.texts, req.base64, |text| titan_one(state, d, &url, text, req.dimensions).boxed()).await
+    per_text(d, &req.texts, req.base64, |text| titan_one(state, d, text, req.dimensions).boxed()).await
 }
 
 /// Vertex AI `predict` for Google's text embedding models. Gemini embedding models take one
@@ -204,12 +203,11 @@ fn vertex_prediction(v: &Value) -> EmbedResult {
     Ok((values, tokens))
 }
 
-/// One Titan call.
-async fn titan_one(state: &AppState, d: &Deployment, url: &str, text: &str, dimensions: u32) -> EmbedResult {
+/// One Titan call, through the SDK's InvokeModel.
+async fn titan_one(state: &AppState, d: &Deployment, text: &str, dimensions: u32) -> EmbedResult {
     // Normalized like OpenAI's embeddings, so cosine similarity is a dot product.
     let body = json!({ "inputText": text, "dimensions": dimensions, "normalize": true });
-    let resp = providers::post(state, d, url, providers::headers(d)?, providers::json_bytes(&body)).await?;
-    let v: Value = resp.json().await.map_err(|e| GatewayError::from_reqwest(&e))?;
+    let v = providers::bedrock::invoke_json(state, d, &body).await?;
     let embedding: Vec<f32> = v["embedding"]
         .as_array()
         .ok_or_else(|| GatewayError::upstream_stream(crate::error::ErrorKind::Upstream, "Titan returned no embedding"))?

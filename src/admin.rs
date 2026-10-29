@@ -45,6 +45,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/status", get(status))
         .route("/credentials", get(list_credentials).post(create_credential))
         .route("/credentials/{id}", axum::routing::put(update_credential).delete(delete_credential))
+        .route("/credentials/{id}/foundry-deployments", get(foundry_deployments))
+        .route("/credentials/{id}/bedrock-models", get(bedrock_models))
+        .route("/aws-regions", get(aws_regions))
         .route("/deployments", get(list_deployments).post(create_deployment))
         .route("/deployments/{id}", get(get_deployment).put(update_deployment).delete(delete_deployment))
         .route("/deployments/{id}/test", post(test_deployment))
@@ -189,7 +192,34 @@ fn clean_settings(state: &AppState, provider: ProviderKind, s: CredentialSetting
         region: tidy(s.region),
         project_id: tidy(s.project_id),
         auth_header: tidy(s.auth_header),
+        tenant_id: tidy(s.tenant_id),
+        client_id: tidy(s.client_id),
+        identity: s.identity,
     };
+    let environment = s.identity == Some(crate::model::Identity::Environment);
+    if environment && !matches!(provider, ProviderKind::Azure | ProviderKind::Vertex) {
+        return Err(AdminError::bad_request("identity only applies to Azure and Vertex AI credentials"));
+    }
+    if provider != ProviderKind::Azure && (s.tenant_id.is_some() || s.client_id.is_some()) {
+        return Err(AdminError::bad_request("tenant_id and client_id only apply to Azure credentials"));
+    }
+    // The environment's identity: at most a client ID, for a user-assigned managed identity or a
+    // workload identity app. The tenant comes from the environment.
+    if environment && s.tenant_id.is_some() {
+        return Err(AdminError::bad_request("with the environment's identity, the tenant comes from the environment; leave tenant_id empty"));
+    }
+    if !environment && s.tenant_id.is_some() != s.client_id.is_some() {
+        return Err(AdminError::bad_request("Entra ID needs both tenant_id and client_id"));
+    }
+    if environment && provider == ProviderKind::Vertex && s.project_id.is_none() {
+        return Err(AdminError::bad_request("a Vertex AI credential with Application Default Credentials needs its project_id"));
+    }
+    if s.tenant_id.as_deref().is_some_and(|t| !crate::entra::valid_tenant(t)) {
+        return Err(AdminError::bad_request("tenant_id must be a directory (tenant) ID or domain, e.g. contoso.onmicrosoft.com"));
+    }
+    if s.client_id.as_deref().is_some_and(|c| !crate::entra::valid_client_id(c)) {
+        return Err(AdminError::bad_request("client_id must be the app registration's application (client) ID, a GUID"));
+    }
     if let Some(h) = &s.auth_header {
         if provider != ProviderKind::Openai {
             return Err(AdminError::bad_request("auth_header only applies to OpenAI-compatible credentials"));
@@ -235,7 +265,7 @@ fn clean_settings(state: &AppState, provider: ProviderKind, s: CredentialSetting
     Ok(s)
 }
 
-fn validate_credential(provider: ProviderKind, name: &str, s: &Secrets) -> R<()> {
+fn validate_credential(provider: ProviderKind, name: &str, s: &Secrets, settings: &CredentialSettings) -> R<()> {
     if name.trim().is_empty() || name.len() > 100 {
         return Err(AdminError::bad_request("name must be 1-100 characters"));
     }
@@ -243,7 +273,28 @@ fn validate_credential(provider: ProviderKind, name: &str, s: &Secrets) -> R<()>
     if provider != ProviderKind::Vertex && s.google_service_account.is_some() {
         return Err(AdminError::bad_request("a service account key only applies to Vertex AI credentials"));
     }
+    if provider != ProviderKind::Azure && s.client_secret.is_some() {
+        return Err(AdminError::bad_request("a client_secret only applies to Azure credentials (Entra ID)"));
+    }
+    let entra = settings.tenant_id.is_some();
+    let environment = settings.identity == Some(crate::model::Identity::Environment);
+    if environment && (s.api_key.is_some() || s.client_secret.is_some() || s.google_service_account.is_some() || has_aws) {
+        return Err(AdminError::bad_request("a credential with the environment's identity stores no secrets"));
+    }
     match provider {
+        // The gateway's own identity: nothing stored.
+        ProviderKind::Azure | ProviderKind::Vertex if environment => {}
+        // Entra ID: the app's client credentials instead of the resource's key.
+        ProviderKind::Azure if entra && s.client_secret.is_none() => {
+            return Err(AdminError::bad_request("Entra ID needs the app registration's client_secret"));
+        }
+        ProviderKind::Azure if entra && s.api_key.is_some() => {
+            return Err(AdminError::bad_request("an Azure credential takes an api_key or Entra ID client credentials, not both"));
+        }
+        ProviderKind::Azure if !entra && s.client_secret.is_some() => {
+            return Err(AdminError::bad_request("a client_secret needs tenant_id and client_id"));
+        }
+        ProviderKind::Azure if entra => {}
         ProviderKind::Azure | ProviderKind::Anthropic | ProviderKind::Typesafe | ProviderKind::Mistral | ProviderKind::Gemini
             if s.api_key.is_none() =>
         {
@@ -328,8 +379,8 @@ async fn create_credential(
         .ok_or_else(|| AdminError::bad_request("provider must be one of openai, azure, bedrock, anthropic, typesafe, mistral, vertex, gemini"))?;
     let mut secrets = Secrets::default();
     secrets.merge(i.secrets);
-    validate_credential(provider, &i.name, &secrets)?;
     let settings = clean_settings(&state, provider, i.settings)?;
+    validate_credential(provider, &i.name, &secrets, &settings)?;
     let now = Utc::now();
     let row = CredentialRow {
         id: Uuid::now_v7(),
@@ -363,8 +414,9 @@ async fn update_credential(
         .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let secrets_replaced = i.secrets.values().next().is_some();
     secrets.merge(i.secrets);
-    validate_credential(provider, &i.name, &secrets)?;
-    row.settings = sqlx::types::Json(clean_settings(&state, provider, i.settings)?);
+    let settings = clean_settings(&state, provider, i.settings)?;
+    validate_credential(provider, &i.name, &secrets, &settings)?;
+    row.settings = sqlx::types::Json(settings);
     row.name = i.name.trim().to_string();
     row.secrets = registry::encrypt_secrets(&state.cfg.secret_box, &secrets);
     db::update_credential(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
@@ -405,6 +457,49 @@ async fn delete_credential(State(state): State<AppState>, Extension(actor): Exte
         Err(e) if db::is_foreign_key_violation(&e) => Err(AdminError::conflict("credential is in use; reassign or delete what uses it first")),
         Err(e) => Err(e.into()),
     }
+}
+
+/// The deployments on an Azure credential's resource, read from Azure Resource Manager with its
+/// Entra ID app, for the console to fill in a new deployment.
+async fn foundry_deployments(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<crate::entra::FoundryDeployments>> {
+    let row = db::get_credential(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
+    if row.provider != ProviderKind::Azure.as_str() {
+        return Err(AdminError::bad_request("only Azure credentials have Foundry deployments"));
+    }
+    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref())
+        .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let settings = &row.settings.0;
+    let source = crate::entra::source(settings, &secrets)
+        .ok_or_else(|| AdminError::bad_request("listing deployments needs a credential that uses Entra ID; an API key cannot read them"))?;
+    let base = settings.base_url.as_deref().ok_or_else(|| AdminError::bad_request("the credential has no resource endpoint"))?;
+    let found = crate::entra::list_deployments(&state, &source, base).await.map_err(|e| AdminError(StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(found))
+}
+
+/// The AWS regions the gateway's SDK knows, for the console's Bedrock region list.
+async fn aws_regions() -> Json<&'static [crate::aws::AwsRegion]> {
+    Json(crate::aws::regions())
+}
+
+/// The models and inference profiles a Bedrock credential can call, with its account's quotas,
+/// for the console to fill in a new deployment. Listings it may not read are noted, not failed.
+async fn bedrock_models(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<crate::aws::models::BedrockModels>> {
+    let row = db::get_credential(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
+    if row.provider != ProviderKind::Bedrock.as_str() {
+        return Err(AdminError::bad_request("only Bedrock credentials have Bedrock models"));
+    }
+    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref())
+        .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if secrets.api_key.is_some() {
+        return Err(AdminError::bad_request("a Bedrock API key cannot list models or quotas; use AWS credentials for that"));
+    }
+    let found = state
+        .aws
+        .models
+        .get(&state, row.id, row.updated_at, &row.settings.0, &secrets)
+        .await
+        .map_err(|e| AdminError(StatusCode::BAD_GATEWAY, e.message))?;
+    Ok(Json(found))
 }
 
 // ---------------------------------------------------------------- deployments
@@ -628,7 +723,10 @@ fn check_deployment(i: &DeploymentInput) -> R<ProviderKind> {
     if i.base_model.as_ref().is_some_and(|b| b.len() > 300) {
         return Err(AdminError::bad_request("base_model can be at most 300 characters"));
     }
-    i.mode.style(provider, i.config.api_style).map_err(AdminError::bad_request)?;
+    let style = i.mode.style(provider, i.config.api_style).map_err(AdminError::bad_request)?;
+    if i.config.bedrock_api.is_some() && !(provider == ProviderKind::Bedrock && style == crate::model::ApiStyle::Anthropic) {
+        return Err(AdminError::bad_request("bedrock_api only applies to Bedrock deployments with the Anthropic Messages protocol"));
+    }
     i.config.check().map_err(AdminError::bad_request)?;
     if i.weight < 1 || i.timeout_secs < 1 {
         return Err(AdminError::bad_request("weight and timeout_secs must be positive"));
@@ -2450,6 +2548,28 @@ async fn playground(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn environment_identity_credentials() {
+        use crate::model::Identity;
+        let state = crate::state::test_state();
+        let env = |provider, s: CredentialSettings| clean_settings(&state, provider, CredentialSettings { identity: Some(Identity::Environment), ..s });
+        let azure = CredentialSettings { base_url: Some("https://r.openai.azure.com".into()), ..Default::default() };
+        // Azure: nothing stored; an optional client ID for a user-assigned identity, but no tenant.
+        let s = env(ProviderKind::Azure, azure.clone()).unwrap();
+        assert!(validate_credential(ProviderKind::Azure, "a", &Secrets::default(), &s).is_ok());
+        let uai = CredentialSettings { client_id: Some("00000000-0000-0000-0000-000000000001".into()), ..azure.clone() };
+        assert!(env(ProviderKind::Azure, uai).is_ok());
+        assert!(env(ProviderKind::Azure, CredentialSettings { tenant_id: Some("contoso.onmicrosoft.com".into()), ..azure }).is_err());
+        let key = Secrets { api_key: Some("k".into()), ..Default::default() };
+        assert!(validate_credential(ProviderKind::Azure, "a", &key, &s).is_err(), "no secrets with the environment's identity");
+        // Vertex AI: the project is required, the key file not.
+        assert!(env(ProviderKind::Vertex, CredentialSettings::default()).is_err());
+        let v = env(ProviderKind::Vertex, CredentialSettings { project_id: Some("p1".into()), ..Default::default() }).unwrap();
+        assert!(validate_credential(ProviderKind::Vertex, "v", &Secrets::default(), &v).is_ok());
+        // Other providers have their own chains (Bedrock) or none.
+        assert!(env(ProviderKind::Openai, CredentialSettings::default()).is_err());
+    }
 
     #[test]
     fn metric_series_fill_empty_buckets() {

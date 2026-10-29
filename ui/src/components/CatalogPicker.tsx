@@ -76,7 +76,18 @@ export function CatalogPicker({
   };
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    // Escape closes an open list only, not the dialog around the field.
+    if (e.key === "Escape" && listShown) {
+      e.stopPropagation();
+      setOpen(false);
+      return;
+    }
     if (e.key === "Escape") setOpen(false);
+    if (e.key === "ArrowDown" && !open) {
+      e.preventDefault();
+      show();
+      return;
+    }
     if (!open || !results.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -101,7 +112,9 @@ export function CatalogPicker({
             onChange(e.target.value);
             show();
           }}
-          onFocus={show}
+          // Focus alone (a form opening with this field focused) does not open the list; typing
+          // or the down arrow does. Coming back to the field keeps a list that is still open.
+          onFocus={() => clearTimeout(closing.current)}
           onBlur={() => {
             closing.current = setTimeout(() => setOpen(false), 120);
           }}

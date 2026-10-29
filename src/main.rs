@@ -14,6 +14,7 @@ mod config;
 mod conversations;
 mod crypto;
 mod db;
+mod entra;
 mod error;
 mod ir;
 mod labels;
@@ -143,6 +144,7 @@ async fn run() -> Result<(), String> {
         registry: registry::Registry::new(),
         aws: aws::Aws::default(),
         google: google::Google::default(),
+        entra: entra::Entra::default(),
         http,
         records: tx,
         started: Instant::now(),

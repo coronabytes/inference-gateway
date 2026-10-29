@@ -8,6 +8,10 @@ import {
   type Credential,
   type Deployment,
   type DeploymentInput,
+  type BedrockModel,
+  type BedrockModels,
+  type FoundryDeployment,
+  type FoundryDeployments,
   type Mode,
   type ModelAlias,
   type NamedItem,
@@ -21,7 +25,7 @@ import { PRICE_FIELDS, catalogScope, deploymentPrices, priceDifferences, suggest
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, Section, optInt, optNum, type ConfirmRequest } from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
-import { Credentials, connectionSummary } from "./Credentials";
+import { Credentials, connectionSummary, usesEntra } from "./Credentials";
 import { Guardrails } from "./Guardrails";
 import { ModelHub } from "./ModelHub";
 import { Playground } from "./Playground";
@@ -32,7 +36,13 @@ import { AliasCard, AliasForm } from "./Aliases";
 
 /** Chat protocols per provider. Embedding and decision deployments have one protocol each. */
 /** Protocols by provider. The note is what the protocol is for there; it may be cut off in the button. */
-const STYLES: Record<Provider, { value: ApiStyle; label: string; note?: string }[]> = {
+/**
+ * A protocol choice. Bedrock offers Claude's Messages API two ways, both `anthropic` upstream:
+ * `invoke` (InvokeModel) and `anthropic` (bedrock-mantle, the default before the choice existed).
+ */
+type StyleChoice = ApiStyle | "invoke";
+
+const STYLES: Record<Provider, { value: StyleChoice; label: string; note?: string }[]> = {
   openai: [
     { value: "chat", label: "Chat Completions" },
     { value: "responses", label: "Responses" },
@@ -45,6 +55,7 @@ const STYLES: Record<Provider, { value: ApiStyle; label: string; note?: string }
   anthropic: [{ value: "anthropic", label: "Anthropic Messages" }],
   bedrock: [
     { value: "converse", label: "Converse", note: "any Bedrock model" },
+    { value: "invoke", label: "Anthropic Messages", note: "Claude via InvokeModel" },
     { value: "anthropic", label: "Anthropic Messages", note: "Claude via bedrock-mantle" },
   ],
   typesafe: [],
@@ -738,6 +749,22 @@ export function Models() {
   );
 }
 
+/** What a Foundry deployment runs and what its quota allows: "gpt-4o 2024-11-20 · GlobalStandard · 2.7K RPM, 450K TPM". */
+function foundryNote(d: FoundryDeployment): string {
+  const limits = [d.rpm != null && `${compact(d.rpm)} RPM`, d.tpm != null && `${compact(d.tpm)} TPM`].filter(Boolean).join(", ");
+  const state = d.state && d.state !== "Succeeded" ? d.state.toLowerCase() : "";
+  const sku = d.sku && d.data_zone ? `${d.sku} (${d.data_zone.toUpperCase()})` : d.sku;
+  return [[d.model, d.model_version].filter(Boolean).join(" "), sku, limits, state].filter(Boolean).join(" · ");
+}
+
+const BEDROCK_KIND: Record<BedrockModel["kind"], string> = { on_demand: "on-demand", cross_region: "cross-region profile", global: "global profile" };
+
+/** How a Bedrock model is called and what its account quota allows: "cross-region profile · 200 RPM, 2M TPM". */
+function bedrockNote(b: BedrockModel): string {
+  const limits = [b.rpm != null && `${compact(b.rpm)} RPM`, b.tpm != null && `${compact(b.tpm)} TPM`].filter(Boolean).join(", ");
+  return [BEDROCK_KIND[b.kind], limits, b.legacy && "legacy"].filter(Boolean).join(" · ");
+}
+
 function DeploymentForm({
   initial,
   copyOf,
@@ -756,6 +783,7 @@ function DeploymentForm({
   /** Projects the deployment can be limited to. */
   projects: NamedItem[];
   credentials: Credential[];
+  /** The deployments listed on the page, to tell which share a Bedrock model's account quota. */
   onSave: (d: DeploymentInput) => Promise<void>;
   /** Offered when editing: closes the dialog and asks for confirmation. */
   onDelete?: () => void;
@@ -772,7 +800,9 @@ function DeploymentForm({
   const [upstream, setUpstream] = useState(from?.upstream_model ?? "");
   const firstFor = (p: Provider) => credentials.find((c) => c.provider === p)?.id ?? "";
   const [credentialId, setCredentialId] = useState(from?.credential_id ?? firstFor(from?.provider ?? "openai"));
-  const [style, setStyle] = useState<ApiStyle>(from?.config.api_style ?? STYLES[from?.provider ?? "openai"][0]?.value ?? "chat");
+  const [style, setStyle] = useState<StyleChoice>(
+    from?.config.bedrock_api === "invoke" ? "invoke" : (from?.config.api_style ?? STYLES[from?.provider ?? "openai"][0]?.value ?? "chat"),
+  );
   const [thinking, setThinking] = useState(from?.config.thinking_mode ?? "adaptive");
   const [defaultMax, setDefaultMax] = useState(from?.config.default_max_tokens?.toString() ?? "");
   const [maxField, setMaxField] = useState(from?.config.max_tokens_field ?? "");
@@ -807,9 +837,41 @@ function DeploymentForm({
   const [busy, setBusy] = useState(false);
 
   const chat = mode === "chat";
-  const anthropicStyle = chat && (style === "anthropic" || (provider === "bedrock" && style === "converse"));
+  const anthropicStyle = chat && (style === "anthropic" || style === "invoke" || (provider === "bedrock" && style === "converse"));
   const available = credentials.filter((c) => c.provider === provider);
   const selected = available.find((c) => c.id === credentialId);
+  // Azure credentials with Entra ID can list their resource's deployments.
+  const listable = selected && usesEntra(selected) ? selected.id : null;
+  const [foundry, setFoundry] = useState<FoundryDeployments | null>(null);
+  const [foundryError, setFoundryError] = useState<string | null>(null);
+  useEffect(() => {
+    setFoundry(null);
+    setFoundryError(null);
+    if (!listable) return;
+    let live = true;
+    api<FoundryDeployments>(`/credentials/${listable}/foundry-deployments`)
+      .then((r) => live && setFoundry(r))
+      .catch((e) => live && setFoundryError((e as Error).message));
+    return () => {
+      live = false;
+    };
+  }, [listable]);
+  // Bedrock credentials with AWS credentials (not a Bedrock API key) can list models and quotas.
+  const bedrockListable = provider === "bedrock" && selected && !selected.secrets_set.api_key ? selected.id : null;
+  const [bedrock, setBedrock] = useState<BedrockModels | null>(null);
+  const [bedrockError, setBedrockError] = useState<string | null>(null);
+  useEffect(() => {
+    setBedrock(null);
+    setBedrockError(null);
+    if (!bedrockListable) return;
+    let live = true;
+    api<BedrockModels>(`/credentials/${bedrockListable}/bedrock-models`)
+      .then((r) => live && setBedrock(r))
+      .catch((e) => live && setBedrockError((e as Error).message));
+    return () => {
+      live = false;
+    };
+  }, [bedrockListable]);
 
   // One line each for the collapsed sections.
   const limits = [rpm.trim() && `${rpm.trim()} RPM`, tpm.trim() && `${tpm.trim()} TPM`].filter(Boolean).join(", ");
@@ -864,9 +926,9 @@ function DeploymentForm({
    * (= input) when they are the input price. A match found automatically (`auto`) leaves prices
    * typed by hand alone.
    */
-  const applyCatalog = (entry: PriceEntry, auto: boolean) => {
+  const applyCatalog = (entry: PriceEntry, auto: boolean, m: Mode = mode) => {
     // The same conversion the price check uses, so a filled-in deployment always matches it.
-    const p = deploymentPrices(entry.data, mode);
+    const p = deploymentPrices(entry.data, m);
     setBaseModel(entry.key);
     setBaseAuto(auto);
     if (auto && pricesTouched) return;
@@ -904,6 +966,92 @@ function DeploymentForm({
     return () => clearTimeout(t);
   }, [provider, upstream, mode]);
 
+  /**
+   * Fill the form from a deployment on the Foundry resource: its name as the upstream model, its
+   * mode and protocol, the catalog entry of its model (with prices) and its quota as the limits.
+   * The catalog is looked up first, so everything changes at once and the upstream model's own
+   * catalog lookup finds the base model already picked.
+   */
+  const pickFoundry = async (name: string) => {
+    const f = foundry?.deployments.find((d) => d.name === name);
+    if (!f) return;
+    const m = initial ? mode : f.mode;
+    // Most specific first: the data zone's price (azure/eu/…, azure/us/…), the model's version
+    // (prices change between versions), then the model without either.
+    const models = [f.model_version && `${f.model}-${f.model_version}`, f.model].filter((x): x is string => !!x);
+    const zoned = f.data_zone ? models.map((x) => `${f.data_zone}/${x}`) : [];
+    let entry: PriceEntry | null = null;
+    for (const model of [...zoned, ...models]) {
+      try {
+        entry = (await api<{ exact: PriceEntry | null }>(`/prices/match?provider=azure&model=${encodeURIComponent(model)}`)).exact;
+      } catch {
+        /* the catalog is optional */
+      }
+      if (entry) break;
+    }
+    const zoneMissing = !!f.data_zone && !!entry && !entry.key.includes(`/${f.data_zone}/`);
+    if (m !== mode) {
+      setMode(m);
+      prefill(m, provider);
+    }
+    if (m === "chat" && f.api_style) setStyle(f.api_style);
+    setUpstream(f.name);
+    if (nameAuto) setModelName(suggestModelName(f.model));
+    setRpm(f.rpm != null ? String(f.rpm) : "");
+    setTpm(f.tpm != null ? String(f.tpm) : "");
+    if (entry) {
+      applyCatalog(entry, false, m);
+      if (zoneMissing)
+        setPricingNote(
+          `The price catalog has no ${f.data_zone!.toUpperCase()} data zone entry for ${f.model}; prices are filled from ${entry.key}. Data zone prices are usually higher, so check them before saving.`,
+        );
+    } else setPricingNote(`The price catalog has no entry for ${f.model}; enter its prices yourself.`);
+  };
+
+  /**
+   * Fill the form from a Bedrock model or inference profile: its ID as the upstream model, its
+   * mode, the catalog entry with prices, and the account's quota as the limits when it could be
+   * read (otherwise the limits stay as they are, to be entered by hand).
+   */
+  const pickBedrock = async (id: string) => {
+    const b = bedrock?.models.find((x) => x.id === id);
+    if (!b) return;
+    const m = initial ? mode : b.mode;
+    let entry: PriceEntry | null = null;
+    try {
+      entry = (await api<{ exact: PriceEntry | null }>(`/prices/match?provider=bedrock&model=${encodeURIComponent(b.id)}`)).exact;
+    } catch {
+      /* the catalog is optional */
+    }
+    if (m !== mode) {
+      setMode(m);
+      prefill(m, provider);
+    }
+    setUpstream(b.id);
+    if (nameAuto) setModelName(suggestModelName(b.id));
+    if (b.rpm != null) setRpm(String(b.rpm));
+    if (b.tpm != null) setTpm(String(b.tpm));
+    if (entry) applyCatalog(entry, false, m);
+    else setPricingNote(`The price catalog has no entry for ${b.id}; enter its prices yourself.`);
+  };
+  // Bedrock quotas belong to the account, not the deployment: others on this credential with the
+  // same model share them. The server lists the credential's deployments, whatever the page shows.
+  const [onCredential, setOnCredential] = useState<Deployment[]>([]);
+  useEffect(() => {
+    setOnCredential([]);
+    if (provider !== "bedrock" || !credentialId) return;
+    let live = true;
+    api<Deployment[]>(`/deployments?credentials=${credentialId}`)
+      .then((r) => live && setOnCredential(r))
+      .catch(() => {
+        /* only for the note below */
+      });
+    return () => {
+      live = false;
+    };
+  }, [provider, credentialId]);
+  const sharing = onCredential.filter((d) => d.id !== initial?.id && d.upstream_model === upstream.trim());
+
   /** Price inputs: typing marks the prices as the user's own. */
   const priceInput = (set: (v: string) => void) => (e: { target: { value: string } }) => {
     set(e.target.value);
@@ -921,7 +1069,9 @@ function DeploymentForm({
         upstream_model: upstream.trim(),
         credential_id: credentialId,
         config: {
-          ...(chat && { api_style: style }),
+          ...(chat && { api_style: style === "invoke" ? "anthropic" : style }),
+          ...(chat && provider === "bedrock" && style === "invoke" && { bedrock_api: "invoke" as const }),
+          ...(chat && provider === "bedrock" && style === "anthropic" && { bedrock_api: "mantle" as const }),
           ...(anthropicStyle && thinking !== "adaptive" && { thinking_mode: thinking }),
           ...(chat && optInt(defaultMax) && { default_max_tokens: optInt(defaultMax)! }),
           ...(chat && maxField && style === "chat" && !MAX_TOKENS_ONLY.includes(provider) && { max_tokens_field: maxField }),
@@ -1022,6 +1172,78 @@ function DeploymentForm({
         )}
         <fieldset>
           <legend>Model</legend>
+          {listable && (
+            <div className="field">
+              <Select
+                caption="Foundry deployment"
+                hint={
+                  <>
+                    The deployments on {foundry ? <span className="mono">{foundry.resource.split("/").pop()}</span> : "the credential's resource"}, read
+                    with its Entra ID app. Picking one fills in the upstream model, protocol, base model with its prices, and the RPM and TPM
+                    limits of its quota.
+                  </>
+                }
+                value={foundry?.deployments.some((d) => d.name === upstream) ? upstream : ""}
+                onChange={pickFoundry}
+                empty={foundryError ? "Not available" : foundry ? "No deployments" : "Loading…"}
+                options={(foundry?.deployments ?? []).map((d) => ({
+                  value: d.name,
+                  label: d.name,
+                  group: MODES.find((x) => x.value === d.mode)!.label,
+                  note: foundryNote(d),
+                  disabled: !!initial && d.mode !== mode,
+                }))}
+              />
+              {foundryError && <p className="muted small">Could not list the deployments: {foundryError}</p>}
+            </div>
+          )}
+          {bedrockListable && (
+            <div className="field">
+              <Select
+                caption="Bedrock model"
+                hint={
+                  <ul className="hint-list">
+                    <li>
+                      The models and inference profiles the credential can call{bedrock ? ` in ${bedrock.region}` : ""}. Picking one fills in the
+                      upstream model, base model with its prices, and the RPM and TPM limits of the account&apos;s quota for it.
+                    </li>
+                    <li>
+                      <strong>Quotas belong to the AWS account and region</strong>, not to a deployment: everything using the account shares them.
+                      Lower the limits when other deployments or applications use the same model.
+                    </li>
+                    <li>
+                      Bedrock may count a model&apos;s output tokens several times against its TPM quota (its token burndown rate), so the
+                      gateway&apos;s TPM limit can let more through than the quota allows. Check the model&apos;s rate in the AWS documentation.
+                    </li>
+                    <li>
+                      <strong>Permissions:</strong> listing needs <span className="mono">bedrock:ListFoundationModels</span> and{" "}
+                      <span className="mono">bedrock:ListInferenceProfiles</span>, the limits{" "}
+                      <span className="mono">servicequotas:ListServiceQuotas</span>. Without them, type the values in.
+                    </li>
+                  </ul>
+                }
+                value={bedrock?.models.some((b) => b.id === upstream) ? upstream : ""}
+                onChange={pickBedrock}
+                empty={bedrockError ? "Not available" : bedrock ? "No models" : "Loading…"}
+                options={(bedrock?.models ?? []).map((b) => ({
+                  value: b.id,
+                  label: b.name,
+                  group: MODES.find((x) => x.value === b.mode)!.label,
+                  note: bedrockNote(b),
+                  disabled: !!initial && b.mode !== mode,
+                }))}
+              />
+              {bedrockError && <p className="muted small">Could not list the models: {bedrockError}</p>}
+              {bedrock?.models_error && <p className="muted small">{bedrock.models_error} Enter the upstream model yourself.</p>}
+              {bedrock?.quotas_error && <p className="muted small">{bedrock.quotas_error} Enter the RPM and TPM limits yourself.</p>}
+              {sharing.length > 0 && (
+                <p className="muted small">
+                  {sharing.map((d) => d.model_name).join(", ")} {sharing.length === 1 ? "uses" : "use"} the same model on this credential and
+                  {sharing.length === 1 ? " shares" : " share"} its quota. Split the limits between them.
+                </p>
+              )}
+            </div>
+          )}
           {/* Upstream IDs can be long (Bedrock profiles, ARNs): two thirds of the line. */}
           <div className="row wide-first">
             <CatalogPicker
@@ -1069,7 +1291,28 @@ function DeploymentForm({
               placeholder={provider === "typesafe" ? "e.g. jev-latest" : provider === "bedrock" && mode === "embedding" ? `e.g. ${TITAN_MODEL}` : "search the catalog or type"}
             />
             {chat ? (
-              <Select caption="Protocol" value={style} onChange={(s) => setStyle(s as ApiStyle)} options={STYLES[provider]} />
+              <Select
+                caption="Protocol"
+                hint={
+                  provider === "bedrock" ? (
+                    <ul className="hint-list">
+                      <li>
+                        <strong>Converse</strong> works with every Bedrock chat model.
+                      </li>
+                      <li>
+                        <strong>Anthropic Messages via InvokeModel</strong> sends Claude its own API through Bedrock Runtime, in any region or
+                        inference profile that serves the model, with token counting.
+                      </li>
+                      <li>
+                        <strong>via bedrock-mantle</strong> calls Bedrock&apos;s Anthropic-compatible endpoint, where it is available.
+                      </li>
+                    </ul>
+                  ) : undefined
+                }
+                value={style}
+                onChange={(s) => setStyle(s as StyleChoice)}
+                options={STYLES[provider]}
+              />
             ) : (
               <TextInput
                 caption="Protocol"

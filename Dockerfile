@@ -25,6 +25,9 @@ COPY .sqlx .sqlx
 COPY build.rs build.rs
 COPY src src
 ENV SQLX_OFFLINE=true
+# build.rs reads the console's AWS region list from the SDK crate the dependency step downloaded
+# into CARGO_HOME; without it the image would offer no region list, so the build fails instead.
+ENV GATEWAY_REQUIRE_AWS_REGIONS=1
 # The git tag the image is built from (the release workflow passes it); .git is not in the
 # build context, so build.rs cannot ask git. Declared here so it does not invalidate the
 # dependency layer above.

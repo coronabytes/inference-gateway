@@ -134,6 +134,12 @@ async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &[u8
 }
 
 async fn call(state: &AppState, d: &Deployment, req: &RerankRequest) -> Result<(Vec<Ranked>, Usage), GatewayError> {
+    // Bedrock with AWS credentials goes through the Agent Runtime SDK; its SDK cannot send a
+    // Bedrock API key, so a deployment with one calls the API itself.
+    if d.provider == ProviderKind::Bedrock && d.secrets.api_key.is_none() {
+        let ranked = bedrock_rerank(state, d, req, &model_arn(state, d).await?).await?;
+        return Ok((ranked, Usage { search_units: searches(req.documents.len()), ..Default::default() }));
+    }
     let url = providers::url(state, d, Op::Rerank).await?;
     let body = match d.provider {
         ProviderKind::Bedrock => bedrock_request(req, &model_arn(state, d).await?),
@@ -203,7 +209,8 @@ async fn model_arn(state: &AppState, d: &Deployment) -> Result<String, GatewayEr
     Ok(format!("arn:{partition}:bedrock:{region}::foundation-model/{}", d.upstream_model))
 }
 
-/// Bedrock's Rerank request (Agent Runtime). `max_tokens_per_doc` is Cohere's and not sent.
+/// Bedrock's Rerank request (Agent Runtime), for deployments with a Bedrock API key.
+/// `max_tokens_per_doc` is Cohere's and not sent.
 fn bedrock_request(req: &RerankRequest, model_arn: &str) -> Value {
     let sources: Vec<Value> = req
         .documents
@@ -221,6 +228,43 @@ fn bedrock_request(req: &RerankRequest, model_arn: &str) -> Value {
             },
         },
     })
+}
+
+/// Bedrock's Rerank through the Agent Runtime SDK, the same request as `bedrock_request`.
+async fn bedrock_rerank(state: &AppState, d: &Deployment, req: &RerankRequest, model_arn: &str) -> Result<Vec<Ranked>, GatewayError> {
+    use aws_sdk_bedrockagentruntime::types as at;
+    let build = |e: aws_smithy_types::error::operation::BuildError| GatewayError::invalid(format!("not a valid Bedrock rerank request: {e}"));
+    let text = |t: &str| at::RerankTextDocument::builder().text(t).build();
+    let query = at::RerankQuery::builder().r#type(at::RerankQueryContentType::Text).text_query(text(&req.query)).build().map_err(build)?;
+    let sources = req
+        .documents
+        .iter()
+        .map(|doc| {
+            let inline = at::RerankDocument::builder().r#type(at::RerankDocumentType::Text).text_document(text(doc)).build()?;
+            at::RerankSource::builder().r#type(at::RerankSourceType::Inline).inline_document_source(inline).build()
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(build)?;
+    let model = at::BedrockRerankingModelConfiguration::builder().model_arn(model_arn).build().map_err(build)?;
+    let bedrock = at::BedrockRerankingConfiguration::builder()
+        .model_configuration(model)
+        .number_of_results(req.top_n.unwrap_or(req.documents.len()) as i32)
+        .build();
+    let config = at::RerankingConfiguration::builder()
+        .r#type(at::RerankingConfigurationType::BedrockRerankingModel)
+        .bedrock_reranking_configuration(bedrock)
+        .build()
+        .map_err(build)?;
+    let client = state.aws.agent_runtime(state, d).await?;
+    let call = client.rerank().queries(query).set_sources(Some(sources)).reranking_configuration(config).send();
+    let out = tokio::time::timeout(d.timeout, call)
+        .await
+        .map_err(|_| GatewayError { upstream: true, ..GatewayError::timeout("upstream timed out") })?
+        .map_err(crate::aws::sdk_error)?;
+    if out.results().is_empty() && !req.documents.is_empty() {
+        return Err(GatewayError::upstream_stream(ErrorKind::Upstream, "the rerank model returned no results"));
+    }
+    Ok(out.results().iter().map(|r| Ranked { index: r.index() as usize, score: r.relevance_score() as f64 }).collect())
 }
 
 fn bedrock_results(v: &Value) -> Result<Vec<Ranked>, GatewayError> {

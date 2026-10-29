@@ -39,7 +39,7 @@ use utoipa::{
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
         paths::get_oidc_settings, paths::put_oidc_settings, paths::test_oidc_settings, paths::list_admins, paths::delete_admin, paths::set_admin_projects,
-        paths::list_credentials, paths::create_credential, paths::update_credential, paths::delete_credential,
+        paths::list_credentials, paths::create_credential, paths::update_credential, paths::delete_credential, paths::foundry_deployments, paths::bedrock_models, paths::aws_regions,
         paths::list_guardrails, paths::create_guardrail, paths::update_guardrail, paths::delete_guardrail, paths::test_guardrail,
         paths::guardrail_prices,
         paths::list_deployments, paths::create_deployment, paths::get_deployment, paths::update_deployment,
@@ -772,6 +772,48 @@ mod paths {
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn delete_credential() {}
+
+    /// List Foundry deployments
+    ///
+    /// The deployments on an Azure credential's resource, with their model and the rate limits of
+    /// their quota, read from Azure Resource Manager. Only for credentials that use Entra ID; the
+    /// app needs read access to the resource (Cognitive Services User includes it).
+    #[utoipa::path(get, path = "/admin/api/credentials/{id}/foundry-deployments", tag = "Credentials", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The resource and its deployments.", body = crate::entra::FoundryDeployments),
+            (status = 400, description = "Not an Azure credential with Entra ID.", body = AdminError),
+            (status = 404, description = "No such credential.", body = AdminError),
+            (status = 502, description = "Entra ID or Azure Resource Manager refused or failed.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn foundry_deployments() {}
+
+    /// List Bedrock models
+    ///
+    /// The foundation models and inference profiles a Bedrock credential can call in its region,
+    /// with the per-minute request and token quotas of its account, read with the AWS SDK. Needs
+    /// `bedrock:ListFoundationModels`, `bedrock:ListInferenceProfiles` and
+    /// `servicequotas:ListServiceQuotas`; a listing the credential may not read is described in
+    /// `models_error` or `quotas_error` instead of failing the request.
+    #[utoipa::path(get, path = "/admin/api/credentials/{id}/bedrock-models", tag = "Credentials", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The models, and what could not be read.", body = crate::aws::models::BedrockModels),
+            (status = 400, description = "Not a Bedrock credential, or one with a Bedrock API key.", body = AdminError),
+            (status = 404, description = "No such credential.", body = AdminError),
+            (status = 502, description = "No AWS region or credentials could be found.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn bedrock_models() {}
+
+    /// List AWS regions
+    ///
+    /// The regions of the AWS SDK this gateway was built with (commercial, European Sovereign
+    /// Cloud, GovCloud and China), with their names, for a Bedrock credential's region. Empty if
+    /// the build could not read them.
+    #[utoipa::path(get, path = "/admin/api/aws-regions", tag = "Credentials",
+        responses((status = 200, description = "The regions.", body = Vec<crate::aws::AwsRegion>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn aws_regions() {}
 
     // ------------------------------------------------------------ guardrails
 

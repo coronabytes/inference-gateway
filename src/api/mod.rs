@@ -719,6 +719,17 @@ async fn passthrough(
         Inbound::Responses => Op::Responses,
         Inbound::Chat => Op::ChatCompletions,
     };
+    // Claude through Bedrock's InvokeModel: the SDK sends the body and the stream comes back as
+    // Anthropic's SSE.
+    if d.bedrock_invoke() {
+        return Ok(match providers::bedrock::passthrough(state, d, &body, stream).await? {
+            providers::bedrock::Passthrough::Stream(s) => Outcome::PassStream(s),
+            providers::bedrock::Passthrough::Full(bytes) => {
+                let usage = serde_json::from_slice::<Value>(&bytes).ok().map(|v| providers::anthropic::usage(&v["usage"])).unwrap_or_default();
+                Outcome::PassFull(bytes, usage)
+            }
+        });
+    }
     providers::prepare_body(d, op, &mut body);
     let url = providers::url(state, d, op).await?;
     let mut headers = providers::headers(d)?;
@@ -961,6 +972,9 @@ async fn count(
     crate::auth::check_key_limits(state, key).await?;
     if let Some(d) = deps.iter().find(|d| d.style == ApiStyle::Anthropic && key.allows_deployment(d)) {
         tracker.attempt(d.clone());
+        if d.bedrock_invoke() {
+            return Ok(Json(providers::bedrock::count_tokens(state, d, &raw).await?).into_response());
+        }
         raw["model"] = d.upstream_model.clone().into();
         providers::prepare_body(d, Op::CountTokens, &mut raw);
         let url = providers::url(state, d, Op::CountTokens).await?;

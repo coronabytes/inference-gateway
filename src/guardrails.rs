@@ -355,39 +355,124 @@ pub fn arn_region(identifier: &str) -> Option<&str> {
     identifier.strip_prefix("arn:").and_then(|rest| rest.split(':').nth(2)).filter(|r| !r.is_empty())
 }
 
+/// Bedrock's ApplyGuardrail, through the SDK. A guardrail named by ARN is called in the ARN's
+/// region, others in the credential's.
 async fn bedrock(state: &AppState, g: &Callable<'_>, source: Source, texts: &[String]) -> Result<Verdict, GatewayError> {
+    use aws_sdk_bedrockruntime::types as bt;
     let missing = || GatewayError::internal("guardrail has no Bedrock guardrail identifier or version");
     let identifier = g.row.config.guardrail_identifier.as_deref().ok_or_else(missing)?;
     let version = g.row.config.guardrail_version.as_deref().ok_or_else(missing)?;
-    let region = match arn_region(identifier) {
-        Some(r) => r.to_string(),
-        None => state.aws.region_for(g.settings).await?,
-    };
-    let base = g.settings.base_url.clone().unwrap_or_else(|| format!("https://bedrock-runtime.{region}.amazonaws.com"));
-    let seg = |s: &str| utf8_percent_encode(s, PATH_SEGMENT).to_string();
-    let url = format!("{}/guardrail/{}/version/{}/apply", base.trim_end_matches('/'), seg(identifier), seg(version));
-    if let Err(why) = state.cfg.upstream_policy.check_url(&url) {
-        return Err(GatewayError::internal(format!("guardrail address not allowed: {why}")));
+    let mut settings = g.settings.clone();
+    if let Some(r) = arn_region(identifier) {
+        settings.region = Some(r.to_string());
     }
-    let body = json!({
-        "source": match source { Source::Input => "INPUT", Source::Output => "OUTPUT" },
-        "content": texts.iter().map(|t| json!({ "text": { "text": t } })).collect::<Vec<_>>(),
+    let build = |e: aws_smithy_types::error::operation::BuildError| GatewayError::internal(format!("guardrail request: {e}"));
+    let content = texts
+        .iter()
+        .map(|t| bt::GuardrailTextBlock::builder().text(t).build().map(bt::GuardrailContentBlock::Text))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(build)?;
+    let client = state.aws.runtime_for(state, &settings, g.secrets, g.settings.base_url.clone()).await?;
+    let call = client
+        .apply_guardrail()
+        .guardrail_identifier(identifier)
+        .guardrail_version(version)
+        .source(match source {
+            Source::Input => bt::GuardrailContentSource::Input,
+            Source::Output => bt::GuardrailContentSource::Output,
+        })
+        .set_content(Some(content))
         // Every block's output, masked or not, so they map back one to one.
-        "outputScope": "FULL",
-    });
-    let body = serde_json::to_vec(&body).map_err(|e| GatewayError::internal(e.to_string()))?;
-    let mut headers = HeaderMap::new();
-    headers.insert("content-type", HeaderValue::from_static("application/json"));
-    match &g.secrets.api_key {
-        Some(key) => {
-            let mut v = HeaderValue::from_str(&format!("Bearer {key}")).map_err(|_| GatewayError::internal("invalid Bedrock API key"))?;
-            v.set_sensitive(true);
-            headers.insert("authorization", v);
+        .output_scope(bt::GuardrailOutputScope::Full)
+        .send();
+    let started = Instant::now();
+    let out = match tokio::time::timeout(TIMEOUT, call).await {
+        Ok(Ok(out)) => out,
+        Ok(Err(e)) => {
+            let e = crate::aws::sdk_error(e);
+            tracing::warn!(guardrail = %g.row.id, error = %e.message, "guardrail error");
+            return Err(e);
         }
-        None => state.aws.sign_as(g.secrets, &region, "bedrock", &url, &mut headers, &body).await?,
-    }
-    let v = send(state, g, &url, headers, body).await?;
-    Ok(parse_bedrock(&v, &g.row.prices))
+        Err(_) => return Err(GatewayError { upstream: true, ..GatewayError::timeout("guardrail timed out") }),
+    };
+    tracing::debug!(guardrail = %g.row.id, ms = started.elapsed().as_millis() as u64, "guardrail checked");
+    Ok(parse_bedrock(&apply_guardrail_json(&out), &g.row.prices))
+}
+
+/// An ApplyGuardrail answer as Bedrock's JSON, the fields `parse_bedrock` reads.
+fn apply_guardrail_json(out: &aws_sdk_bedrockruntime::operation::apply_guardrail::ApplyGuardrailOutput) -> Value {
+    let assessments: Vec<Value> = out
+        .assessments()
+        .iter()
+        .map(|a| {
+            let mut v = serde_json::Map::new();
+            if let Some(p) = a.content_policy() {
+                let filters: Vec<Value> = p
+                    .filters()
+                    .iter()
+                    .map(|f| json!({ "type": f.r#type().as_str(), "action": f.action().as_str(), "detected": f.detected(), "confidence": f.confidence().as_str() }))
+                    .collect();
+                v.insert("contentPolicy".into(), json!({ "filters": filters }));
+            }
+            if let Some(p) = a.topic_policy() {
+                let topics: Vec<Value> = p
+                    .topics()
+                    .iter()
+                    .map(|t| json!({ "name": t.name(), "type": t.r#type().as_str(), "action": t.action().as_str(), "detected": t.detected() }))
+                    .collect();
+                v.insert("topicPolicy".into(), json!({ "topics": topics }));
+            }
+            if let Some(p) = a.word_policy() {
+                let custom: Vec<Value> =
+                    p.custom_words().iter().map(|w| json!({ "match": w.r#match(), "action": w.action().as_str(), "detected": w.detected() })).collect();
+                let managed: Vec<Value> = p
+                    .managed_word_lists()
+                    .iter()
+                    .map(|w| json!({ "match": w.r#match(), "type": w.r#type().as_str(), "action": w.action().as_str(), "detected": w.detected() }))
+                    .collect();
+                v.insert("wordPolicy".into(), json!({ "customWords": custom, "managedWordLists": managed }));
+            }
+            if let Some(p) = a.sensitive_information_policy() {
+                let pii: Vec<Value> = p
+                    .pii_entities()
+                    .iter()
+                    .map(|e| json!({ "match": e.r#match(), "type": e.r#type().as_str(), "action": e.action().as_str(), "detected": e.detected() }))
+                    .collect();
+                let regexes: Vec<Value> = p
+                    .regexes()
+                    .iter()
+                    .map(|r| json!({ "name": r.name(), "match": r.r#match(), "action": r.action().as_str(), "detected": r.detected() }))
+                    .collect();
+                v.insert("sensitiveInformationPolicy".into(), json!({ "piiEntities": pii, "regexes": regexes }));
+            }
+            if let Some(p) = a.contextual_grounding_policy() {
+                let filters: Vec<Value> = p
+                    .filters()
+                    .iter()
+                    .map(|f| json!({ "type": f.r#type().as_str(), "action": f.action().as_str(), "detected": f.detected(), "score": f.score() }))
+                    .collect();
+                v.insert("contextualGroundingPolicy".into(), json!({ "filters": filters }));
+            }
+            Value::Object(v)
+        })
+        .collect();
+    let usage = out.usage().map(|u| {
+        json!({
+            "contentPolicyUnits": u.content_policy_units(),
+            "contentPolicyImageUnits": u.content_policy_image_units().unwrap_or(0),
+            "topicPolicyUnits": u.topic_policy_units(),
+            "sensitiveInformationPolicyUnits": u.sensitive_information_policy_units(),
+            "wordPolicyUnits": u.word_policy_units(),
+            "contextualGroundingPolicyUnits": u.contextual_grounding_policy_units(),
+            "automatedReasoningPolicyUnits": u.automated_reasoning_policy_units().unwrap_or(0),
+        })
+    });
+    json!({
+        "action": out.action().as_str(),
+        "outputs": out.outputs().iter().map(|o| json!({ "text": o.text() })).collect::<Vec<_>>(),
+        "assessments": assessments,
+        "usage": usage,
+    })
 }
 
 /// Posts a guardrail request and returns the JSON it answers.
@@ -436,20 +521,11 @@ async fn model_armor(state: &AppState, g: &Callable<'_>, source: Source, texts: 
     let missing = || GatewayError::internal("guardrail has no Model Armor template or location");
     let template = g.row.config.template.as_deref().ok_or_else(missing)?;
     let location = g.row.config.location.as_deref().ok_or_else(missing)?;
-    let sa = g
-        .secrets
-        .google_service_account
-        .as_deref()
-        .ok_or_else(|| GatewayError::internal("the guardrail's Vertex AI credential has no service account key"))
-        .and_then(|j| crate::google::ServiceAccount::parse(j).map_err(GatewayError::internal))?;
-    let project = g
-        .row
-        .config
-        .project_id
-        .clone()
-        .or_else(|| g.settings.project_id.clone())
-        .or_else(|| sa.project_id.clone())
-        .ok_or_else(|| GatewayError::internal("no Google Cloud project for the Model Armor template"))?;
+    let project = match g.row.config.project_id.clone() {
+        Some(p) => p,
+        None => crate::google::project(g.settings, g.secrets)
+            .map_err(|_| GatewayError::internal("no Google Cloud project for the Model Armor template"))?,
+    };
     let seg = |s: &str| utf8_percent_encode(s, PATH_SEGMENT).to_string();
     let (method, field) = match source {
         Source::Input => ("sanitizeUserPrompt", "userPromptData"),
@@ -464,7 +540,7 @@ async fn model_armor(state: &AppState, g: &Callable<'_>, source: Source, texts: 
     if let Err(why) = state.cfg.upstream_policy.check_url(&url) {
         return Err(GatewayError::internal(format!("guardrail address not allowed: {why}")));
     }
-    let token = state.google.access_token(state, &sa).await?;
+    let token = state.google.access_token(g.settings, g.secrets).await?;
     let mut auth = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| GatewayError::internal("invalid Google access token"))?;
     auth.set_sensitive(true);
     let calls = texts.iter().map(|t| {

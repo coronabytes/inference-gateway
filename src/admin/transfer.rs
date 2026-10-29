@@ -371,8 +371,10 @@ pub(super) async fn import(
                 };
                 claimed.insert(row.id);
                 new_creds.insert(row.id);
+                // One with the environment's identity (Azure, Vertex AI) stores no secret.
+                let environment = row.settings.0.identity == Some(crate::model::Identity::Environment);
                 creds.push(row);
-                if !c.secrets.is_empty() || needs_secret(provider) {
+                if (!c.secrets.is_empty() || needs_secret(provider)) && !environment {
                     needs_secrets.push(name.clone());
                 }
                 cred_changes.created.push(name);
