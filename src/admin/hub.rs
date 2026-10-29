@@ -73,6 +73,12 @@ pub(crate) struct HubView {
     /// those a client may ask for by name in `x-gateway-guardrails`.
     guardrails: Vec<HubGuardrail>,
     models: Vec<HubModel>,
+    /// How many models the key reaches (or the gateway serves) before `mode`, `vendor` and `q`.
+    total: usize,
+    /// The modes among those models (`router` for the auto routers), for the mode filter.
+    modes: Vec<String>,
+    /// The vendors among those models, for the vendor filter; models without one are not listed.
+    vendors: Vec<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -239,7 +245,7 @@ pub(crate) async fn hub(
         .filter(|m| key.is_none_or(|k| key_can_use(&snap, k, m)))
         .collect();
     names.sort();
-    let models = names
+    let all: Vec<HubModel> = names
         .into_iter()
         .map(|name| {
             let ds = models::deployments(&snap, key, name);
@@ -266,8 +272,13 @@ pub(crate) async fn hub(
                 deployments: hub_deployments(&ds),
             }
         })
-        .filter(|m| matches(m, &modes, &vendors, &term))
         .collect();
+    let total = all.len();
+    let mode_of = |m: &HubModel| if m.kind == "router" { "router".to_string() } else { m.mode.as_str().to_string() };
+    let known_modes: Vec<String> = all.iter().map(mode_of).collect::<BTreeSet<_>>().into_iter().collect();
+    let known_vendors: Vec<String> =
+        all.iter().filter_map(|m| m.metadata.get("vendor").and_then(Value::as_str)).map(str::to_string).collect::<BTreeSet<_>>().into_iter().collect();
+    let models = all.into_iter().filter(|m| matches(m, &modes, &vendors, &term)).collect();
 
     // Enforced first, in the order the request path runs them, then the rest on request.
     let project = key.and_then(|k| k.project_id).and_then(|p| snap.projects.get(&p));
@@ -321,7 +332,7 @@ pub(crate) async fn hub(
             allowed_tags: k.allowed_tags.clone(),
         }
     });
-    Ok(Json(HubView { key, guardrails, models }))
+    Ok(Json(HubView { key, guardrails, models, total, modes: known_modes, vendors: known_vendors }))
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]

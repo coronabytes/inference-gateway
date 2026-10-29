@@ -64,10 +64,12 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/config/export", get(transfer::export))
         .route("/config/import", post(transfer::import))
         .route("/keys", get(list_keys).post(create_key))
+        .route("/keys/options", get(key_options))
         .route("/keys/{id}", axum::routing::put(update_key).delete(delete_key))
         .route("/keys/{id}/reset-spend", post(reset_spend))
         .route("/keys/{id}/regenerate", post(regenerate_key))
         .route("/projects", get(list_projects).post(create_project))
+        .route("/projects/options", get(project_options))
         .route("/projects/{id}", axum::routing::put(update_project).delete(delete_project))
         .route("/projects/{id}/reset-spend", post(reset_project_spend))
         .route("/metrics", get(metrics))
@@ -77,12 +79,45 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/usage/keys", get(key_usage))
         .route("/cluster", get(cluster))
         .route("/settings", get(get_settings).put(put_settings))
+        .route("/playground/options", get(playground_options))
         .route("/playground/{api}", post(playground))
         .merge(crate::admin_auth::protected_api_routes())
         .merge(crate::prices::routes())
         // A route layer, so the guard knows which route it guards (users reach only some).
         .route_layer(middleware::from_fn_with_state(state, crate::admin_auth::require_admin))
         .merge(crate::admin_auth::api_routes())
+}
+
+/// A list page's search text, trimmed and in lower case; `None` when empty.
+fn search_text(q: Option<&str>) -> Option<String> {
+    q.map(|q| q.trim().to_lowercase()).filter(|q| !q.is_empty())
+}
+
+/// A comma-separated list filter (`a,b`); `None` when empty.
+fn csv(s: Option<&str>) -> Option<Vec<&str>> {
+    let items: Vec<&str> = s.unwrap_or("").split(',').map(str::trim).filter(|v| !v.is_empty()).collect();
+    (!items.is_empty()).then_some(items)
+}
+
+/// A comma-separated list of ids; `None` when empty.
+fn csv_ids(s: Option<&str>, what: &str) -> R<Option<Vec<Uuid>>> {
+    csv(s).map(|items| items.into_iter().map(|v| v.parse().map_err(|_| AdminError::bad_request(format!("{what} must be ids")))).collect()).transpose()
+}
+
+/// A comma-separated list filter on tags or projects, where `-` stands for none (no tags, no project).
+fn any_of<T>(s: Option<&str>, parse: impl Fn(&str) -> R<T>) -> R<db::AnyOf<T>> {
+    let Some(items) = csv(s) else { return Ok(db::AnyOf { any: None, none: false }) };
+    let none = items.contains(&"-");
+    let any = items.into_iter().filter(|v| *v != "-").map(parse).collect::<R<Vec<T>>>()?;
+    Ok(db::AnyOf { any: Some(any), none })
+}
+
+fn tag_filter(s: Option<&str>) -> R<db::AnyOf<String>> {
+    any_of(s, |t| Ok(t.to_string()))
+}
+
+fn project_filter(s: Option<&str>) -> R<db::AnyOf<Uuid>> {
+    any_of(s, |p| p.parse().map_err(|_| AdminError::bad_request("projects must be ids, or - for none")))
 }
 
 async fn status(State(state): State<AppState>) -> Json<Value> {
@@ -256,8 +291,20 @@ fn conflict_on_duplicate_name(e: sqlx::Error) -> AdminError {
     }
 }
 
-async fn list_credentials(State(state): State<AppState>) -> R<Json<Vec<CredentialView>>> {
-    let (creds, usage) = tokio::try_join!(db::list_credentials(&state.db), db::credential_usage(&state.db))?;
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct CredentialQuery {
+    /// Just the credentials whose name contains this text, ignoring case.
+    q: Option<String>,
+    /// Just the credentials of these providers, as `openai,azure`.
+    provider: Option<String>,
+}
+
+async fn list_credentials(State(state): State<AppState>, Query(q): Query<CredentialQuery>) -> R<Json<Vec<CredentialView>>> {
+    let search = search_text(q.q.as_deref());
+    let providers: Option<Vec<String>> = csv(q.provider.as_deref()).map(|p| p.into_iter().map(String::from).collect());
+    let (creds, usage) =
+        tokio::try_join!(db::search_credentials(&state.db, search.as_deref(), providers.as_deref()), db::credential_usage(&state.db))?;
     Ok(Json(
         creds
             .into_iter()
@@ -689,8 +736,34 @@ async fn credential_names(state: &AppState) -> R<HashMap<Uuid, String>> {
     Ok(db::list_credentials(&state.db).await?.into_iter().map(|c| (c.id, c.name)).collect())
 }
 
-async fn list_deployments(State(state): State<AppState>) -> R<Json<Vec<DeploymentView>>> {
-    let (rows, names) = tokio::try_join!(async { Ok(db::list_deployments(&state.db).await?) }, credential_names(&state))?;
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct DeploymentQuery {
+    /// Just the deployments whose model name contains this text, ignoring case.
+    q: Option<String>,
+    /// Just the deployments of this mode: `chat`, `embedding`, `decision` or `rerank`.
+    mode: Option<String>,
+    /// Just the deployments carrying any of these tags, as `azure,cheap`; `-` stands for none.
+    tags: Option<String>,
+    /// Just the deployments using any of these credentials (ids, comma-separated).
+    credentials: Option<String>,
+    /// Just the deployments limited to any of these projects (ids, comma-separated); `-` stands
+    /// for those open to every project.
+    projects: Option<String>,
+    /// Just these deployments (ids, comma-separated).
+    ids: Option<String>,
+}
+
+async fn list_deployments(State(state): State<AppState>, Query(q): Query<DeploymentQuery>) -> R<Json<Vec<DeploymentView>>> {
+    let search = search_text(q.q.as_deref());
+    let mode = q.mode.as_deref().map(str::trim).filter(|m| !m.is_empty());
+    if let Some(m) = mode.filter(|m| Mode::parse(m).is_none()) {
+        return Err(AdminError::bad_request(format!("unknown mode '{m}'")));
+    }
+    let (tags, projects) = (tag_filter(q.tags.as_deref())?, project_filter(q.projects.as_deref())?);
+    let (credentials, ids) = (csv_ids(q.credentials.as_deref(), "credentials")?, csv_ids(q.ids.as_deref(), "ids")?);
+    let rows = db::search_deployments(&state.db, search.as_deref(), mode, &tags, credentials.as_deref(), &projects, ids.as_deref());
+    let (rows, names) = tokio::try_join!(async { Ok(rows.await?) }, credential_names(&state))?;
     let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
     let (cds, mut health) = tokio::join!(state.cache.cooldown_ttls(&ids), deployment_health(&state, &rows));
     let snap = state.registry.snapshot();
@@ -1004,8 +1077,42 @@ fn router_row(id: Uuid, i: RouterInput, created_at: DateTime<Utc>) -> RouterRow 
     }
 }
 
-async fn list_routers(State(state): State<AppState>) -> R<Json<Vec<RouterView>>> {
-    Ok(Json(db::list_routers(&state.db).await?.into_iter().map(router_view).collect()))
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct RouterQuery {
+    /// Just the routers whose model name contains this text, ignoring case.
+    q: Option<String>,
+    /// Just the routers carrying any of these tags, as `azure,cheap`; `-` stands for none.
+    tags: Option<String>,
+}
+
+/// A router in the list, with the models it names that no deployment serves.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct RouterListItem {
+    #[serde(flatten)]
+    router: RouterView,
+    /// Its decision model when no decision deployment has that name, and its routes' models that
+    /// no chat deployment has.
+    missing: Vec<String>,
+}
+
+async fn list_routers(State(state): State<AppState>, Query(q): Query<RouterQuery>) -> R<Json<Vec<RouterListItem>>> {
+    let search = search_text(q.q.as_deref());
+    let tags = tag_filter(q.tags.as_deref())?;
+    let (routers, deployments) = tokio::try_join!(db::search_routers(&state.db, search.as_deref(), &tags), db::list_deployments(&state.db))?;
+    let serves = |name: &str, mode: Mode| deployments.iter().any(|d| d.model_name == name && d.mode == mode.as_str());
+    Ok(Json(
+        routers
+            .into_iter()
+            .map(|r| {
+                let mut missing: BTreeSet<String> = r.routes.0.iter().flat_map(|route| &route.models).map(|m| m.model.clone()).filter(|m| !serves(m, Mode::Chat)).collect();
+                if !serves(&r.decision_model, Mode::Decision) {
+                    missing.insert(r.decision_model.clone());
+                }
+                RouterListItem { router: router_view(r), missing: missing.into_iter().collect() }
+            })
+            .collect(),
+    ))
 }
 
 async fn create_router(
@@ -1153,9 +1260,17 @@ async fn keep_aliases(state: &AppState, id: Uuid, old: &str) -> R<()> {
     Ok(())
 }
 
-async fn list_aliases(State(state): State<AppState>) -> R<Json<Vec<AliasView>>> {
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct AliasQuery {
+    /// Just the aliases whose name, or whose target's model name, contains this text, ignoring case.
+    q: Option<String>,
+}
+
+async fn list_aliases(State(state): State<AppState>, Query(q): Query<AliasQuery>) -> R<Json<Vec<AliasView>>> {
+    let search = search_text(q.q.as_deref());
     let (aliases, deployments, routers) =
-        tokio::try_join!(db::list_aliases(&state.db), db::list_deployments(&state.db), db::list_routers(&state.db))?;
+        tokio::try_join!(db::search_aliases(&state.db, search.as_deref()), db::list_deployments(&state.db), db::list_routers(&state.db))?;
     Ok(Json(aliases.into_iter().map(|a| alias_view(a, &deployments, &routers)).collect()))
 }
 
@@ -1421,11 +1536,15 @@ async fn known_tags(state: &AppState) -> R<BTreeMap<String, (usize, usize)>> {
     Ok(tags)
 }
 
-async fn list_tags(State(state): State<AppState>) -> R<Json<Value>> {
-    let tags = known_tags(&state).await?;
-    Ok(Json(json!(
-        tags.into_iter().map(|(tag, (d, r))| json!({ "tag": tag, "deployments": d, "routers": r })).collect::<Vec<_>>()
-    )))
+async fn list_tags(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Value>> {
+    let (tags, held) = tokio::try_join!(known_tags(&state), async { Ok(db::key_tag_counts(&state.db, access.projects()).await?) })?;
+    // Tags only keys still hold, once nothing carries them any more, come last.
+    let mut out: Vec<Value> =
+        tags.iter().map(|(tag, (d, r))| json!({ "tag": tag, "deployments": d, "routers": r, "keys": held.get(tag).copied().unwrap_or(0) })).collect();
+    let mut orphans: Vec<(&String, &i64)> = held.iter().filter(|(t, _)| !tags.contains_key(*t)).collect();
+    orphans.sort();
+    out.extend(orphans.into_iter().map(|(tag, n)| json!({ "tag": tag, "deployments": 0, "routers": 0, "keys": n })));
+    Ok(Json(json!(out)))
 }
 
 /// A key's tags, normalized. Keys only pick tags that deployments or routers define; tags a key
@@ -1462,14 +1581,42 @@ fn check_user_key(access: &Access, i: &KeyInput) -> R<()> {
     Ok(())
 }
 
-async fn list_keys(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<KeyView>>> {
-    let keys = db::list_keys(&state.db).await?;
-    let mut out = Vec::with_capacity(keys.len());
-    for k in keys.into_iter().filter(|k| sees_key(&access, k)) {
-        let budget = crate::budget::status(&state, &k).await;
-        out.push(KeyView { key: k, budget });
-    }
-    Ok(Json(out))
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct KeyQuery {
+    /// Just the keys whose name or shown prefix contains this text, ignoring case, or the key
+    /// this whole secret belongs to by its prefix.
+    q: Option<String>,
+    /// Just the keys holding any of these tags, as `azure,cheap`; `-` stands for none.
+    tags: Option<String>,
+    /// Just the keys in any of these projects (ids, comma-separated); `-` stands for none.
+    projects: Option<String>,
+}
+
+async fn list_keys(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<KeyQuery>) -> R<Json<Vec<KeyView>>> {
+    let search = search_text(q.q.as_deref());
+    let (tags, projects) = (tag_filter(q.tags.as_deref())?, project_filter(q.projects.as_deref())?);
+    let keys = db::search_keys(&state.db, search.as_deref(), &tags, &projects, access.projects()).await?;
+    let keys: Vec<VirtualKey> = keys.into_iter().filter(|k| sees_key(&access, k)).collect();
+    let budgets = futures::future::join_all(keys.iter().map(|k| crate::budget::status(&state, k))).await;
+    Ok(Json(keys.into_iter().zip(budgets).map(|(key, budget)| KeyView { key, budget }).collect()))
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct KeyOptionsQuery {
+    /// Just the keys that may call models now: enabled, unexpired, with an inference scope.
+    usable: Option<bool>,
+}
+
+/// `GET /keys/options`: the keys a picker offers, by name, without their settings or budgets.
+async fn key_options(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<KeyOptionsQuery>) -> R<Json<Vec<db::NamedItem>>> {
+    Ok(Json(db::key_names(&state.db, access.projects(), q.usable.unwrap_or(false)).await?))
+}
+
+/// `GET /projects/options`: the projects a picker offers, by name.
+async fn project_options(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<db::NamedItem>>> {
+    Ok(Json(db::project_names(&state.db, access.projects()).await?))
 }
 
 async fn create_key(
@@ -1686,12 +1833,17 @@ fn duplicate_project(e: sqlx::Error) -> AdminError {
     if db::is_unique_violation(&e) { AdminError::conflict("a project with this name already exists") } else { e.into() }
 }
 
-async fn list_projects(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<ProjectView>>> {
-    let mut out = Vec::new();
-    for (project, keys) in db::list_projects(&state.db).await?.into_iter().filter(|(p, _)| access.sees(Some(p.id))) {
-        out.push(ProjectView::new(&state, project, keys).await);
-    }
-    Ok(Json(out))
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ProjectQuery {
+    /// Just the projects whose name or description contains this text, ignoring case.
+    q: Option<String>,
+}
+
+async fn list_projects(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<ProjectQuery>) -> R<Json<Vec<ProjectView>>> {
+    let search = search_text(q.q.as_deref());
+    let projects = db::list_projects(&state.db, search.as_deref(), access.projects()).await?;
+    Ok(Json(futures::future::join_all(projects.into_iter().map(|(project, keys)| ProjectView::new(&state, project, keys))).await))
 }
 
 async fn create_project(
@@ -1749,7 +1901,7 @@ async fn update_project(
     if !changes.is_empty() {
         audit::Event::new("project", "update").on(id, &p.name).details(changes.into()).record(&state, &actor).await;
     }
-    let keys = db::list_projects(&state.db).await?.into_iter().find(|(x, _)| x.id == id).map_or(0, |(_, n)| n);
+    let keys = db::list_projects(&state.db, None, Some(&[id])).await?.into_iter().find(|(x, _)| x.id == id).map_or(0, |(_, n)| n);
     Ok(Json(ProjectView::new(&state, p, keys).await))
 }
 
@@ -2194,6 +2346,48 @@ async fn put_settings(State(state): State<AppState>, Extension(actor): Extension
 #[into_params(parameter_in = Query)]
 pub(crate) struct PlaygroundQuery {
     key_id: Uuid,
+}
+
+/// What the playground offers for a key: the models it may call, and the guardrails a request may
+/// ask for, those the key or its project enforce marked.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PlaygroundOptions {
+    models: Vec<PlaygroundModel>,
+    guardrails: Vec<PlaygroundGuardrail>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PlaygroundModel {
+    name: String,
+    mode: Mode,
+    /// An auto router (chat mode).
+    router: bool,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PlaygroundGuardrail {
+    name: String,
+    /// Set on the key or its project: every request goes through it.
+    enforced: bool,
+}
+
+/// `GET /admin/api/playground/options?key_id=…`.
+async fn playground_options(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<PlaygroundQuery>) -> R<Json<PlaygroundOptions>> {
+    let snap = state.registry.snapshot();
+    // As in `playground`: a user sees only the inference keys of their projects.
+    let key = snap.keys.values().find(|k| k.id == q.key_id && sees_key(&access, k)).ok_or_else(AdminError::not_found)?;
+    let models = crate::api::models::names(&snap, key)
+        .into_iter()
+        .map(|name| {
+            let router = snap.routers.contains_key(snap.resolve(name));
+            let mode = if router { Mode::Chat } else { crate::api::models::deployments(&snap, Some(key), name).first().map_or(Mode::Chat, |d| d.mode) };
+            PlaygroundModel { name: name.clone(), mode, router }
+        })
+        .collect();
+    let project = key.project_id.and_then(|p| snap.projects.get(&p));
+    let enforced = |id: Uuid| key.guardrail_ids.contains(&id) || project.is_some_and(|p| p.guardrail_ids.contains(&id));
+    let guardrails = snap.guardrails.values().map(|g| PlaygroundGuardrail { name: g.row.name.clone(), enforced: enforced(g.row.id) }).collect();
+    Ok(Json(PlaygroundOptions { models, guardrails }))
 }
 
 /// `POST /admin/api/playground/{chat|responses|messages|embeddings|rerank|decisions|systemone|models|models-extended}?key_id=…`

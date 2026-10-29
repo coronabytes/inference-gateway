@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { api, type Hub, type HubDeployment, type HubModel, type HubPrices, type ModelMetadata, type VirtualKey } from "../api";
-import { Button, MenuButton, MultiSelect, Select, TextArea, TextInput } from "../components/controls";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { api, type Hub, type HubDeployment, type HubModel, type HubPrices, type ModelMetadata, type NamedItem } from "../api";
+import { Button, MenuButton, MultiSelect, Select, TextArea, TextInput, useDebounced } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
 import { Badge, EditIcon, ErrorBanner, IconButton, Modal } from "../components/ui";
@@ -63,9 +63,6 @@ const NO_VENDOR = " none";
 
 const displayName = (m: HubModel) => m.metadata.display_name?.trim() || m.name;
 
-/** The mode filter's value for a model: its mode, or "router" for an auto router. */
-const modeOf = (m: HubModel): string => (m.kind === "router" ? "router" : m.mode);
-
 /** Vendors offered in the editor; others can be typed. */
 const VENDORS = ["Alibaba", "Amazon", "Anthropic", "Cohere", "DeepSeek", "Google", "Meta", "Microsoft", "Mistral AI", "Moonshot AI", "OpenAI", "TypeSafe", "xAI", "Zhipu AI"];
 
@@ -119,7 +116,7 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
  * here.
  */
 export function ModelHub() {
-  const [keys, setKeys] = useState<VirtualKey[]>([]);
+  const [keys, setKeys] = useState<NamedItem[]>([]);
   const [keyId, setKeyId] = useState("");
   const [hub, setHub] = useState<Hub | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -131,42 +128,46 @@ export function ModelHub() {
   const [curl, setCurl] = useState<CurlRequest | null>(null);
 
   useEffect(() => {
-    api<VirtualKey[]>("/keys")
-      .then((k) => setKeys([...k].sort((a, b) => a.name.localeCompare(b.name))))
+    api<NamedItem[]>("/keys/options")
+      .then(setKeys)
       .catch((e) => setError((e as Error).message));
   }, []);
 
-  const load = async () => {
+  // The modes and vendors among the key's models, whatever the filters pick.
+  const knownModes = new Set(hub?.modes ?? []);
+  const knownVendors = hub?.vendors ?? [];
+  // A picked mode or vendor no models have any more drops out.
+  const modes = hub ? modeFilter.filter((m) => knownModes.has(m)) : modeFilter;
+  const vendors = hub ? vendorFilter.filter((v) => v === NO_VENDOR || knownVendors.includes(v)) : vendorFilter;
+  const search = useDebounced(q.trim());
+
+  /** The hub's query: the key and the filters picked here. */
+  const hubQuery = (term: string) => {
+    const params = new URLSearchParams();
+    if (keyId) params.set("key", keyId);
+    if (modes.length) params.set("mode", modes.join(","));
+    if (vendors.length) params.set("vendor", vendors.map((v) => (v === NO_VENDOR ? "-" : v)).join(","));
+    if (term) params.set("q", term);
+    return params.toString().replace(/%2C/g, ",");
+  };
+  const query = hubQuery(search);
+
+  const load = useCallback(async () => {
     try {
-      setHub(await api<Hub>(`/hub${keyId ? `?key=${encodeURIComponent(keyId)}` : ""}`));
+      setHub(await api<Hub>(`/hub${query ? `?${query}` : ""}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  };
+  }, [query]);
 
   useEffect(() => {
     load();
-  }, [keyId]);
+  }, [load]);
 
-  const models = hub?.models ?? [];
-  const knownModes = useMemo(() => new Set(models.map(modeOf)), [models]);
-  const knownVendors = useMemo(() => [...new Set(models.flatMap((m) => (m.metadata.vendor ? [m.metadata.vendor] : [])))].sort((a, b) => a.localeCompare(b)), [models]);
-  // A picked mode or vendor no models have any more drops out.
-  const modes = modeFilter.filter((m) => knownModes.has(m));
-  const vendors = vendorFilter.filter((v) => v === NO_VENDOR || knownVendors.includes(v));
-  const visible = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    return models.filter(
-      (m) =>
-        (!modes.length || modes.includes(modeOf(m))) &&
-        (!term ||
-          [m.name, m.metadata.display_name, m.metadata.vendor, m.metadata.description, ...m.deployments.map((d) => d.upstream_model)].some((s) =>
-            s?.toLowerCase().includes(term),
-          )) &&
-        (!vendors.length || vendors.includes(m.metadata.vendor ?? NO_VENDOR)),
-    );
-  }, [models, modes.join(), q, vendors.join()]);
+  // The server applies the filters.
+  const visible = hub?.models ?? [];
+  const total = hub?.total ?? 0;
 
   const enforced = hub?.guardrails.filter((g) => g.applied !== "on request") ?? [];
 
@@ -268,12 +269,7 @@ export function ModelHub() {
 
   /** The hub as the admin API serves it, with the key and filters picked here. */
   const hubRequest = (): CurlRequest => {
-    const params = new URLSearchParams();
-    if (keyId) params.set("key", keyId);
-    if (modes.length) params.set("mode", modes.join(","));
-    if (vendors.length) params.set("vendor", vendors.map((v) => (v === NO_VENDOR ? "-" : v)).join(","));
-    if (q.trim()) params.set("q", q.trim());
-    const query = params.toString().replace(/%2C/g, ",");
+    const query = hubQuery(q.trim());
     return { path: `/admin/api/hub${query ? `?${query}` : ""}` };
   };
 
@@ -306,7 +302,7 @@ export function ModelHub() {
           <TextInput caption="Model" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="name or description" />
           {hub && (
             <span className="muted small">
-              {visible.length === models.length ? `${models.length} models` : `${visible.length} of ${models.length} models`}
+              {visible.length === total ? `${total} models` : `${visible.length} of ${total} models`}
             </span>
           )}
         </div>
@@ -372,7 +368,7 @@ export function ModelHub() {
           )}
         </div>
       )}
-      {hub && !models.length ? (
+      {hub && !total ? (
         <div className="empty-card">{key ? "This key may use no model." : "No models yet. Add a deployment on the Deployments tab."}</div>
       ) : (
         <div className="table-wrap">
@@ -463,7 +459,7 @@ export function ModelHub() {
                   </Fragment>
                 );
               })}
-              {hub && models.length > 0 && !visible.length && (
+              {hub && total > 0 && !visible.length && (
                 <tr>
                   <td colSpan={8} className="empty">
                     No model matches the filter.

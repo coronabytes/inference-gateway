@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Credential, type CredentialInput, type CredentialSettings, type Provider, type Secrets } from "../api";
-import { Button, FileButton, MultiSelect, Select, TextInput } from "../components/controls";
+import { api, setListParam, type Credential, type CredentialInput, type CredentialSettings, type Provider, type Secrets } from "../api";
+import { Button, FileButton, MultiSelect, Select, TextInput, useDebounced } from "../components/controls";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, Modal, type ConfirmRequest } from "../components/ui";
 import { dateTime } from "../format";
 import { MISTRAL_REGIONS, PROVIDERS, PROVIDER_LABEL, VERTEX_REGIONS } from "../providers";
@@ -90,15 +90,22 @@ export function Credentials() {
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
   const [nameFilter, setNameFilter] = useState("");
   const [providerFilter, setProviderFilter] = useState<Provider[]>([]);
+  const search = useDebounced(nameFilter.trim());
+  const filtering = !!search || providerFilter.length > 0;
+  // The server filters the credentials.
+  const query = new URLSearchParams();
+  if (search) query.set("q", search);
+  setListParam(query, "provider", providerFilter);
+  const filters = query.toString().replace(/%2C/g, ",");
 
   const load = useCallback(async () => {
     try {
-      setCreds(await api<Credential[]>("/credentials"));
+      setCreds(await api<Credential[]>(`/credentials${filters ? `?${filters}` : ""}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [filters]);
 
   useEffect(() => {
     load();
@@ -118,27 +125,23 @@ export function Credentials() {
       },
     });
 
-  // Only the providers that have credentials, in the usual order.
-  const providers = PROVIDERS.filter((p) => creds.some((c) => c.provider === p));
-  const needle = nameFilter.trim().toLowerCase();
-  const shown = creds.filter((c) => (!needle || c.name.toLowerCase().includes(needle)) && (!providerFilter.length || providerFilter.includes(c.provider)));
-  const filtering = !!needle || providerFilter.length > 0;
+  const shown = creds;
 
   return (
     <div className="page">
       <div className="page-head">
-        {creds.length > 0 && (
+        {(creds.length > 0 || filtering) && (
           <div className="filters">
             <TextInput caption="Name" type="search" value={nameFilter} onChange={(e) => setNameFilter(e.target.value)} placeholder="filter" />
             <MultiSelect
               caption="Providers"
               values={providerFilter}
               onChange={(v) => setProviderFilter(v as Provider[])}
-              options={providers.map((p) => ({ value: p, label: PROVIDER_LABEL[p] }))}
+              options={PROVIDERS.map((p) => ({ value: p, label: PROVIDER_LABEL[p] }))}
             />
             {filtering && (
               <span className="muted small">
-                {shown.length} of {creds.length} credentials
+                {shown.length} {shown.length === 1 ? "credential matches" : "credentials match"}
               </span>
             )}
           </div>
@@ -182,7 +185,7 @@ export function Credentials() {
             {shown.length === 0 && (
               <tr>
                 <td colSpan={7} className="empty">
-                  {creds.length ? "No credentials match the filters." : "No credentials yet. Create one to start adding models."}
+                  {filtering ? "No credentials match the filters." : "No credentials yet. Create one to start adding models."}
                 </td>
               </tr>
             )}

@@ -271,6 +271,11 @@ export interface Guardrail {
   updated_at: string;
 }
 
+/** A guardrail in `GET /guardrails`: with the projects and keys whose every request it screens, by name. */
+export interface GuardrailListItem extends Guardrail {
+  enforced_on: { projects: string[]; keys: string[] };
+}
+
 /** The header in which a request asks for guardrails by name, on top of those enforced on its key. */
 export const GUARDRAILS_HEADER = "x-gateway-guardrails";
 
@@ -312,11 +317,32 @@ export interface CredentialInput {
   secrets: Secrets;
 }
 
-/** A tag and how many deployments carry it (`GET /tags`). */
+/** A tag and how many deployments, routers and keys carry it (`GET /tags`). */
 export interface TagInfo {
   tag: string;
   deployments: number;
   routers: number;
+  keys: number;
+}
+
+/** A key or project as a picker offers it (`GET /keys/options`, `GET /projects/options`). */
+export interface NamedItem {
+  id: string;
+  name: string;
+  /** A key's project. */
+  project_id?: string;
+}
+
+/** What the playground offers for a key (`GET /playground/options`). */
+export interface PlaygroundOptions {
+  models: { name: string; mode: Mode; router: boolean }[];
+  /** Those enforced on the key or its project always apply. */
+  guardrails: { name: string; enforced: boolean }[];
+}
+
+/** Puts a list filter in a query as `a,b`, with `none` (a value that cannot be an id or a tag) sent as `-`. */
+export function setListParam(q: URLSearchParams, name: string, values: string[], none?: string) {
+  if (values.length) q.set(name, values.map((v) => (v === none ? "-" : v)).join(","));
 }
 
 /** Whether a key may use a deployment or router: keys without tags may use all of them, keys
@@ -495,6 +521,11 @@ export interface AutoRouter {
 
 export type RouterInput = Omit<AutoRouter, "id" | "created_at" | "updated_at">;
 
+/** A router in `GET /routers`: with the models it names that no deployment serves. */
+export interface AutoRouterListItem extends AutoRouter {
+  missing: string[];
+}
+
 /** A model name that serves another model: a deployment's or an auto router's, named by its id. */
 export interface ModelAlias {
   id: string;
@@ -642,6 +673,11 @@ export interface Hub {
   /** Enforced ones (`applied` key or project) first, then those a client may ask for. */
   guardrails: HubGuardrail[];
   models: HubModel[];
+  /** Models before the mode, vendor and search filters. */
+  total: number;
+  /** The modes (`router` for auto routers) and vendors among those, for the filters. */
+  modes: string[];
+  vendors: string[];
 }
 
 export interface HubKey {
