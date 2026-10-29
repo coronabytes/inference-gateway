@@ -1230,22 +1230,25 @@ pub struct LogTotals {
     pub p95_latency_ms: Option<i32>,
 }
 
-/// Per model and time bucket of `step` seconds, from `since` up to `until`, optionally for one key
-/// (or with `deleted_keys` the keys that no longer exist, whose id the log keeps) and for the
-/// entries with all of `labels` (a JSON object), as in every query below.
-pub async fn model_series(
+/// Per time bucket of `step` seconds, from `since` up to `until`, over the entries of `models`
+/// (all when `None`) except those of `exclude`, optionally for one key (or with `deleted_keys` the
+/// keys that no longer exist, whose id the log keeps) and for the entries with all of `labels` (a
+/// JSON object), as in every query below.
+pub async fn selection_series(
     pool: &PgPool,
     since: DateTime<Utc>,
     until: DateTime<Utc>,
     step: i64,
     key_id: Option<Uuid>,
     deleted_keys: bool,
+    models: Option<&[String]>,
+    exclude: &[String],
     projects: Option<&[Uuid]>,
     labels: Option<&serde_json::Value>,
 ) -> sqlx::Result<Vec<LogTotals>> {
     sqlx::query_as!(
         LogTotals,
-        r#"SELECT model_name AS "subject!",
+        r#"SELECT '' AS "subject!",
                   (floor(extract(epoch FROM ts) / $2) * $2)::bigint AS "bucket!",
                   count(*) AS "requests!", count(*) FILTER (WHERE status_code >= 400) AS "errors!",
                   sum(input_tokens)::bigint AS "input_tokens!", sum(output_tokens)::bigint AS "output_tokens!",
@@ -1257,7 +1260,8 @@ pub async fn model_series(
            WHERE ts >= $1 AND ts < $4 AND ($3::uuid IS NULL OR key_id = $3) AND ($5::uuid[] IS NULL OR project_id = ANY($5))
              AND ($6::jsonb IS NULL OR labels @> $6)
              AND (NOT $7 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
-           GROUP BY 1, 2"#,
+             AND ($8::text[] IS NULL OR model_name = ANY($8)) AND NOT (model_name = ANY($9))
+           GROUP BY 2"#,
         since,
         step as f64,
         key_id,
@@ -1265,6 +1269,8 @@ pub async fn model_series(
         projects,
         labels,
         deleted_keys,
+        models,
+        exclude,
     )
     .fetch_all(pool)
     .await
@@ -1306,50 +1312,15 @@ pub async fn model_totals(
     .await
 }
 
-/// Totals per deployment (`subject` is its id), with exact latency percentiles.
-pub async fn deployment_totals(
+/// Totals over the entries of `models` (all when `None`) except those of `exclude`, with exact
+/// latency percentiles.
+pub async fn selection_totals(
     pool: &PgPool,
     since: DateTime<Utc>,
     until: DateTime<Utc>,
     key_id: Option<Uuid>,
     deleted_keys: bool,
-    projects: Option<&[Uuid]>,
-    labels: Option<&serde_json::Value>,
-) -> sqlx::Result<Vec<LogTotals>> {
-    sqlx::query_as!(
-        LogTotals,
-        r#"SELECT deployment_id::text AS "subject!", 0::bigint AS "bucket!",
-                  count(*) AS "requests!", count(*) FILTER (WHERE status_code >= 400) AS "errors!",
-                  sum(input_tokens)::bigint AS "input_tokens!", sum(output_tokens)::bigint AS "output_tokens!",
-                  sum(cache_read_tokens)::bigint AS "cache_read_tokens!", sum(cache_write_tokens)::bigint AS "cache_write_tokens!",
-                  sum(cost_usd) AS "cost_usd!", sum(latency_ms)::bigint AS "latency_ms_sum!",
-                  coalesce(sum(ttft_ms), 0)::bigint AS "ttft_ms_sum!", count(ttft_ms) AS "ttft_count!",
-                  percentile_disc(0.5) WITHIN GROUP (ORDER BY latency_ms) AS "p50_latency_ms?",
-                  percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms) AS "p95_latency_ms?"
-           FROM request_logs
-           WHERE ts >= $1 AND ts < $3 AND ($2::uuid IS NULL OR key_id = $2) AND deployment_id IS NOT NULL
-             AND ($4::uuid[] IS NULL OR project_id = ANY($4)) AND ($5::jsonb IS NULL OR labels @> $5)
-             AND (NOT $6 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
-           GROUP BY deployment_id"#,
-        since,
-        key_id,
-        until,
-        projects,
-        labels,
-        deleted_keys,
-    )
-    .fetch_all(pool)
-    .await
-}
-
-/// Totals over every model except `exclude` (the auto routers, whose entries already count
-/// their calls), with exact latency percentiles.
-pub async fn overall_totals(
-    pool: &PgPool,
-    since: DateTime<Utc>,
-    until: DateTime<Utc>,
-    key_id: Option<Uuid>,
-    deleted_keys: bool,
+    models: Option<&[String]>,
     exclude: &[String],
     projects: Option<&[Uuid]>,
     labels: Option<&serde_json::Value>,
@@ -1368,7 +1339,8 @@ pub async fn overall_totals(
            FROM request_logs
            WHERE ts >= $1 AND ts < $4 AND ($2::uuid IS NULL OR key_id = $2) AND NOT (model_name = ANY($3))
              AND ($5::uuid[] IS NULL OR project_id = ANY($5)) AND ($6::jsonb IS NULL OR labels @> $6)
-             AND (NOT $7 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))"#,
+             AND (NOT $7 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
+             AND ($8::text[] IS NULL OR model_name = ANY($8))"#,
         since,
         key_id,
         exclude,
@@ -1376,6 +1348,7 @@ pub async fn overall_totals(
         projects,
         labels,
         deleted_keys,
+        models,
     )
     .fetch_one(pool)
     .await

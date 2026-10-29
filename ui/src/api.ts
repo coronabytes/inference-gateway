@@ -453,10 +453,11 @@ export interface Metrics {
   from: string;
   to: string;
   /** `router`: an auto router, whose totals already include its calls to other models. */
-  models: { model: string; active: boolean; router: boolean; totals: Totals; series: Point[] }[];
-  deployments: { id: string; model: string; provider: string; upstream_model: string; totals: Totals }[];
-  /** Totals over every model except routers, with exact percentiles. */
-  overall: Totals;
+  models: { model: string; active: boolean; router: boolean; totals: Totals }[];
+  /** The picked models' totals (every model's except routers' without a pick), with exact percentiles. */
+  totals: Totals;
+  /** The same, per time bucket. */
+  series: Point[];
 }
 
 /** Every reasoning effort OpenAI's and Anthropic's APIs take, in order. `none` turns reasoning off (no thinking for Anthropic models). */

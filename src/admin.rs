@@ -1806,6 +1806,9 @@ pub(crate) struct RangeQuery {
     deleted_keys: Option<bool>,
     /// Metrics only: just the requests with all of these labels, as `tenant=…,feature=core`.
     labels: Option<String>,
+    /// Metrics only: the series and totals of just these models, comma-separated; omitted means
+    /// every model except auto routers, whose entries already count their calls.
+    models: Option<String>,
     /// Metrics with `range=custom`: first and last day, inclusive (UTC).
     from: Option<chrono::NaiveDate>,
     to: Option<chrono::NaiveDate>,
@@ -1900,10 +1903,10 @@ fn totals(t: Option<&db::LogTotals>) -> Totals {
 }
 
 /// One point per bucket start in `stamps`; buckets without requests are zero.
-fn series_json(stamps: &[i64], buckets: Option<&HashMap<i64, &db::LogTotals>>) -> Vec<Value> {
+fn series_json(stamps: &[i64], buckets: &HashMap<i64, &db::LogTotals>) -> Vec<Value> {
     stamps
         .iter()
-        .map(|ts| match buckets.and_then(|b| b.get(ts)) {
+        .map(|ts| match buckets.get(ts) {
             Some(b) => json!({
                 "ts": ts,
                 "requests": b.requests,
@@ -1935,27 +1938,31 @@ async fn metrics(State(state): State<AppState>, Extension(access): Extension<Acc
     let labels = label_filter(q.labels.as_deref())?;
     let labels = labels.as_ref();
     let deleted = q.deleted_keys.unwrap_or(false);
+    let picked_models: Option<Vec<String>> = q
+        .models
+        .as_deref()
+        .map(|m| m.split(',').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect::<Vec<_>>())
+        .filter(|m| !m.is_empty());
 
     let snap = state.registry.snapshot();
     // Router entries are logged under the name requested, so under an alias of a router too.
     let is_router = |m: &str| snap.routers.contains_key(snap.resolve(m));
-    let routers: Vec<String> = snap.routers.keys().chain(snap.aliases.keys()).filter(|m| is_router(m)).cloned().collect();
-    let (series, model_totals, dep_totals, overall) = tokio::try_join!(
-        db::model_series(&state.db, since, until, step, q.key_id, deleted, counted, labels),
+    // Without a pick, the routers are left out: their calls are counted under their own models.
+    let exclude: Vec<String> = match picked_models {
+        Some(_) => Vec::new(),
+        None => snap.routers.keys().chain(snap.aliases.keys()).filter(|m| is_router(m)).cloned().collect(),
+    };
+    let (series, model_totals, selected) = tokio::try_join!(
+        db::selection_series(&state.db, since, until, step, q.key_id, deleted, picked_models.as_deref(), &exclude, counted, labels),
         db::model_totals(&state.db, since, until, q.key_id, deleted, counted, labels),
-        db::deployment_totals(&state.db, since, until, q.key_id, deleted, counted, labels),
-        db::overall_totals(&state.db, since, until, q.key_id, deleted, &routers, counted, labels),
+        db::selection_totals(&state.db, since, until, q.key_id, deleted, picked_models.as_deref(), &exclude, counted, labels),
     )?;
 
-    let mut by_model: HashMap<&str, HashMap<i64, &db::LogTotals>> = HashMap::new();
-    for b in &series {
-        by_model.entry(b.subject.as_str()).or_default().insert(b.bucket, b);
-    }
+    let buckets: HashMap<i64, &db::LogTotals> = series.iter().map(|b| (b.bucket, b)).collect();
     let model_totals: HashMap<&str, &db::LogTotals> = model_totals.iter().map(|t| (t.subject.as_str(), t)).collect();
-    let dep_totals: HashMap<&str, &db::LogTotals> = dep_totals.iter().map(|t| (t.subject.as_str(), t)).collect();
 
     // Configured models and routers, plus models that have since been removed but still have traffic.
-    // A user sees only the models and deployments that served their projects.
+    // A user sees only the models that served their projects.
     let mut models: BTreeSet<&str> = match projects {
         None => snap.deployments.keys().chain(snap.routers.keys()).chain(snap.aliases.keys()).map(String::as_str).collect(),
         Some(_) => BTreeSet::new(),
@@ -1967,26 +1974,14 @@ async fn metrics(State(state): State<AppState>, Extension(access): Extension<Acc
             let router = is_router(m);
             json!({
                 "model": m, "active": router || snap.deployments.contains_key(snap.resolve(m)), "router": router,
-                "totals": totals(model_totals.get(m).copied()), "series": series_json(&stamps, by_model.get(m)),
-            })
-        })
-        .collect();
-    let dep_out: Vec<Value> = snap
-        .deployments
-        .values()
-        .flatten()
-        .filter(|d| projects.is_none() || dep_totals.contains_key(d.id.to_string().as_str()))
-        .map(|d| {
-            json!({
-                "id": d.id, "model": d.model_name, "provider": d.provider.as_str(),
-                "upstream_model": d.upstream_model, "totals": totals(dep_totals.get(d.id.to_string().as_str()).copied()),
+                "totals": totals(model_totals.get(m).copied()),
             })
         })
         .collect();
     Ok(Json(json!({
-        "range": label, "step_secs": step, "from": since, "to": until, "models": model_out, "deployments": dep_out,
-        // Everything except router entries, whose calls are counted under their own models.
-        "overall": totals(Some(&overall)),
+        "range": label, "step_secs": step, "from": since, "to": until, "models": model_out,
+        // The picked models', or everything except router entries.
+        "totals": totals(Some(&selected)), "series": series_json(&stamps, &buckets),
     })))
 }
 
@@ -2266,13 +2261,13 @@ mod tests {
     fn metric_series_fill_empty_buckets() {
         let b = db::LogTotals { subject: "m".into(), bucket: 120, requests: 4, errors: 1, latency_ms_sum: 400, ..Default::default() };
         let buckets = HashMap::from([(120, &b)]);
-        let s = series_json(&[60, 120, 180], Some(&buckets));
+        let s = series_json(&[60, 120, 180], &buckets);
         assert_eq!(s.len(), 3);
         assert_eq!(s[0]["requests"], 0);
         assert_eq!(s[0]["avg_latency_ms"], Value::Null);
         assert_eq!(s[1]["requests"], 4);
         assert_eq!(s[1]["avg_latency_ms"], 100.0);
-        assert_eq!(series_json(&[60], None)[0]["errors"], 0);
+        assert_eq!(series_json(&[60], &HashMap::new())[0]["errors"], 0);
         let t = totals(Some(&db::LogTotals { requests: 2, latency_ms_sum: 300, ttft_count: 1, ttft_ms_sum: 50, ..Default::default() }));
         assert_eq!((t.avg_latency_ms, t.avg_ttft_ms), (Some(150.0), Some(50.0)));
         assert_eq!(totals(None).requests, 0);
@@ -2466,6 +2461,7 @@ mod tests {
             project_id: None,
             deleted_keys: None,
             labels: None,
+            models: None,
             from: from.map(|d| d.parse().unwrap()),
             to: to.map(|d| d.parse().unwrap()),
         };

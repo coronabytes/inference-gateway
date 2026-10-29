@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type Metrics as MetricsData, type Point, type Totals } from "../api";
+import { useCallback, useEffect, useState } from "react";
+import { api, type Metrics as MetricsData } from "../api";
 import { TimeChart } from "../components/TimeChart";
 import { MultiSelect, TimeRange, useTimeRange } from "../components/controls";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
@@ -12,53 +12,6 @@ const RANGES = ["1h", "24h", "7d", "month", "last_month", "custom"] as const;
 
 const PER: Record<number, string> = { 60: "per minute", 3600: "per hour", 86400: "per day" };
 
-function sumSeries(all: Point[][]): Point[] {
-  if (all.length === 0) return [];
-  return all[0].map((p, i) => {
-    let latSum = 0;
-    let latN = 0;
-    const out: Point = { ts: p.ts, requests: 0, errors: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0, avg_latency_ms: null };
-    for (const s of all) {
-      const q = s[i];
-      if (!q) continue;
-      out.requests += q.requests;
-      out.errors += q.errors;
-      out.input_tokens += q.input_tokens;
-      out.output_tokens += q.output_tokens;
-      out.cost_usd += q.cost_usd;
-      if (q.avg_latency_ms != null) {
-        latSum += q.avg_latency_ms * q.requests;
-        latN += q.requests;
-      }
-    }
-    out.avg_latency_ms = latN ? latSum / latN : null;
-    return out;
-  });
-}
-
-/** Several models' totals as one; percentiles do not add up, so they are left out. */
-function sumTotals(all: Totals[]): Totals {
-  const avg = (f: (t: Totals) => number | null) => {
-    const ts = all.filter((t) => f(t) != null && t.requests > 0);
-    const n = ts.reduce((s, t) => s + t.requests, 0);
-    return n ? ts.reduce((s, t) => s + f(t)! * t.requests, 0) / n : null;
-  };
-  const sum = (f: (t: Totals) => number) => all.reduce((s, t) => s + f(t), 0);
-  return {
-    requests: sum((t) => t.requests),
-    errors: sum((t) => t.errors),
-    input_tokens: sum((t) => t.input_tokens),
-    output_tokens: sum((t) => t.output_tokens),
-    cache_read_tokens: sum((t) => t.cache_read_tokens),
-    cache_write_tokens: sum((t) => t.cache_write_tokens),
-    cost_usd: sum((t) => t.cost_usd),
-    avg_latency_ms: avg((t) => t.avg_latency_ms),
-    p50_latency_ms: null,
-    p95_latency_ms: null,
-    avg_ttft_ms: avg((t) => t.avg_ttft_ms),
-  };
-}
-
 export function Metrics() {
   const time = useTimeRange(RANGES, "month");
   const { range, query: rangeQuery, ended } = time;
@@ -67,6 +20,7 @@ export function Metrics() {
   const [keyId, setKeyId] = useState("");
   const [labels, setLabels] = useState<Labels>({});
   const labelFilter = labelQuery(labels);
+  const models = modelFilter.join(",");
   const [data, setData] = useState<MetricsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,6 +32,7 @@ export function Metrics() {
       const q = new URLSearchParams(rangeQuery);
       setKeyFilter(q, keyId);
       if (labelFilter) q.set("labels", labelFilter);
+      if (models) q.set("models", models);
       setData(await api<MetricsData>(`/metrics?${q}`));
       setError(null);
     } catch (e) {
@@ -85,7 +40,7 @@ export function Metrics() {
     } finally {
       setLoading(false);
     }
-  }, [rangeQuery, keyId, labelFilter]);
+  }, [rangeQuery, keyId, labelFilter, models]);
 
   useEffect(() => {
     load();
@@ -94,17 +49,6 @@ export function Metrics() {
     const t = setInterval(load, range === "1h" ? 15_000 : 60_000);
     return () => clearInterval(t);
   }, [load, range, ended]);
-
-  const selected = useMemo(() => {
-    if (!data) return null;
-    // Routers' totals already include their calls to other models, so "all" leaves them out.
-    const models = modelFilter.length ? data.models.filter((m) => modelFilter.includes(m.model)) : data.models.filter((m) => !m.router);
-    // The server's overall totals have exact percentiles across models, as has one model's.
-    return {
-      totals: !modelFilter.length ? data.overall : models.length === 1 ? models[0].totals : sumTotals(models.map((m) => m.totals)),
-      series: sumSeries(models.map((m) => m.series)),
-    };
-  }, [data, modelFilter.join()]);
 
   const toggleModel = (model: string) => setModelFilter((ms) => (ms.includes(model) ? ms.filter((m) => m !== model) : [...ms, model]));
 
@@ -116,8 +60,9 @@ export function Metrics() {
 
   const step = data?.step_secs ?? 60;
   const perUnit = PER[step] ?? "per bucket";
-  const ts = selected?.series.map((p) => p.ts) ?? [];
-  const t = selected?.totals;
+  const series = data?.series ?? [];
+  const ts = series.map((p) => p.ts);
+  const t = data?.totals;
 
   return (
     <div className={loading && data ? "page refreshing" : "page"}>
@@ -145,7 +90,7 @@ export function Metrics() {
         </div>
       )}
 
-      {selected && (
+      {data && (
         <div className="charts">
           <TimeChart
             kind="bars"
@@ -155,8 +100,8 @@ export function Metrics() {
             stepSecs={step}
             format={compact}
             series={[
-              { name: "Succeeded", color: "var(--series-1)", values: selected.series.map((p) => p.requests - p.errors) },
-              { name: "Failed", color: "var(--status-critical)", values: selected.series.map((p) => p.errors) },
+              { name: "Succeeded", color: "var(--series-1)", values: series.map((p) => p.requests - p.errors) },
+              { name: "Failed", color: "var(--status-critical)", values: series.map((p) => p.errors) },
             ]}
           />
           <TimeChart
@@ -167,8 +112,8 @@ export function Metrics() {
             stepSecs={step}
             format={compact}
             series={[
-              { name: "Input", color: "var(--series-1)", values: selected.series.map((p) => p.input_tokens) },
-              { name: "Output", color: "var(--series-2)", values: selected.series.map((p) => p.output_tokens) },
+              { name: "Input", color: "var(--series-1)", values: series.map((p) => p.input_tokens) },
+              { name: "Output", color: "var(--series-2)", values: series.map((p) => p.output_tokens) },
             ]}
           />
           <TimeChart
@@ -178,7 +123,7 @@ export function Metrics() {
             timestamps={ts}
             stepSecs={step}
             format={ms}
-            series={[{ name: "Latency", color: "var(--series-1)", values: selected.series.map((p) => p.avg_latency_ms) }]}
+            series={[{ name: "Latency", color: "var(--series-1)", values: series.map((p) => p.avg_latency_ms) }]}
           />
           <TimeChart
             kind="line"
@@ -187,7 +132,7 @@ export function Metrics() {
             timestamps={ts}
             stepSecs={step}
             format={usd}
-            series={[{ name: "Cost", color: "var(--series-1)", values: selected.series.map((p) => p.cost_usd) }]}
+            series={[{ name: "Cost", color: "var(--series-1)", values: series.map((p) => p.cost_usd) }]}
           />
         </div>
       )}
