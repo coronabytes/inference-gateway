@@ -1,5 +1,13 @@
 # Inference Gateway
 
+## Admin API and console data
+
+Filter on the server. When a page has a filter (time range, key, model, labels), send it as a query
+parameter and apply it in the SQL, rather than loading everything and filtering in the browser.
+Keep responses minimal: return only the fields and rows the page renders, aggregated as far as the
+server can (one series for the selection, not one per item for the client to sum). Drop a field
+from the response when the UI stops using it.
+
 ## Console UI (`ui/`)
 
 Reuse the shared controls before writing a new one. `ui/src/components/controls.tsx` holds the form

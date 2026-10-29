@@ -1165,7 +1165,7 @@ mod paths {
 
     /// Metrics
     ///
-    /// Requests, errors, tokens, latency and cost by model and deployment, over time.
+    /// Requests, errors, tokens, latency and cost over time, and totals by model.
     #[utoipa::path(get, path = "/admin/api/metrics", tag = "Usage", params(admin::RangeQuery),
         responses(
             (status = 200, description = "Totals and series for the range.", body = Object),
