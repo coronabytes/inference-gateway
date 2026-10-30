@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO request_bodies (id, ts, key_id, request, screened_request, guardrails, response, request_bytes,\n               response_bytes, tool_calls, search, response_id, previous_response_id, conversation)\n           SELECT b.id, b.ts, b.key_id, b.request, b.screened, b.guardrails, b.response, b.request_bytes, b.response_bytes,\n                  CASE WHEN b.tools = '' THEN '{}'::text[] ELSE string_to_array(b.tools, chr(31)) END,\n                  to_tsvector('simple', b.text), b.response_id, b.previous_response_id, b.conversation\n           FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::jsonb[], $5::jsonb[], $6::jsonb[], $7::jsonb[],\n                       $8::int[], $9::int[], $10::text[], $11::text[], $12::text[], $13::text[], $14::bytea[])\n                AS b(id, ts, key_id, request, screened, guardrails, response, request_bytes, response_bytes, tools, text,\n                     response_id, previous_response_id, conversation)\n           ON CONFLICT (id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "TimestamptzArray",
+        "UuidArray",
+        "JsonbArray",
+        "JsonbArray",
+        "JsonbArray",
+        "JsonbArray",
+        "Int4Array",
+        "Int4Array",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6888d78fbb0ca0287dcde2fc761b544c9fe35174716c2ece80e44f42962ad227"
+}

@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     accounting::RequestRecord,
+    capture::Stored,
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailRow},
     model::{
         AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
@@ -1155,6 +1156,7 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
     let mut guardrail_costs = Vec::with_capacity(batch.len());
     let mut searches = Vec::with_capacity(batch.len());
     let mut search_costs = Vec::with_capacity(batch.len());
+    let mut bodies = Vec::with_capacity(batch.len());
     for r in batch {
         ids.push(r.id);
         ts.push(r.ts);
@@ -1181,6 +1183,7 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         guardrail_costs.push(r.guardrail_cost_usd);
         searches.push(r.usage.search_units as i64);
         search_costs.push(r.search_cost_usd);
+        bodies.push(r.bodies_status.map(str::to_string));
     }
 
     let mut tx = pool.begin().await?;
@@ -1190,11 +1193,11 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         "INSERT INTO request_logs (id, ts, key_id, model_name, deployment_id, provider, api, stream,
              status_code, latency_ms, ttft_ms, input_tokens, output_tokens, cache_read_tokens,
              cache_write_tokens, cost_usd, attempts, error, parent_id, project_id, labels, guardrails, guardrail_cost_usd,
-             searches, search_cost_usd)
+             searches, search_cost_usd, bodies)
          SELECT * FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::text[], $5::uuid[],
              $6::text[], $7::text[], $8::bool[], $9::int[], $10::int[], $11::int[], $12::bigint[],
              $13::bigint[], $14::bigint[], $15::bigint[], $16::float8[], $17::int[], $18::text[], $19::uuid[],
-             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[])",
+             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[], $26::text[])",
         &ids,
         &ts,
         &key_ids as _,
@@ -1220,6 +1223,7 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         &guardrail_costs,
         &searches,
         &search_costs,
+        &bodies as _,
     )
     .execute(&mut *tx)
     .await?;
@@ -1246,6 +1250,71 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         .await?;
     }
     tx.commit().await
+}
+
+/// Stores the bodies of logged requests, once their entries are written. Each row's tool names
+/// travel joined by U+001F (UNNEST cannot take an array of arrays).
+pub async fn write_body_batch(pool: &PgPool, rows: Vec<(Uuid, DateTime<Utc>, Option<Uuid>, Stored)>) -> sqlx::Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let n = rows.len();
+    let (mut ids, mut ts, mut keys) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut requests, mut screened, mut guardrails, mut responses) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut request_bytes, mut response_bytes) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut tools, mut texts) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut response_ids, mut previous_ids, mut conversations) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    for (id, at, key, s) in rows {
+        ids.push(id);
+        ts.push(at);
+        keys.push(key);
+        requests.push(s.request);
+        screened.push(s.screened);
+        guardrails.push(s.guardrails);
+        responses.push(s.response);
+        request_bytes.push(s.request_bytes.min(i32::MAX as usize) as i32);
+        response_bytes.push(s.response_bytes.min(i32::MAX as usize) as i32);
+        tools.push(s.tools.join("\u{1f}"));
+        texts.push(s.text);
+        response_ids.push(s.response_id);
+        previous_ids.push(s.previous_response_id);
+        conversations.push(s.conversation.map(|c| c.to_vec()));
+    }
+    sqlx::query!(
+        r#"INSERT INTO request_bodies (id, ts, key_id, request, screened_request, guardrails, response, request_bytes,
+               response_bytes, tool_calls, search, response_id, previous_response_id, conversation)
+           SELECT b.id, b.ts, b.key_id, b.request, b.screened, b.guardrails, b.response, b.request_bytes, b.response_bytes,
+                  CASE WHEN b.tools = '' THEN '{}'::text[] ELSE string_to_array(b.tools, chr(31)) END,
+                  to_tsvector('simple', b.text), b.response_id, b.previous_response_id, b.conversation
+           FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::jsonb[], $5::jsonb[], $6::jsonb[], $7::jsonb[],
+                       $8::int[], $9::int[], $10::text[], $11::text[], $12::text[], $13::text[], $14::bytea[])
+                AS b(id, ts, key_id, request, screened, guardrails, response, request_bytes, response_bytes, tools, text,
+                     response_id, previous_response_id, conversation)
+           ON CONFLICT (id) DO NOTHING"#,
+        &ids,
+        &ts,
+        &keys as _,
+        &requests as _,
+        &screened as _,
+        &guardrails as _,
+        &responses as _,
+        &request_bytes,
+        &response_bytes,
+        &tools,
+        &texts,
+        &response_ids as _,
+        &previous_ids as _,
+        &conversations as _,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Marks the entries whose bodies could not be stored.
+pub async fn mark_bodies_dropped(pool: &PgPool, ids: &[Uuid]) -> sqlx::Result<()> {
+    sqlx::query!("UPDATE request_logs SET bodies = 'dropped' WHERE id = ANY($1)", ids).execute(pool).await?;
+    Ok(())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1693,17 +1762,17 @@ pub async fn key_usage_since(pool: &PgPool, since: DateTime<Utc>, projects: Opti
     .await
 }
 
-/// Retention cleanup of the request log and the audit log, each by its own number of days (0
-/// keeps that log forever). Returns how many entries each lost. Guarded by an advisory lock so
-/// only one replica runs it at a time.
-pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32) -> sqlx::Result<(u64, u64)> {
+/// Retention cleanup of the request log, the audit log and logged bodies, each by its own number
+/// of days (0 keeps that log forever; bodies always go). Returns how many entries each lost.
+/// Guarded by an advisory lock so only one replica runs it at a time.
+pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32, body_days: u32) -> sqlx::Result<(u64, u64, u64)> {
     const LOCK_ID: i64 = 0x6777_6c6f_6773; // "gwlogs"
     let mut conn = pool.acquire().await?;
     let locked = sqlx::query_scalar!(r#"SELECT pg_try_advisory_lock($1) AS "locked!""#, LOCK_ID)
         .fetch_one(&mut *conn)
         .await?;
     if !locked {
-        return Ok((0, 0));
+        return Ok((0, 0, 0));
     }
     let result = async {
         let requests = match request_days {
@@ -1724,7 +1793,23 @@ pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32) -> sq
                     .rows_affected()
             }
         };
-        Ok::<_, sqlx::Error>((requests, audit))
+        // In chunks: bodies are large, and a long delete would hold locks and write a burst of WAL.
+        let mut bodies = 0;
+        loop {
+            let n = sqlx::query!(
+                "DELETE FROM request_bodies WHERE id IN (
+                     SELECT id FROM request_bodies WHERE ts < now() - make_interval(days => $1) LIMIT 5000)",
+                body_days as i32
+            )
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+            bodies += n;
+            if n < 5000 {
+                break;
+            }
+        }
+        Ok::<_, sqlx::Error>((requests, audit, bodies))
     }
     .await;
     let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", LOCK_ID).fetch_one(&mut *conn).await;

@@ -19,6 +19,8 @@ pub struct Inner {
     pub entra: crate::entra::Entra,
     pub http: reqwest::Client,
     pub records: mpsc::Sender<RequestRecord>,
+    /// Memory for logged prompts and responses until they are written.
+    pub bodies: crate::capture::Budget,
     pub started: Instant,
     pub started_at: chrono::DateTime<chrono::Utc>,
 }
@@ -60,6 +62,7 @@ pub fn test_state() -> AppState {
         dev_login: false,
         cookie_secure: true,
         upstream_policy: crate::netguard::Policy::default(),
+        prompt_log_buffer_bytes: 1 << 20,
     };
     let settings = Live::default();
     settings.set(Settings { max_attempts: 1, cooldown_secs: 1, ..Settings::default() });
@@ -81,6 +84,7 @@ pub fn test_state() -> AppState {
         entra: crate::entra::Entra::default(),
         http: reqwest::Client::new(),
         records,
+        bodies: crate::capture::Budget::new(1 << 20),
         started: Instant::now(),
         started_at: chrono::Utc::now(),
     })

@@ -35,6 +35,10 @@ pub struct Settings {
     /// Days audit log entries are kept: 7 to 1080, or 0 to keep them forever. Independent of the
     /// request log's.
     pub audit_log_retention_days: u32,
+    /// Days logged prompts and responses are kept: 1 to 60, and no longer than the request log's.
+    pub prompt_log_retention_days: u32,
+    /// Largest logged request or response, in KB; longer strings in it are cut.
+    pub prompt_log_max_kb: u32,
     /// How long a `previous_response_id` conversation can go unused and still be continued; each
     /// continuation starts the time again.
     pub response_ttl_minutes: u64,
@@ -71,6 +75,8 @@ impl Default for Settings {
             reload_secs: 60,
             request_log_retention_days: 90,
             audit_log_retention_days: 90,
+            prompt_log_retention_days: 7,
+            prompt_log_max_kb: 256,
             response_ttl_minutes: 15,
             conversation_quota_mb: 64,
             max_body_mb: 32,
@@ -87,6 +93,9 @@ impl Default for Settings {
 
 /// Log retention in days when it is not 0 (forever). Neither log can be turned off.
 pub const RETENTION_DAYS: std::ops::RangeInclusive<u32> = 7..=1080;
+
+/// Retention of logged prompts and responses, in days. Never forever: they are debugging data.
+pub const PROMPT_LOG_DAYS: std::ops::RangeInclusive<u32> = 1..=60;
 
 impl Settings {
     /// Each number within its range.
@@ -105,6 +114,11 @@ impl Settings {
         within("reload_secs", self.reload_secs, 5, 3600)?;
         retention("request_log_retention_days", self.request_log_retention_days)?;
         retention("audit_log_retention_days", self.audit_log_retention_days)?;
+        within("prompt_log_retention_days", self.prompt_log_retention_days.into(), 1, 60)?;
+        if self.request_log_retention_days != 0 && self.prompt_log_retention_days > self.request_log_retention_days {
+            return Err("prompt_log_retention_days must not be longer than request_log_retention_days".into());
+        }
+        within("prompt_log_max_kb", self.prompt_log_max_kb.into(), 16, 4096)?;
         within("response_ttl_minutes", self.response_ttl_minutes, 1, 7 * 24 * 60)?;
         within("conversation_quota_mb", self.conversation_quota_mb, 0, 16 * 1024)?;
         within("max_body_mb", self.max_body_mb, 1, 1024)?;
@@ -126,6 +140,11 @@ impl Settings {
                 *days = (*days).clamp(*RETENTION_DAYS.start(), *RETENTION_DAYS.end());
             }
         }
+        let mut prompt = self.prompt_log_retention_days.clamp(*PROMPT_LOG_DAYS.start(), *PROMPT_LOG_DAYS.end());
+        if self.request_log_retention_days != 0 {
+            prompt = prompt.min(self.request_log_retention_days);
+        }
+        self.prompt_log_retention_days = prompt;
         self
     }
 
@@ -237,6 +256,24 @@ mod tests {
         let old = Settings { request_log_retention_days: 3650, audit_log_retention_days: 1, ..Settings::default() }.fit_retention();
         assert_eq!((old.request_log_retention_days, old.audit_log_retention_days), (1080, 7));
         assert_eq!(Settings { request_log_retention_days: 0, ..Settings::default() }.fit_retention().request_log_retention_days, 0);
+    }
+
+    #[test]
+    fn prompt_log_retention_is_1_to_60_days_and_no_longer_than_the_request_log() {
+        assert_eq!(Settings::default().prompt_log_retention_days, 7);
+        for days in [1, 7, 60] {
+            assert!(Settings { prompt_log_retention_days: days, ..Settings::default() }.check().is_ok(), "{days}");
+        }
+        for days in [0, 61] {
+            let s = Settings { prompt_log_retention_days: days, ..Settings::default() };
+            assert_eq!(s.check().unwrap_err(), "prompt_log_retention_days must be between 1 and 60");
+        }
+        let longer = Settings { request_log_retention_days: 7, prompt_log_retention_days: 10, ..Settings::default() };
+        assert_eq!(longer.check().unwrap_err(), "prompt_log_retention_days must not be longer than request_log_retention_days");
+        // Kept forever, the request log allows any.
+        assert!(Settings { request_log_retention_days: 0, prompt_log_retention_days: 60, ..Settings::default() }.check().is_ok());
+        let old = Settings { request_log_retention_days: 30, prompt_log_retention_days: 90, ..Settings::default() }.fit_retention();
+        assert_eq!(old.prompt_log_retention_days, 30);
     }
 
     #[test]

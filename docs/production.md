@@ -151,7 +151,7 @@ By default the gateway connects to public addresses only. Self-hosted models (vL
 
 ## Backup & restore
 
-- **Postgres** holds everything that matters: back it up like any other database. Valkey needs no backup; its append-only file only keeps state across restarts.
+- **Postgres** holds everything that matters: back it up like any other database. Valkey needs no backup; its append-only file only keeps state across restarts. Logged prompts and responses (`request_bodies`, see [prompt logging](security.md#prompt-logging)) are debugging data, not encrypted: exclude them with `pg_dump --exclude-table-data=request_bodies` unless backups may hold them. Leave prompt logging off for production keys.
 - **`GATEWAY_ENCRYPTION_KEY`** must be kept with the backup: stored provider secrets cannot be read without it.
 - **Cluster → Backup & Restore** in the console exports credentials (without their secrets), guardrails, deployments, auto routers and model descriptions as one JSON file, and merges such a file into a gateway, for example to copy configuration from staging to production. Imports match entries by id, then by name, never delete anything, and offer a dry run. Keys and projects are not exported.
 

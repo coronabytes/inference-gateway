@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE request_logs SET bodies = 'dropped' WHERE id = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1430445d0acf60278c6685b0d4f1f07405ea139e9791a1fd75b6af3c2428c910"
+}

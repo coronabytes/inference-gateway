@@ -7,6 +7,7 @@ mod audit;
 mod auth;
 mod budget;
 mod aws;
+mod capture;
 mod google;
 mod guardrails;
 mod cache;
@@ -133,6 +134,7 @@ async fn run() -> Result<(), String> {
         .map_err(|e| format!("http client: {e}"))?;
 
     let (tx, rx) = tokio::sync::mpsc::channel(10_000);
+    let prompt_log_buffer = cfg.prompt_log_buffer_bytes;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let listen = cfg.listen_addr;
     let ui_dir = cfg.ui_dir.clone();
@@ -147,6 +149,7 @@ async fn run() -> Result<(), String> {
         entra: entra::Entra::default(),
         http,
         records: tx,
+        bodies: capture::Budget::new(prompt_log_buffer),
         started: Instant::now(),
         started_at: chrono::Utc::now(),
     });

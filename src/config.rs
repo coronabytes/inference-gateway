@@ -31,6 +31,9 @@ pub struct Config {
     /// Which addresses upstream and OIDC requests may connect to. Not a setting: it guards against
     /// an admin account pointing the gateway at the internal network (see `netguard`).
     pub upstream_policy: Policy,
+    /// Memory for logged prompts and responses not yet written (`PROMPT_LOG_BUFFER_MB`, see
+    /// `capture::Budget`). Not a setting: it sizes the process. 0 turns capture off on a replica.
+    pub prompt_log_buffer_bytes: usize,
 }
 
 impl Config {
@@ -73,6 +76,7 @@ impl Config {
             cookie_secure: opt("GATEWAY_COOKIE_SECURE", true)?,
             upstream_policy: Policy::from_list(&env::var("GATEWAY_UPSTREAM_ALLOWED_NETWORKS").unwrap_or_default())
                 .map_err(|e| format!("GATEWAY_UPSTREAM_ALLOWED_NETWORKS: {e}"))?,
+            prompt_log_buffer_bytes: opt::<usize>("PROMPT_LOG_BUFFER_MB", 256)?.saturating_mul(1024 * 1024),
         })
     }
 }

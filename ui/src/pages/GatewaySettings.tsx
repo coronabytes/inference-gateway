@@ -107,6 +107,20 @@ const GROUPS: { title: string; items: Item[] }[] = [
           { value: "allow", label: "Allow" },
         ],
       },
+      {
+        key: "prompt_log_retention_days",
+        caption: "Kept for (days)",
+        hint: "How long logged prompts and responses are kept: 1 to 60 days, and no longer than the request log. Shortening it removes older ones within the hour.",
+        valid: (n: number) => n >= 1 && n <= 60,
+        rule: "1 to 60",
+      },
+      {
+        key: "prompt_log_max_kb",
+        caption: "Largest body (KB)",
+        hint: "The largest logged request or response, 16 to 4096 KB. Over it, the longest texts in it are cut; images and files are never stored.",
+        valid: (n: number) => n >= 16 && n <= 4096,
+        rule: "16 to 4096",
+      },
     ],
   },
   {

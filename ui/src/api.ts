@@ -727,6 +727,10 @@ export interface GatewaySettings {
   reload_secs: number;
   request_log_retention_days: number;
   audit_log_retention_days: number;
+  /** Days logged prompts and responses are kept: 1 to 60, and no longer than the request log. */
+  prompt_log_retention_days: number;
+  /** Largest logged request or response, in KB; longer strings in it are cut. */
+  prompt_log_max_kb: number;
   response_ttl_minutes: number;
   conversation_quota_mb: number;
   max_body_mb: number;

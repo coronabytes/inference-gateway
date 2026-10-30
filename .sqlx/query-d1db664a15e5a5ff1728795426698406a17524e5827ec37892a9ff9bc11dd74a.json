@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM request_bodies WHERE id IN (\n                     SELECT id FROM request_bodies WHERE ts < now() - make_interval(days => $1) LIMIT 5000)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d1db664a15e5a5ff1728795426698406a17524e5827ec37892a9ff9bc11dd74a"
+}

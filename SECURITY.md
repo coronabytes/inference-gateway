@@ -24,7 +24,8 @@ Of particular interest:
 - Reading provider credentials or the OIDC client secret, which are stored encrypted and never
   returned by the API.
 - Making the gateway call addresses outside `GATEWAY_UPSTREAM_ALLOWED_NETWORKS`.
-- Prompts or completions ending up in the database or logs; only request metadata is stored.
+- Prompts or completions ending up in the database or logs; only request metadata is stored,
+  unless prompt logging is turned on for a key (see docs/security.md).
 
 Weaknesses in the providers themselves, or in a deployment that ignores the
 [production advice](docs/production.md), are out of scope.

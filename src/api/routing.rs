@@ -9,6 +9,7 @@ use axum::{
     http::{HeaderMap, HeaderValue},
     response::Response,
 };
+use bytes::Bytes;
 use serde_json::{Value, json};
 
 use super::{Inbound, anthropic, chat, responses};
@@ -32,13 +33,16 @@ pub async fn route(
     labels: &Labels,
     headers: &HeaderMap,
     mut raw: Value,
-    body_len: usize,
+    body: &Bytes,
     inbound: Inbound,
     router: Arc<AutoRouter>,
     guards: &[Arc<crate::guardrails::Active>],
 ) -> Result<Response, GatewayError> {
     let stream = raw.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let rollup = Rollup::new(state, Some(&key), labels, &router.model_name, inbound.name(), stream);
+    // A logged request: the router's entry keeps it as the client sent it and what the guardrails
+    // did; its calls keep their own requests and responses.
+    rollup.log(|c| c.request(crate::capture::Body::Bytes(body.clone())));
     // Before the guardrails and the decision, so a key over its limits pays for neither.
     if let Err(e) = crate::auth::check_key_limits(state, &key).await {
         rollup.fail(&e);
@@ -47,9 +51,12 @@ pub async fn route(
     // Before the decision, so the decision model sees the masked prompt too.
     let mut guarded = None;
     if !guards.is_empty() {
-        match super::guard::screen_prompt(state, inbound, &mut raw, guards).await {
+        match super::guard::screen_prompt(state, inbound, &mut raw, guards, rollup.logging()).await {
             Ok((charge, screened)) => {
                 rollup.guardrails(charge);
+                if screened.action == crate::guardrails::Action::Masked {
+                    rollup.log(|c| c.screened(raw.clone()));
+                }
                 guarded = Some(screened);
             }
             Err((charge, e)) => {
@@ -58,6 +65,10 @@ pub async fn route(
                 return Err(e);
             }
         }
+    }
+    if rollup.logging() {
+        let conversation = Affinity::fingerprint(state, &raw, inbound);
+        rollup.log(|c| c.conversation(conversation));
     }
     let affinity = router.sticky.then(|| Affinity::of(state, &raw, inbound)).flatten();
     let picked = pick(state, &key, &raw, inbound, &router, &rollup, affinity.as_ref()).await;
@@ -68,16 +79,16 @@ pub async fn route(
             return Err(e);
         }
     };
-    let Some(body) = raw.as_object_mut() else {
+    let Some(fields) = raw.as_object_mut() else {
         let e = GatewayError::invalid("the request body must be a JSON object");
         rollup.fail(&e);
         return Err(e);
     };
-    body.insert("model".into(), target.model.clone().into());
+    fields.insert("model".into(), target.model.clone().into());
     if let Some(effort) = target.reasoning_effort {
-        set_effort(body, inbound, effort);
+        set_effort(fields, inbound, effort);
     }
-    let mut resp = super::run_model(state, key, labels, headers, raw, body_len, inbound, Some(rollup.clone()), &[]).await?;
+    let mut resp = super::run_model(state, key, labels, headers, raw, body, inbound, Some(rollup.clone()), &[]).await?;
     super::guardrail_header(&mut resp, guarded.as_ref());
     let h = resp.headers_mut();
     // The client's request id is the router's entry; the routed call is logged beneath it.

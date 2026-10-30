@@ -38,6 +38,16 @@ impl Affinity {
         Some(Self(h.finalize().into()))
     }
 
+    /// A conversation's identity for prompt logging, which links the logged turns of one
+    /// conversation: the same keyed hash as sticky routing's, whether that is on or not.
+    pub fn fingerprint(state: &AppState, raw: &Value, inbound: Inbound) -> Option<[u8; 16]> {
+        let mut h = Sha256::new();
+        h.update(state.cfg.affinity_salt);
+        h.update(start(raw, inbound)?);
+        let d: [u8; 32] = h.finalize().into();
+        d[..16].try_into().ok()
+    }
+
     /// The Valkey key for this conversation on a model or router: `kind` and `name` are hashed
     /// in, since names may contain anything (also a cluster hash tag).
     fn key(&self, kind: &str, name: &str) -> String {
