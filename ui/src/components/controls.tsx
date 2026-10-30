@@ -577,7 +577,8 @@ export function useDebounced<T>(value: T, ms = 250): T {
  */
 export function useHashTab<T extends string>(page: string, tabs: readonly T[]): [T, (tab: T) => void] {
   const read = () => {
-    const tab = window.location.hash.replace(/^#\/?/, "").split("/")[1] ?? "";
+    // A tab may take parameters after it: `#/page/tab?name=value`.
+    const tab = window.location.hash.replace(/^#\/?/, "").split("?")[0].split("/")[1] ?? "";
     return (tabs as readonly string[]).includes(tab) ? (tab as T) : tabs[0];
   };
   const [tab, setTab] = useState<T>(read);

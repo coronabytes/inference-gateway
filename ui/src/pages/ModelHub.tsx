@@ -4,7 +4,7 @@ import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, TextArea, T
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
 import { VendorLogo } from "../components/VendorLogo";
-import { Badge, BracesIcon, CopyIcon, DetailsIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, ReasoningIcon, TilesIcon, TokenPrices } from "../components/ui";
+import { Badge, BracesIcon, CopyIcon, DetailsIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, PlayIcon, ReasoningIcon, TilesIcon, TokenPrices } from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
@@ -169,6 +169,22 @@ function initialView(): View {
 
 /** A file name's part for a key: "Team A (prod)" → "team-a-prod". */
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "key";
+
+/** Opens the playground on `model`, as `key` if it may call the model, else as another key that may. */
+function openPlayground(model: string, key: string) {
+  const params = new URLSearchParams({ model });
+  if (key) params.set("key", key);
+  window.location.hash = `#/models/playground?${params}`;
+}
+
+/** The play button of a model's row or tile. */
+function PlayButton({ model, keyId }: { model: string; keyId: string }) {
+  return (
+    <IconButton label={`Try ${model} in the playground`} title="Try in the playground" onClick={() => openPlayground(model, keyId)}>
+      <PlayIcon />
+    </IconButton>
+  );
+}
 
 /**
  * The model hub: every model the gateway serves, or with a key picked those that key may use, with
@@ -471,7 +487,7 @@ export function ModelHub() {
         ) : (
           <div className="hub-tiles">
             {visible.map((m) => (
-              <ModelTile key={m.name} model={m} caps={capFilter} onCap={toggleCap} onEdit={() => setEditing(m)} onDetails={() => setDetails(m)} />
+              <ModelTile key={m.name} model={m} keyId={keyId} caps={capFilter} onCap={toggleCap} onEdit={() => setEditing(m)} onDetails={() => setDetails(m)} />
             ))}
           </div>
         )
@@ -547,6 +563,7 @@ export function ModelHub() {
                       </td>
                       <td className="actions middle" onClick={(e) => e.stopPropagation()}>
                         <div className="hub-tile-actions">
+                          <PlayButton model={m.name} keyId={keyId} />
                           <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={() => setEditing(m)}>
                             <EditIcon />
                           </IconButton>
@@ -674,7 +691,22 @@ function ModelStats({ model: m, speedSlot }: { model: HubModel; speedSlot?: bool
 }
 
 /** A model as a card: who makes it, what it is for and can do, what it costs, and how it ran today. */
-function ModelTile({ model: m, caps, onCap, onEdit, onDetails }: { model: HubModel; caps: string[]; onCap: (path: string) => void; onEdit: () => void; onDetails: () => void }) {
+function ModelTile({
+  model: m,
+  keyId,
+  caps,
+  onCap,
+  onEdit,
+  onDetails,
+}: {
+  model: HubModel;
+  /** The hub's key, to try the model as. */
+  keyId: string;
+  caps: string[];
+  onCap: (path: string) => void;
+  onEdit: () => void;
+  onDetails: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const vendor = m.vendor ?? "";
   const copy = async () => {
@@ -700,8 +732,15 @@ function ModelTile({ model: m, caps, onCap, onEdit, onDetails }: { model: HubMod
           </div>
         </div>
         <div className="hub-tile-actions">
+          <PlayButton model={m.name} keyId={keyId} />
           <IconButton label={copied ? "Copied" : `Copy the model name ${m.name}`} title={copied ? "Copied" : "Copy the model name"} onClick={copy}>
             <CopyIcon />
+          </IconButton>
+          <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={onEdit}>
+            <EditIcon />
+          </IconButton>
+          <IconButton label={`Details of ${m.name}`} title="Details" onClick={onDetails}>
+            <DetailsIcon />
           </IconButton>
         </div>
       </div>
@@ -726,14 +765,6 @@ function ModelTile({ model: m, caps, onCap, onEdit, onDetails }: { model: HubMod
       </dl>
       <div className="hub-tile-foot">
         <ModelStats model={m} />
-        <div className="hub-tile-actions">
-          <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={onEdit}>
-            <EditIcon />
-          </IconButton>
-          <IconButton label={`Details of ${m.name}`} title="Details" onClick={onDetails}>
-            <DetailsIcon />
-          </IconButton>
-        </div>
       </div>
     </article>
   );

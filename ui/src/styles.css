@@ -964,7 +964,6 @@ a.button.primary:hover { background: var(--accent-hover); box-shadow: var(--glow
 .hub-tile-foot {
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border);
 }
-.hub-tile-foot > .hub-tile-actions { margin: 0 -6px -4px auto; }
 .hub-stat, .hub-status { display: grid; gap: 4px 8px; }
 .hub-status { grid-template-columns: auto 1fr; flex: 1 1 140px; }
 .hub-status .status-bar { grid-column: 1 / -1; }

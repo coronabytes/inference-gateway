@@ -1725,13 +1725,28 @@ async fn list_keys(State(state): State<AppState>, Extension(access): Extension<A
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct KeyOptionsQuery {
-    /// Just the keys that may call models now: enabled, unexpired, with an inference scope.
+    /// Just the keys that may call models now: enabled, unexpired, in an active project, with an
+    /// inference scope.
     usable: Option<bool>,
+    /// Just the keys that may call this model (its tags, allowed models and projects all apply).
+    model: Option<String>,
 }
 
 /// `GET /keys/options`: the keys a picker offers, by name, without their settings or budgets.
 async fn key_options(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<KeyOptionsQuery>) -> R<Json<Vec<db::NamedItem>>> {
-    Ok(Json(db::key_names(&state.db, access.projects(), q.usable.unwrap_or(false)).await?))
+    let usable = q.usable.unwrap_or(false);
+    let mut keys = db::key_names(&state.db, access.projects(), usable).await?;
+    // Whether a project is active and what a key may call, the registry knows.
+    if usable || q.model.is_some() {
+        let snap = state.registry.snapshot();
+        let by_id: HashMap<Uuid, &std::sync::Arc<VirtualKey>> = snap.keys.values().map(|k| (k.id, k)).collect();
+        keys.retain(|n| {
+            by_id.get(&n.id).is_some_and(|k| {
+                (!usable || crate::auth::can_call_models(k)) && q.model.as_deref().is_none_or(|m| crate::api::key_can_use(&snap, k, m))
+            })
+        });
+    }
+    Ok(Json(keys))
 }
 
 /// `GET /projects/options`: the projects a picker offers, by name.

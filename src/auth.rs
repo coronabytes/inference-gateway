@@ -87,6 +87,11 @@ pub fn presented_virtual_key(state: &AppState, headers: &HeaderMap) -> Option<Ar
     usable(state.registry.snapshot().keys.get(&hash).cloned()?).ok()
 }
 
+/// Whether `key` may call models now: enabled, in an active project, unexpired, with an inference scope.
+pub(crate) fn can_call_models(key: &Arc<VirtualKey>) -> bool {
+    usable(key.clone()).and_then(for_inference).is_ok()
+}
+
 fn usable(key: Arc<VirtualKey>) -> Result<Arc<VirtualKey>, GatewayError> {
     if !key.enabled {
         return Err(GatewayError::unauthorized("API key is disabled"));
