@@ -109,10 +109,9 @@ export function Modal({
 }
 
 /**
- * A panel along the right edge, beside the page rather than over it: the page stays usable, and
- * picking another item swaps the panel's content. On wide screens the page makes room for it
- * while it is open (`body.has-side-panel`). × or Escape closes it, unless a dialog is open over
- * it. Its body scrolls under a fixed title.
+ * A panel along the right edge, over the page without a backdrop: the page keeps its size and
+ * stays usable, and picking another item swaps the panel's content. × or Escape closes it, unless
+ * a dialog is open over it. Its body scrolls under a fixed title.
  */
 export function SidePanel({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
   const close = useRef(onClose);
@@ -120,11 +119,7 @@ export function SidePanel({ title, onClose, children }: { title: ReactNode; onCl
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && openDialogs.length === 0 && close.current();
     window.addEventListener("keydown", onKey);
-    document.body.classList.add("has-side-panel");
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.classList.remove("has-side-panel");
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
   return createPortal(
     <aside className="side-panel" aria-label={typeof title === "string" ? title : "Details"}>

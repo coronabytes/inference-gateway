@@ -277,7 +277,6 @@ export function RequestLog() {
               <th className="num">TTFT</th>
               <th className="num">In / out</th>
               <th className="num">Cost</th>
-              <th aria-label="Details" />
             </tr>
           </thead>
           <tbody>
@@ -287,7 +286,15 @@ export function RequestLog() {
                 <Fragment key={p.id}>
                   {[p, ...calls].map((r) => (
                     <Fragment key={r.id}>
-                      <tr className={[r === p ? "" : "child-row", selected?.id === r.id ? "selected" : ""].join(" ").trim() || undefined}>
+                      <tr
+                        className={["clickable", r === p ? "" : "child-row", selected?.id === r.id ? "selected" : ""].join(" ").trim()}
+                        tabIndex={0}
+                        aria-selected={selected?.id === r.id}
+                        // Clicking a row shows its details; a second click hides them. Its own
+                        // buttons (a label to filter by) keep their action.
+                        onClick={(e) => (e.target as HTMLElement).closest("button, a") || setSelected((s) => (s?.id === r.id ? null : r))}
+                        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && e.target === e.currentTarget && (e.preventDefault(), setSelected((s) => (s?.id === r.id ? null : r)))}
+                      >
                         <td className="when" title={dateTime(r.ts)}>
                           {r === p ? relative(r.ts) : <ChildArrowIcon />}
                         </td>
@@ -328,16 +335,6 @@ export function RequestLog() {
                           )}
                           {usd(r.cost_usd)}
                         </td>
-                        <td className="num">
-                          <Button
-                            variant="ghost"
-                            className="details-btn"
-                            onClick={() => setSelected((s) => (s?.id === r.id ? null : r))}
-                            aria-expanded={selected?.id === r.id}
-                          >
-                            {selected?.id === r.id ? "Hide details" : "Details"}
-                          </Button>
-                        </td>
                       </tr>
                     </Fragment>
                   ))}
@@ -346,7 +343,7 @@ export function RequestLog() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={12} className="empty">No requests match these filters.</td>
+                <td colSpan={11} className="empty">No requests match these filters.</td>
               </tr>
             )}
           </tbody>
