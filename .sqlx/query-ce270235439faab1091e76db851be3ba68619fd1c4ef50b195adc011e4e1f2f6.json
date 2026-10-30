@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT model_name,\n                  percentile_disc(0.5) WITHIN GROUP (ORDER BY latency_ms) AS \"p50_latency_ms?\",\n                  coalesce(sum(output_tokens) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms), 0)::bigint AS \"stream_tokens!\",\n                  coalesce(sum(latency_ms - ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms), 0)::bigint AS \"stream_ms!\",\n                  coalesce(sum(output_tokens) FILTER (WHERE ttft_ms IS NULL), 0)::bigint AS \"whole_tokens!\",\n                  coalesce(sum(latency_ms) FILTER (WHERE ttft_ms IS NULL), 0)::bigint AS \"whole_ms!\"\n           FROM request_logs\n           WHERE ts >= $1 AND model_name = ANY($2) AND ($3::uuid IS NULL OR key_id = $3) AND ($4::uuid[] IS NULL OR project_id = ANY($4))\n             AND status_code < 400\n           GROUP BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "model_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "model_name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "p50_latency_ms?",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "stream_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "stream_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "whole_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "whole_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "TextArray",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "ce270235439faab1091e76db851be3ba68619fd1c4ef50b195adc011e4e1f2f6"
+}

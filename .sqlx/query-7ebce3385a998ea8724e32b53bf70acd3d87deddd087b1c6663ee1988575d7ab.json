@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT model_name, (floor(extract(epoch FROM ts) / 3600) * 3600)::bigint AS \"bucket!\",\n                  count(*) AS \"requests!\", count(*) FILTER (WHERE status_code >= 400) AS \"errors!\"\n           FROM request_logs\n           WHERE ts >= $1 AND model_name = ANY($2) AND ($3::uuid IS NULL OR key_id = $3) AND ($4::uuid[] IS NULL OR project_id = ANY($4))\n           GROUP BY 1, 2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "model_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "model_name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "bucket!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "requests!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "errors!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "TextArray",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "7ebce3385a998ea8724e32b53bf70acd3d87deddd087b1c6663ee1988575d7ab"
+}

@@ -21,35 +21,6 @@ export function applyTheme(theme: Theme) {
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "light" ? "#f3f5fb" : "#03050b");
 }
 
-const WIDE_KEY = "gateway-wide";
-
-/**
- * Widescreen: pages use the whole window instead of a centred column. Remembered in this browser
- * and set on <html> as data-wide, where the stylesheet lifts the width limit.
- */
-export function useWide(): [boolean, () => void] {
-  const [wide, setWide] = useState(() => {
-    try {
-      return localStorage.getItem(WIDE_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    if (wide) document.documentElement.dataset.wide = "";
-    else delete document.documentElement.dataset.wide;
-  }, [wide]);
-  const toggle = () => {
-    try {
-      localStorage.setItem(WIDE_KEY, wide ? "0" : "1");
-    } catch {
-      // Not remembered, but still switched for this visit.
-    }
-    setWide(!wide);
-  };
-  return [wide, toggle];
-}
-
 export function useTheme(): [Theme, () => void] {
   const [theme, setTheme] = useState(initialTheme);
   useEffect(() => applyTheme(theme), [theme]);

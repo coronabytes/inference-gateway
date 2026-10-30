@@ -178,9 +178,7 @@ a:hover { color: var(--link-hover); }
 }
 .topbar nav a:hover { background: var(--wash); color: var(--text-primary); }
 .topbar nav a.active, .topbar nav a.active:hover { color: var(--accent-ink); background: var(--accent); font-weight: 550; }
-main { max-width: 1280px; margin: 0 auto; padding: 24px; }
-/* Widescreen (the top bar's toggle): pages use the whole window. */
-html[data-wide] main { max-width: none; }
+main { padding: 24px; }
 .page { display: flex; flex-direction: column; gap: 12px; transition: opacity 0.15s; }
 .page.refreshing { opacity: 0.85; }
 /* Filters, then the page's buttons; when they do not fit, the buttons move to a line of their own. */
@@ -302,6 +300,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, svg:focus-visib
 .segmented button.active { background: var(--accent); color: var(--accent-ink); font-weight: 550; }
 .segmented button.active:hover:not(:disabled) { background: var(--accent); }
 .segmented-group { display: inline-flex; }
+.segmented button.icon-choice { display: inline-grid; place-items: center; padding: 4px 10px; }
 /* Tabs and toggles turn semi-bold when selected. Each reserves that width up front with a hidden
    bold copy of its label (data-label), so selecting one does not shift its neighbours. */
 .topbar nav a[data-label], .segmented button[data-label], .tabs button[data-label], button.tag-toggle[data-label] {
@@ -868,6 +867,39 @@ a.button.primary:hover { background: var(--accent-hover); box-shadow: var(--glow
 .hub-name { font-weight: 550; }
 /* Guessed from the model's name, not saved yet */
 .vendor-suggested { color: var(--text-muted); font-style: italic; }
+/* The hub's tile view: a card per model, as many across as fit. */
+.hub-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 12px; }
+.hub-tile { display: flex; flex-direction: column; gap: 10px; padding: 16px; min-width: 0; }
+.hub-tile-head { display: flex; align-items: flex-start; gap: 10px; }
+.hub-tile-title { flex: 1; min-width: 0; }
+.hub-tile-title .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-tile .hub-name { font-family: var(--mono); font-size: 15px; }
+.hub-tile-actions { display: flex; gap: 2px; margin: -4px -6px 0 0; }
+.vendor-mark {
+  flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border); font-weight: 650; font-size: 16px; color: var(--text-primary);
+}
+.vendor-mark.logo svg { width: 22px; height: 22px; }
+.hub-tile-description {
+  margin: 0; color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.hub-tile-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--text-secondary); }
+.hub-tile-prices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.hub-tile-prices dd { margin: 2px 0 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-tile-foot {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.hub-tile-foot > button { margin-left: auto; }
+.hub-stat, .hub-status { display: grid; gap: 4px 8px; }
+.hub-status { grid-template-columns: auto 1fr; flex: 1 1 140px; }
+.hub-status .status-bar { grid-column: 1 / -1; }
+.hub-stat-label { font-size: 12px; color: var(--text-muted); }
+.hub-stat-value { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.status-bar { display: flex; gap: 2px; height: 18px; }
+.status-hour { flex: 1; min-width: 3px; border-radius: 2px; background: var(--border); }
+.status-hour.good { background: var(--status-good); }
+.status-hour.warning { background: var(--status-warning); }
+.status-hour.critical { background: var(--status-critical); }
 .hub-summary { display: flex; flex-direction: column; gap: 4px; margin: -4px 0 12px; }
 .hub-summary p { margin: 0; }
 .hub-guardrails { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

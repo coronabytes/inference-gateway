@@ -18,7 +18,7 @@ controls, each a pill with its caption inside, before the value:
 - `Select`: a dropdown (`SearchSelect`). It fills its column in a `.form` and fits its content in a `.filters` bar.
 - `MultiSelect`: a dropdown that picks any number of options. `none` (default "All") clears the choice.
 - `KeyValueInput`: `key=value` chips with suggested keys, then that key's values; typed pairs work too. For request labels use `LabelFilter` (filter bars) or `LabelEditor` (labels to send), in `components/LabelInput.tsx`.
-- `Segmented`: one choice among a few (a tab-select). `children` go after the choices, for example a `Switch`.
+- `Segmented`: one choice among a few (a tab-select). `children` go after the choices, for example a `Switch`. An option's `icon` replaces its text, and its `label` becomes the button's accessible name and tooltip.
 - `Toggle`: an on/off `Switch` in a pill. Use it for checkboxes too.
 - `FileButton`: opens the file chooser. With a `caption` it sits in a pill like the other controls.
 - `Button`: with `variant` `primary` (the main action), `ghost` (quiet) or `danger`.

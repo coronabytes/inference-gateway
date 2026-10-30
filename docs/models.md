@@ -27,6 +27,6 @@ The **Pricing** tab imports a public price list (and the gateway refreshes it ev
 
 ## Model hub
 
-The **Hub** tab lists every model the gateway serves, auto routers included, with context size, maximum output, capabilities and prices. Pick a key to see exactly the models it may use and the guardrails enforced on it. Each model can have a display name, a vendor and a description of what it is good at.
+The **Hub** tab lists every model the gateway serves, auto routers included, with context size, maximum output, capabilities and prices, as tiles or as a list. Each tile also shows how the model ran in the last 24 hours, from the request log: its success rate with a bar per hour, its median latency, and for chat models its output speed in tokens per second. Pick a key to see exactly the models it may use and the guardrails enforced on it. Each model can have a display name, a vendor and a description of what it is good at.
 
-The list exports as JSON or Excel, and is available as `GET /admin/api/hub` (`key`, `mode`, `vendor` and `q`). Besides admins, a project key may call it for keys of its project, and any key for itself.
+The list exports as JSON or Excel, and is available as `GET /admin/api/hub` (`key`, `mode`, `vendor` and `q`; `stats=true` adds the last 24 hours). Besides admins, a project key may call it for keys of its project, and any key for itself.
