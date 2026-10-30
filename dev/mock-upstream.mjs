@@ -6,7 +6,8 @@
 //
 // Model names control behaviour: anything containing "fail" returns 503 (to exercise
 // failover/cooldown); requests with tools get a tool call back. A streamed Messages request
-// with the web search tool gets a search, its results and a cited answer.
+// with the web search tool gets a search, its results and a cited answer. Bedrock credentials
+// pointed at the mock get a guardrail (see `applyGuardrail`).
 import http from "node:http";
 
 const PORT = Number(process.env.PORT ?? 9999);
@@ -212,6 +213,41 @@ function rerank(body, res) {
   });
 }
 
+// Bedrock ApplyGuardrail, for a Bedrock credential whose endpoint is the mock. Each text block is
+// screened on its own: an e-mail address or the name "Ada Lovelace" is masked ({EMAIL}, {NAME}),
+// "lottery" or "casino" is flagged (a denied topic it only detects), and "ignore previous
+// instructions" is blocked as a prompt attack.
+function applyGuardrail(body, res) {
+  const texts = (body.content ?? []).map((c) => c.text?.text ?? "");
+  const pii = [];
+  const topics = [];
+  const filters = [];
+  const outputs = texts.map((t) => {
+    for (const m of t.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? []) pii.push({ match: m, type: "EMAIL", action: "ANONYMIZED", detected: true });
+    for (const m of t.match(/Ada Lovelace/g) ?? []) pii.push({ match: m, type: "NAME", action: "ANONYMIZED", detected: true });
+    if (/lottery|casino/i.test(t)) topics.push({ name: "Gambling", type: "DENY", action: "NONE", detected: true });
+    if (/ignore previous instructions/i.test(t)) filters.push({ type: "PROMPT_ATTACK", confidence: "HIGH", filterStrength: "HIGH", action: "BLOCKED", detected: true });
+    return t.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "{EMAIL}").replace(/Ada Lovelace/g, "{NAME}");
+  });
+  const blocked = filters.length > 0;
+  const intervened = blocked || pii.length > 0;
+  const units = Math.max(1, Math.ceil(texts.join("").length / 1000));
+  json(res, 200, {
+    action: intervened ? "GUARDRAIL_INTERVENED" : "NONE",
+    actionReason: blocked ? "Guardrail blocked." : intervened ? "Guardrail masked." : "No action.",
+    outputs: blocked ? [{ text: "Sorry, the mock guardrail blocked this request." }] : outputs.map((text) => ({ text })),
+    assessments: [{
+      contentPolicy: { filters },
+      topicPolicy: { topics },
+      sensitiveInformationPolicy: { piiEntities: pii, regexes: [] },
+    }],
+    usage: {
+      topicPolicyUnits: units, contentPolicyUnits: units, wordPolicyUnits: 0,
+      sensitiveInformationPolicyUnits: units, sensitiveInformationPolicyFreeUnits: 0, contextualGroundingPolicyUnits: 0,
+    },
+  });
+}
+
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -239,6 +275,7 @@ http
       if (req.url.split("?")[0].endsWith("/systemone")) return systemone(body, req, res);
       if (req.url.split("?")[0].endsWith("/embeddings")) return embeddings(body, res);
       if (/\/model\/[^/]+\/invoke$/.test(req.url)) return titan(body, req, res);
+      if (/\/guardrail\/[^/]+\/version\/[^/]+\/apply$/.test(req.url)) return applyGuardrail(body, res);
       if (req.url.split("?")[0].endsWith("/rerank")) return rerank(body, res);
       json(res, 404, { error: { message: `no route ${req.url}` } });
     });
