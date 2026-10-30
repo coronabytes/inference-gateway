@@ -14,7 +14,7 @@ import {
   type TagInfo,
   type VirtualKey,
 } from "../api";
-import { Banner, Button, MultiSelect, PageActions, Select, Tabs, TextInput, Toggle, useDebounced, useHashTab } from "../components/controls";
+import { Banner, Button, MenuButton, MultiSelect, PageActions, Select, Tabs, TextInput, Toggle, useDebounced, useHashTab } from "../components/controls";
 import { GuardrailList, TagList, TagPicker } from "../components/Tags";
 import {
   Badge,
@@ -23,6 +23,7 @@ import {
   EditIcon,
   ErrorBanner,
   IconButton,
+  MenuIcon,
   Modal,
   PauseIcon,
   PlayIcon,
@@ -33,10 +34,11 @@ import {
 } from "../components/ui";
 import { offerDeleteStoredPrompts } from "../components/StoredPrompts";
 import { dateTime } from "../format";
-import { ProjectForm, Projects, setProjectEnabled } from "./Projects";
+import { ProjectForm, confirmDelete, confirmResetSpend, setProjectEnabled } from "./Projects";
 import { Admins } from "./Settings";
 
-type Editing = { mode: "create" } | { mode: "edit"; key: VirtualKey };
+/** A key being created, in `project` when started from a project's card, or one being edited. */
+type Editing = { mode: "create"; project?: string } | { mode: "edit"; key: VirtualKey };
 
 
 const SCOPE_LABEL: Record<KeyScope, string> = { inference: "Inference", admin: "Admin", all: "Inference + admin", project: "Project admin" };
@@ -58,12 +60,12 @@ const NO_TAGS = " none";
 /** The project filter's value for keys without a project. */
 const NO_PROJECT = " none";
 
-const TABS = ["keys", "projects", "users"] as const;
+const TABS = ["keys", "users"] as const;
 
 export function Keys() {
   const [tab, setTab] = useHashTab("access", TABS);
   const [projectFilter, setProjectFilter] = useState<string[]>([]);
-  // Users see their projects' keys only, not the projects themselves.
+  // Users see their projects' keys only; they do not change the projects themselves.
   if (useIsUser()) {
     return (
       <div className="page">
@@ -74,27 +76,15 @@ export function Keys() {
   return (
     <div className="page">
       <Tabs
-        label="Keys"
+        label="Access"
         options={[
-          { value: "keys", label: "Keys" },
-          { value: "projects", label: "Projects" },
+          { value: "keys", label: "Keys & projects" },
           { value: "users", label: "Users" },
         ]}
         value={tab}
         onChange={setTab}
       />
-      {tab === "users" ? (
-        <Admins />
-      ) : tab === "projects" ? (
-        <Projects
-          onShowKeys={(p) => {
-            setProjectFilter([p.id]);
-            setTab("keys");
-          }}
-        />
-      ) : (
-        <KeyList projectFilter={projectFilter} onProjectFilter={setProjectFilter} />
-      )}
+      {tab === "users" ? <Admins /> : <KeyList projectFilter={projectFilter} onProjectFilter={setProjectFilter} />}
     </div>
   );
 }
@@ -112,7 +102,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   const [editing, setEditing] = useState<Editing | null>(null);
   const [issued, setIssued] = useState<{ title: string; key: string } | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
-  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editingProject, setEditingProject] = useState<Project | "new" | null>(null);
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [loggingOnly, setLoggingOnly] = useState(false);
@@ -205,15 +195,18 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   const guardrailNames = new Map(guardrails.map((g) => [g.id, g.name]));
 
   const shown = keys;
-  const filtering = !!search || tagFilter.length > 0 || projectsPicked.length > 0 || loggingOnly;
+  // Filters on the keys themselves; the project filter picks cards.
+  const keyFiltering = !!search || tagFilter.length > 0 || loggingOnly;
+  const filtering = keyFiltering || projectsPicked.length > 0;
 
-  // With projects, each one's keys get a card, and a last card holds those without a project.
+  // With projects, each one gets a card with its keys, and a last card holds the keys without a
+  // project. A project without keys still shows, unless the keys are filtered.
   const groups = [
     ...projects.map((p) => ({ id: p.id, name: p.name, description: p.description, project: p as Project | null })),
     { id: NO_PROJECT, name: "No project", description: null, project: null },
   ]
     .map((g) => ({ ...g, keys: shown.filter((k) => (k.project_id ?? NO_PROJECT) === g.id) }))
-    .filter((g) => g.keys.length > 0);
+    .filter((g) => g.keys.length > 0 || (g.project && !keyFiltering && (projectsPicked.length === 0 || projectsPicked.includes(g.id))));
   // A new key starts in the project the list is filtered to, if just one.
   const filteredProject = projectsPicked.length === 1 && projectsPicked[0] !== NO_PROJECT ? projectsPicked[0] : null;
 
@@ -231,7 +224,14 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
         {p && (
           <>
             <div className="key-budget">{p.budget ? <BudgetMeter budget={p.budget} /> : <span className="muted small">No budget</span>}</div>
-            <div className="stat">{p.enabled ? <Badge tone="good">Active</Badge> : <Badge tone="warning">Inactive</Badge>}</div>
+            <div className="stat">
+              {p.enabled ? <Badge tone="good">Active</Badge> : <Badge tone="warning">Inactive</Badge>}
+              {p.prompt_logging === "force" && (
+                <span title="Every key's prompts and responses are logged">
+                  <Badge tone="warning">Logging</Badge>
+                </span>
+              )}
+            </div>
             {/* Only admins change projects. */}
             <div className="actions">
               {!user && (
@@ -239,14 +239,23 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
                   <IconButton label={`Edit project ${p.name}`} title="Edit project" onClick={() => setEditingProject(p)}>
                     <EditIcon />
                   </IconButton>
-                  {/* While inactive, every key in the project is refused, on the inference API and the admin API. */}
-                  <IconButton
-                    label={`${p.enabled ? "Deactivate" : "Activate"} project ${p.name}`}
-                    title={p.enabled ? "Deactivate project" : "Activate project"}
-                    onClick={() => act(() => setProjectEnabled(p, !p.enabled, setConfirming, load))}
+                  <MenuButton
+                    className="icon-btn"
+                    label={`More actions for project ${p.name}`}
+                    items={[
+                      { label: "New key in this project", onClick: () => setEditing({ mode: "create", project: p.id }) },
+                      // While inactive, every key in the project is refused, on the inference API and the admin API.
+                      { label: p.enabled ? "Deactivate" : "Activate", onClick: () => act(() => setProjectEnabled(p, !p.enabled, setConfirming, load)) },
+                      { label: "Reset spend", onClick: () => confirmResetSpend(p, setConfirming, load), disabled: !p.budget },
+                      {
+                        label: "Delete stored prompts",
+                        onClick: () => offerDeleteStoredPrompts(`/projects/${p.id}`, p.name, setConfirming, { always: true, done: load }).catch((e) => setError((e as Error).message)),
+                      },
+                      { label: "Delete", onClick: () => confirmDelete(p, setConfirming, load), danger: true },
+                    ]}
                   >
-                    {p.enabled ? <PauseIcon /> : <PlayIcon />}
-                  </IconButton>
+                    <MenuIcon />
+                  </MenuButton>
                 </>
               )}
             </div>
@@ -383,21 +392,27 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
             )}
           </div>
         )}
-        <PageActions actions={[{ label: "New key", onClick: () => setEditing({ mode: "create" }), primary: true }]} />
+        <PageActions
+          actions={[
+            // Only admins create projects.
+            ...(user ? [] : [{ label: "New project", onClick: () => setEditingProject("new" as const) }]),
+            { label: "New key", onClick: () => setEditing({ mode: "create" }), primary: true },
+          ]}
+        />
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
-      {shown.length === 0 ? (
-        <div className="card list-card">
-          <p className="empty">{filtering ? "No keys match the filters." : "No keys yet."}</p>
-        </div>
-      ) : projects.length > 0 ? (
+      {projects.length > 0 && groups.length > 0 ? (
         groups.map((g) => (
           // An inactive project's keys are refused; its card shows them greyed out.
           <section key={g.id} className={g.project && !g.project.enabled ? "card list-card key-group inactive" : "card list-card key-group"}>
             {cardHead(g)}
-            <ul className="list">{g.keys.map(keyItem)}</ul>
+            {g.keys.length > 0 ? <ul className="list">{g.keys.map(keyItem)}</ul> : <p className="empty">No keys in this project yet.</p>}
           </section>
         ))
+      ) : shown.length === 0 ? (
+        <div className="card list-card">
+          <p className="empty">{filtering ? "No keys match the filters." : "No keys or projects yet. Create a project to group keys by team, app or customer."}</p>
+        </div>
       ) : (
         <section className="card list-card key-group">
           <ul className="list">{shown.map(keyItem)}</ul>
@@ -411,7 +426,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
           guardrails={guardrails}
           gatewayLogging={gatewayLogging}
           user={user}
-          defaultProject={filteredProject}
+          defaultProject={(editing.mode === "create" && editing.project) || filteredProject}
           initial={editing.mode === "edit" ? toInput(editing.key) : undefined}
           onClose={() => setEditing(null)}
           onDelete={
@@ -464,7 +479,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
 
       {editingProject && (
         <ProjectForm
-          initial={editingProject}
+          initial={editingProject === "new" ? undefined : editingProject}
           confirm={setConfirming}
           onClose={() => setEditingProject(null)}
           onSaved={async () => {

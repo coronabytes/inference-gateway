@@ -4,7 +4,7 @@ import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, TextArea, T
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
 import { VendorLogo } from "../components/VendorLogo";
-import { Badge, BracesIcon, CopyIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, ReasoningIcon, TilesIcon } from "../components/ui";
+import { Badge, BracesIcon, CopyIcon, DetailsIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, ReasoningIcon, TilesIcon, TokenPrices } from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
@@ -26,9 +26,35 @@ const capabilitiesOf = (m: Capable) => CAPABILITIES.filter((c) => m.capabilities
 const capabilityNames = (m: Capable) => capabilitiesOf(m).map((c) => c.label);
 
 /** A model's capabilities as icons, each named by its tooltip and for screen readers. */
-function CapabilityIcons({ m }: { m: Capable }) {
+function CapabilityIcons({ m, picked, onPick }: { m: Capable; picked?: string[]; onPick?: (path: string) => void }) {
   const caps = capabilitiesOf(m);
   if (!caps.length) return <span className="muted">–</span>;
+  // With `onPick`, each icon is a button that adds its capability to the hub's filter, or takes it out.
+  if (onPick) {
+    return (
+      <span className="cap-icons" role="group" aria-label="Capabilities">
+        {caps.map((c) => {
+          const on = picked?.includes(c.path) ?? false;
+          return (
+            <button
+              key={c.path}
+              type="button"
+              className="cap-icon"
+              aria-pressed={on}
+              aria-label={c.label}
+              title={on ? `${c.label}: show models without it too` : `${c.label}: show only models with it`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPick(c.path);
+              }}
+            >
+              {c.icon}
+            </button>
+          );
+        })}
+      </span>
+    );
+  }
   return (
     <span className="cap-icons" role="list" aria-label="Capabilities">
       {caps.map((c) => (
@@ -72,12 +98,36 @@ function priceOptions(m: HubModel): PriceOption[] {
 /** Rerank models bill searches; chat models may bill the web searches they run. */
 const searches = (m: HubModel) => m.mode === "rerank" || (m.mode === "chat" && m.deployments.some((d) => d.prices.per_k_searches > 0));
 
-/** The headline price of a model: what its deployments charge, as a range where they differ. */
-function priceSummary(m: HubModel): { value: string; unit: string } {
+/** The headline price of a model: what its deployments charge, as a range where they differ. Long-context
+ *  prices show when all its deployments switch to them at the same threshold. */
+function PriceSummary({ model: m }: { model: HubModel }) {
   const ps = m.deployments.map((d) => d.prices);
-  if (m.mode === "rerank") return { value: range(ps.map((p) => p.per_k_searches)), unit: "$ per 1K searches" };
-  if (m.mode === "embedding") return { value: range(ps.map((p) => p.input)), unit: "$ in per 1M" };
-  return { value: `${range(ps.map((p) => p.input))} · ${range(ps.map((p) => p.output))}`, unit: "$ in · out per 1M" };
+  if (m.mode === "rerank") {
+    return (
+      <>
+        <div>{range(ps.map((p) => p.per_k_searches))}</div>
+        <div className="muted small">$ per 1K searches</div>
+      </>
+    );
+  }
+  const thresholds = new Set(ps.map((p) => p.long_context_threshold));
+  const threshold = thresholds.size === 1 ? ps[0].long_context_threshold : undefined;
+  const embedding = m.mode === "embedding";
+  return (
+    <TokenPrices
+      input={range(ps.map((p) => p.input))}
+      output={embedding ? undefined : range(ps.map((p) => p.output))}
+      long={
+        threshold != null
+          ? {
+              threshold,
+              input: range(ps.map((p) => p.long_input ?? p.input)),
+              output: embedding ? undefined : range(ps.map((p) => p.long_output ?? p.output)),
+            }
+          : undefined
+      }
+    />
+  );
 }
 
 /** The vendor filter's value for models without one; vendors are trimmed, so never this. */
@@ -134,6 +184,9 @@ export function ModelHub() {
   const [modeFilter, setModeFilter] = useState<string[]>([]);
   const [q, setQ] = useState("");
   const [vendorFilter, setVendorFilter] = useState<string[]>([]);
+  // Capabilities by path; a model must have all of them.
+  const [capFilter, setCapFilter] = useState<string[]>([]);
+  const toggleCap = (path: string) => setCapFilter((cs) => (cs.includes(path) ? cs.filter((c) => c !== path) : [...cs, path]));
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<HubModel | null>(null);
   const [curl, setCurl] = useState<CurlRequest | null>(null);
@@ -170,22 +223,22 @@ export function ModelHub() {
     if (keyId) params.set("key", keyId);
     if (modes.length) params.set("mode", modes.join(","));
     if (vendors.length) params.set("vendor", vendors.map((v) => (v === NO_VENDOR ? "-" : v)).join(","));
+    if (capFilter.length) params.set("capability", capFilter.join(","));
     if (term) params.set("q", term);
     return params.toString().replace(/%2C/g, ",");
   };
   const query = hubQuery(search);
-  // The tiles show each model's last 24 hours from the request log; the list does not.
   const tiles = view === "tiles";
 
   const load = useCallback(async () => {
     try {
-      const q = [query, tiles && "stats=true"].filter(Boolean).join("&");
-      setHub(await api<Hub>(`/hub${q ? `?${q}` : ""}`));
+      // Both views show each model's last 24 hours from the request log.
+      setHub(await api<Hub>(`/hub?${[query, "stats=true"].filter(Boolean).join("&")}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [query, tiles]);
+  }, [query]);
 
   useEffect(() => {
     load();
@@ -325,6 +378,13 @@ export function ModelHub() {
               onChange={setVendorFilter}
             />
           )}
+          <MultiSelect
+            caption="Capability"
+            hint="Only models with all the picked capabilities. Clicking a capability's icon on a model picks it too."
+            options={CAPABILITIES.map((c) => ({ value: c.path, label: c.label }))}
+            values={capFilter}
+            onChange={setCapFilter}
+          />
           <TextInput caption="Model" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="name or description" />
           {hub && (
             <span className="muted small">
@@ -411,7 +471,7 @@ export function ModelHub() {
         ) : (
           <div className="hub-tiles">
             {visible.map((m) => (
-              <ModelTile key={m.name} model={m} onEdit={() => setEditing(m)} onDetails={() => setDetails(m)} />
+              <ModelTile key={m.name} model={m} caps={capFilter} onCap={toggleCap} onEdit={() => setEditing(m)} onDetails={() => setDetails(m)} />
             ))}
           </div>
         )
@@ -419,21 +479,20 @@ export function ModelHub() {
         <div className="table-wrap">
           <table className="hub-table">
             <colgroup>
+              <col className="col-logo" />
               <col />
-              <col className="col-vendor" />
-              <col className="col-mode" />
-              <col className="col-tokens" span={2} />
+              <col className="col-stats" />
+              <col className="col-tokens" />
               <col className="col-price" />
               <col className="col-caps" />
               <col className="col-actions" />
             </colgroup>
-            <thead>
+            <thead className="visually-hidden">
               <tr>
+                <th aria-label="Vendor logo" />
                 <th>Model</th>
-                <th>Vendor</th>
-                <th>Mode</th>
-                <th className="num">Context</th>
-                <th className="num">Max output</th>
+                <th>Last 24 hours</th>
+                <th className="num">Tokens</th>
                 <th className="num">Price</th>
                 <th>Capabilities</th>
                 <th aria-label="Actions" />
@@ -442,55 +501,64 @@ export function ModelHub() {
             <tbody>
               {visible.map((m) => {
                 const expanded = open === m.name;
-                const p = priceSummary(m);
                 const options = priceOptions(m);
                 return (
                   <Fragment key={m.name}>
                     <tr className="clickable" onClick={() => setOpen(expanded ? null : m.name)} aria-expanded={expanded}>
+                      <td className="logo middle">
+                        <VendorLogo vendor={m.vendor ?? ""} fallback={m.name} />
+                      </td>
                       <td>
-                        <div className="hub-name clip" title={displayName(m)}>
-                          {displayName(m)}
+                        <div className="hub-model-line">
+                          <span className="hub-name clip" title={displayName(m)}>
+                            {displayName(m)}
+                          </span>
+                          <Badge tone="neutral">{m.kind === "router" ? "router" : m.mode}</Badge>
+                          {m.target && <Badge tone="neutral">alias</Badge>}
                         </div>
-                        {m.metadata.display_name && (
-                          <div className="mono muted small clip" title={m.name}>
-                            {m.name}
-                          </div>
-                        )}
-                      </td>
-                      <td className="clip">
-                        <Vendor model={m} />
+                        <div className="muted small clip">
+                          <Vendor model={m} />
+                          {m.metadata.display_name && <span className="mono" title={m.name}> · {m.name}</span>}
+                        </div>
                       </td>
                       <td>
-                        <Badge tone="neutral">{m.kind === "router" ? "router" : m.mode}</Badge>
-                        {m.target && (
-                          <>
-                            {" "}
-                            <Badge tone="neutral">alias</Badge>
-                          </>
-                        )}
-                      </td>
-                      <td className="num" title={m.max_input_tokens ? `${m.max_input_tokens.toLocaleString()} input tokens` : "Unknown"}>
-                        {m.max_input_tokens ? compact(m.max_input_tokens) : "–"}
-                      </td>
-                      <td className="num" title={m.max_output_tokens ? `${m.max_output_tokens.toLocaleString()} output tokens` : "Unknown"}>
-                        {m.max_output_tokens ? compact(m.max_output_tokens) : "–"}
+                        <div className="hub-row-stats">
+                          <ModelStats model={m} speedSlot />
+                        </div>
                       </td>
                       <td className="num">
-                        <div>{p.value}</div>
-                        <div className="muted small">{options.length > 1 ? `${options.length} prices` : p.unit}</div>
+                        <div className="stat-pairs num">
+                          <span title={m.max_input_tokens ? `${m.max_input_tokens.toLocaleString()} input tokens` : "Unknown"}>
+                            {m.max_input_tokens ? compact(m.max_input_tokens) : "–"}
+                          </span>
+                          <span className="muted small">context</span>
+                          <span title={m.max_output_tokens ? `${m.max_output_tokens.toLocaleString()} output tokens` : "Unknown"}>
+                            {m.max_output_tokens ? compact(m.max_output_tokens) : "–"}
+                          </span>
+                          <span className="muted small">output</span>
+                        </div>
                       </td>
-                      <td>
-                        <CapabilityIcons m={m} />
+                      <td className="num">
+                        <PriceSummary model={m} />
+                        {options.length > 1 && <div className="muted small">{options.length} prices</div>}
                       </td>
-                      <td className="actions" onClick={(e) => e.stopPropagation()}>
-                        <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={() => setEditing(m)}>
-                          <EditIcon />
-                        </IconButton>
+                      <td className="middle">
+                        <CapabilityIcons m={m} picked={capFilter} onPick={toggleCap} />
+                      </td>
+                      <td className="actions middle" onClick={(e) => e.stopPropagation()}>
+                        <div className="hub-tile-actions">
+                          <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={() => setEditing(m)}>
+                            <EditIcon />
+                          </IconButton>
+                          <IconButton label={`${expanded ? "Hide" : "Show"} details of ${m.name}`} title={expanded ? "Hide details" : "Details"} onClick={() => setOpen(expanded ? null : m.name)}>
+                            <DetailsIcon />
+                          </IconButton>
+                        </div>
                       </td>
                     </tr>
                     {expanded && (
                       <tr className="child-row">
-                        <td colSpan={8}>
+                        <td colSpan={7}>
                           <HubDetails model={m} options={options} />
                         </td>
                       </tr>
@@ -500,7 +568,7 @@ export function ModelHub() {
               })}
               {hub && total > 0 && !visible.length && (
                 <tr>
-                  <td colSpan={8} className="empty">
+                  <td colSpan={7} className="empty">
                     No model matches the filter.
                   </td>
                 </tr>
@@ -582,11 +650,33 @@ function StatusBar({ stats }: { stats?: HubStats }) {
   );
 }
 
+/** How a model ran in the last 24 hours: its status bar, latency and, for chat models, speed. In the list,
+ *  `speedSlot` keeps the speed's place for other models so the columns line up from row to row. */
+function ModelStats({ model: m, speedSlot }: { model: HubModel; speedSlot?: boolean }) {
+  const s = m.stats;
+  return (
+    <>
+      <StatusBar stats={s} />
+      <div className="hub-stat" title="Median latency of the successful requests in the last 24 hours">
+        <span className="hub-stat-label">Latency</span>
+        <span className="hub-stat-value">{ms(s?.p50_latency_ms)}</span>
+      </div>
+      {m.mode === "chat" ? (
+        <div className="hub-stat" title="Output tokens per second while generating, in the last 24 hours">
+          <span className="hub-stat-label">Speed</span>
+          <span className="hub-stat-value">{s?.tokens_per_second != null ? `${s.tokens_per_second.toFixed(s.tokens_per_second >= 100 ? 0 : 1)} t/s` : "–"}</span>
+        </div>
+      ) : (
+        speedSlot && <div className="hub-stat" aria-hidden="true" />
+      )}
+    </>
+  );
+}
+
 /** A model as a card: who makes it, what it is for and can do, what it costs, and how it ran today. */
-function ModelTile({ model: m, onEdit, onDetails }: { model: HubModel; onEdit: () => void; onDetails: () => void }) {
+function ModelTile({ model: m, caps, onCap, onEdit, onDetails }: { model: HubModel; caps: string[]; onCap: (path: string) => void; onEdit: () => void; onDetails: () => void }) {
   const [copied, setCopied] = useState(false);
   const vendor = m.vendor ?? "";
-  const s = m.stats;
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(m.name);
@@ -610,9 +700,6 @@ function ModelTile({ model: m, onEdit, onDetails }: { model: HubModel; onEdit: (
           </div>
         </div>
         <div className="hub-tile-actions">
-          <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={onEdit}>
-            <EditIcon />
-          </IconButton>
           <IconButton label={copied ? "Copied" : `Copy the model name ${m.name}`} title={copied ? "Copied" : "Copy the model name"} onClick={copy}>
             <CopyIcon />
           </IconButton>
@@ -624,7 +711,7 @@ function ModelTile({ model: m, onEdit, onDetails }: { model: HubModel; onEdit: (
         {m.target && <Badge tone="neutral">alias</Badge>}
         {m.max_input_tokens != null && <span title={`${m.max_input_tokens.toLocaleString()} input tokens`}>{compact(m.max_input_tokens)} context</span>}
         {m.max_output_tokens != null && <span title={`${m.max_output_tokens.toLocaleString()} output tokens`}>{compact(m.max_output_tokens)} out</span>}
-        <CapabilityIcons m={m} />
+        <CapabilityIcons m={m} picked={caps} onPick={onCap} />
       </div>
       {m.tags.length > 0 && <TagList tags={m.tags} />}
       <dl className="hub-tile-prices">
@@ -638,20 +725,15 @@ function ModelTile({ model: m, onEdit, onDetails }: { model: HubModel; onEdit: (
         ))}
       </dl>
       <div className="hub-tile-foot">
-        <StatusBar stats={s} />
-        <div className="hub-stat" title="Median latency of the successful requests in the last 24 hours">
-          <span className="hub-stat-label">Latency</span>
-          <span className="hub-stat-value">{ms(s?.p50_latency_ms)}</span>
+        <ModelStats model={m} />
+        <div className="hub-tile-actions">
+          <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={onEdit}>
+            <EditIcon />
+          </IconButton>
+          <IconButton label={`Details of ${m.name}`} title="Details" onClick={onDetails}>
+            <DetailsIcon />
+          </IconButton>
         </div>
-        {m.mode === "chat" && (
-          <div className="hub-stat" title="Output tokens per second while generating, in the last 24 hours">
-            <span className="hub-stat-label">Speed</span>
-            <span className="hub-stat-value">{s?.tokens_per_second != null ? `${s.tokens_per_second.toFixed(s.tokens_per_second >= 100 ? 0 : 1)} t/s` : "–"}</span>
-          </div>
-        )}
-        <Button variant="ghost" onClick={onDetails}>
-          Details ›
-        </Button>
       </div>
     </article>
   );
@@ -670,7 +752,7 @@ function Vendor({ model }: { model: HubModel }) {
   );
 }
 
-/** A model's prices, one row per price the deployments that may serve it charge, and its deployments. */
+/** A model's deployments, one row each with what it charges, in the order requests try them. */
 function HubDetails({ model: m, options }: { model: HubModel; options: PriceOption[] }) {
   const chat = m.mode === "chat";
   const router = m.kind === "router";
@@ -682,7 +764,6 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
         Alias of <span className="mono">{m.target}</span>
       </span>
     ),
-    m.tags.length > 0 && <TagList key="tags" tags={m.tags} />,
     router && m.routes?.length && <span key="routes">Routes to {m.routes.join(", ")}</span>,
     m.retires && <span key="retires">Retires {m.retires}</span>,
   ].filter(Boolean);
@@ -690,7 +771,7 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
     <div className="hub-details">
       {m.metadata.description && <p className="hub-description">{m.metadata.description}</p>}
       {facts.length > 0 && <p className="small hub-facts">{facts}</p>}
-      <h4>{options.length > 1 ? `Prices: ${options.length} permutations` : "Price"}</h4>
+      <h4>{options.length > 1 ? `Deployments: ${options.length} prices` : "Deployments"}</h4>
       {options.length > 1 && (
         <p className="muted small">
           {router
@@ -703,76 +784,55 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
       <table className="detail-table">
         <thead>
           <tr>
+            <th>Provider</th>
+            <th>Upstream model</th>
+            {router && <th>Model</th>}
+            <th>Tags</th>
+            <th className="num">Priority</th>
+            <th className="num">Weight</th>
             {m.mode === "rerank" && <th className="num">Per 1K searches</th>}
             <th className="num">Input</th>
             {m.mode !== "embedding" && m.mode !== "rerank" && <th className="num">Output</th>}
             {chat && <th className="num">Cache read</th>}
             {chat && <th className="num">Cache write</th>}
-            {chat && <th>Long context</th>}
             {chat && searches(m) && <th className="num">Per 1K web searches</th>}
-            <th>Served by</th>
-          </tr>
-        </thead>
-        <tbody>
-          {options.map((o) => (
-            <tr key={o.deployments[0].id}>
-              {m.mode === "rerank" && <td className="num">{price(o.prices.per_k_searches)}</td>}
-              <td className="num">{price(o.prices.input)}</td>
-              {m.mode !== "embedding" && m.mode !== "rerank" && <td className="num">{price(o.prices.output)}</td>}
-              {chat && <td className="num">{price(o.prices.cache_read)}</td>}
-              {chat && <td className="num">{price(o.prices.cache_write)}</td>}
-              {chat && (
-                <td>
-                  {o.prices.long_context_threshold != null
-                    ? `above ${compact(o.prices.long_context_threshold)}: ${price(o.prices.long_input)} · ${price(o.prices.long_output)}`
-                    : "–"}
-                </td>
-              )}
-              {chat && searches(m) && <td className="num">{o.prices.per_k_searches ? price(o.prices.per_k_searches) : "–"}</td>}
-              <td>
-                {o.deployments.map((d) => (
-                  <div key={d.id} className="small">
-                    {PROVIDER_LABEL[d.provider] ?? d.provider} <span className="mono">{d.upstream_model}</span>
-                    {router && <span className="muted"> as {d.model}</span>}
-                  </div>
-                ))}
-                {o.firstChoice && fallback && <Badge tone="good">first choice</Badge>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="muted small">
-        {m.mode === "rerank" ? "USD per 1,000 searches; tokens per 1M." : searches(m) ? "USD per 1M tokens; web searches per 1,000." : "USD per 1M tokens."}
-      </p>
-      <h4>Deployments</h4>
-      <table className="detail-table">
-        <thead>
-          <tr>
-            <th>Provider</th>
-            <th>Upstream model</th>
-            {router && <th>Model</th>}
-            <th className="num">Priority</th>
-            <th className="num">Weight</th>
-            <th className="num">Context</th>
-            <th className="num">Max output</th>
-            <th>Capabilities</th>
           </tr>
         </thead>
         <tbody>
           {m.deployments.map((d) => (
-            <tr key={d.id}>
-              <td>{PROVIDER_LABEL[d.provider] ?? d.provider}</td>
-              <td className="mono">{d.upstream_model}</td>
-              {router && <td className="mono">{d.model}</td>}
-              <td className="num">{d.priority}</td>
-              <td className="num">{d.weight}</td>
-              <td className="num">{d.max_input_tokens ? compact(d.max_input_tokens) : "–"}</td>
-              <td className="num">{d.max_output_tokens ? compact(d.max_output_tokens) : "–"}</td>
-              <td>
-                <CapabilityIcons m={d} />
-              </td>
-            </tr>
+            <Fragment key={d.id}>
+              <tr>
+                <td>{PROVIDER_LABEL[d.provider] ?? d.provider}</td>
+                <td className="mono">{d.upstream_model}</td>
+                {router && <td className="mono">{d.model}</td>}
+                <td>
+                  <TagList tags={d.tags} empty="–" />
+                </td>
+                <td className="num" title={fallback && d.first_choice ? "First choice" : undefined}>
+                  {d.priority}
+                </td>
+                <td className="num">{d.weight}</td>
+                {m.mode === "rerank" && <td className="num">{price(d.prices.per_k_searches)}</td>}
+                <td className="num">{price(d.prices.input)}</td>
+                {m.mode !== "embedding" && m.mode !== "rerank" && <td className="num">{price(d.prices.output)}</td>}
+                {chat && <td className="num">{price(d.prices.cache_read)}</td>}
+                {chat && <td className="num">{price(d.prices.cache_write)}</td>}
+                {chat && searches(m) && <td className="num">{d.prices.per_k_searches ? price(d.prices.per_k_searches) : "–"}</td>}
+              </tr>
+              {/* Long-context prices in the same columns, on a row of their own after their threshold. */}
+              {chat && d.prices.long_context_threshold != null && (
+                <tr className="long-prices">
+                  <td colSpan={router ? 6 : 5} className="num muted small" title={`Above ${d.prices.long_context_threshold.toLocaleString()} input tokens`}>
+                    &gt; {compact(d.prices.long_context_threshold)}
+                  </td>
+                  <td className="num">{price(d.prices.long_input)}</td>
+                  <td className="num">{price(d.prices.long_output)}</td>
+                  <td className="num">{price(d.prices.long_cache_read)}</td>
+                  <td className="num">{price(d.prices.long_cache_write)}</td>
+                  {searches(m) && <td />}
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

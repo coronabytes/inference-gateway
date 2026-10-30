@@ -88,7 +88,7 @@ Open <http://localhost:8080>, sign in with the master key, then:
 
 1. **Models → Credentials:** connect a provider.
 2. **Models → Deployments:** add a model.
-3. **Access → Keys:** create a key for your app.
+3. **Access → Keys & projects:** create a key for your app.
 4. Point your app at the gateway.
 
 For a full stack with Postgres, Valkey and several replicas, see [Running in production](docs/production.md).

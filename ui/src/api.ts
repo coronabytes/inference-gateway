@@ -902,6 +902,7 @@ export interface HubDeployment extends HubLimits {
   priority: number;
   weight: number;
   first_choice: boolean;
+  tags: string[];
   prices: HubPrices;
 }
 

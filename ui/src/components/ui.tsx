@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { BudgetPeriod, BudgetStatus } from "../api";
-import { dateTime, until, usd } from "../format";
+import { compact, dateTime, until, usd } from "../format";
 import { Banner } from "./controls";
 
 const PERIOD_LABEL: Record<BudgetPeriod, string> = { day: "per day", week: "per week", month: "per month" };
@@ -406,6 +406,16 @@ export function ListIcon() {
   );
 }
 
+/** Details: an "i" in a circle. */
+export function DetailsIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 16v-5M12 8h.01" />
+    </svg>
+  );
+}
+
 /** Copy to the clipboard: two overlapping sheets. */
 export function CopyIcon() {
   return (
@@ -413,6 +423,28 @@ export function CopyIcon() {
       <rect x="9" y="9" width="12" height="12" rx="2" />
       <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
     </svg>
+  );
+}
+
+/** Token prices per 1M, input above output (left out for embeddings), then the long-context threshold and its prices in a second column. */
+export function TokenPrices({ input, output, long }: { input: ReactNode; output?: ReactNode; long?: { threshold: number; input: ReactNode; output?: ReactNode } }) {
+  const out = output != null;
+  return (
+    <div className={`stat-pairs num${long ? " wide" : ""}`} title="$ per 1M tokens">
+      <span>{input}</span>
+      <span className="muted small">in</span>
+      {long && (
+        <span className="muted small threshold" title={`Above ${long.threshold.toLocaleString()} input tokens`}>
+          &gt; {compact(long.threshold)}
+        </span>
+      )}
+      {long && <span className="long">{long.input}</span>}
+      {long && <span className="muted small">in</span>}
+      {out && <span>{output}</span>}
+      {out && <span className="muted small">out</span>}
+      {out && long && <span className="long">{long.output}</span>}
+      {out && long && <span className="muted small">out</span>}
+    </div>
   );
 }
 
