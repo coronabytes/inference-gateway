@@ -186,7 +186,6 @@ export function RequestLog() {
   const time = useTimeRange(RANGES, "1h");
   // The KeyFilter's choice.
   const [keyId, setKeyId] = useState("");
-  const [model, setModel] = useState("");
   const [labels, setLabels] = useState<Labels>({});
   const labelFilter = labelQuery(labels);
   const [errorsOnly, setErrorsOnly] = useState(false);
@@ -217,7 +216,6 @@ export function RequestLog() {
     const q = new URLSearchParams(time.query);
     q.set("limit", "200");
     setKeyFilter(q, keyId);
-    if (model.trim()) q.set("model", model.trim());
     if (labelFilter) q.set("labels", labelFilter);
     if (errorsOnly) q.set("errors", "true");
     if (withBodies) q.set("bodies", "true");
@@ -229,7 +227,7 @@ export function RequestLog() {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [time.query, keyId, model, labelFilter, errorsOnly, withBodies, content, tool]);
+  }, [time.query, keyId, labelFilter, errorsOnly, withBodies, content, tool]);
 
   // Tools offered by the tool filter: those of the latest logged responses.
   useEffect(() => {
@@ -251,7 +249,6 @@ export function RequestLog() {
       <div className="filters">
         <TimeRange {...time.props} />
         <KeyFilter value={keyId} onChange={setKeyId} />
-        <TextInput caption="Model" type="search" placeholder="filter" value={model} onChange={(e) => setModel(e.target.value)} />
         <LabelFilter value={labels} onChange={setLabels} />
         <Toggle checked={errorsOnly} onChange={setErrorsOnly}>
           Errors only
