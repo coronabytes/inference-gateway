@@ -1384,6 +1384,8 @@ pub struct LogFilter<'a> {
     pub text: Option<&'a str>,
     /// Entries whose response called this tool.
     pub tool: Option<&'a str>,
+    /// Entries the guardrails did any of these to (`passed`, `flagged`, `masked`, `blocked`).
+    pub guardrail: Option<&'a [String]>,
     /// Days logged bodies are kept: older entries report theirs as expired.
     pub body_days: u32,
 }
@@ -1421,6 +1423,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
              AND (NOT $10 OR b.id IS NOT NULL)
              AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))
              AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text])
+             AND ($14::text[] IS NULL OR l.guardrails->>'action' = ANY($14))
            ORDER BY l.ts DESC LIMIT $1"#,
         f.limit,
         f.model,
@@ -1435,6 +1438,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
         f.text,
         f.tool,
         f.body_days as i32,
+        f.guardrail,
     )
     .fetch_all(pool)
     .await?;

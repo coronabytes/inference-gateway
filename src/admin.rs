@@ -2314,6 +2314,9 @@ pub(crate) struct LogQuery {
     q: Option<String>,
     /// Just the requests whose stored response called this tool (`web_search` for web searches).
     tool: Option<String>,
+    /// Just the requests the guardrails did any of these to, as `blocked,masked`: `passed`,
+    /// `flagged`, `masked` or `blocked`.
+    guardrail: Option<String>,
 }
 
 async fn logs(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<LogQuery>) -> R<Json<Vec<db::LogRow>>> {
@@ -2330,6 +2333,16 @@ async fn logs(State(state): State<AppState>, Extension(access): Extension<Access
         return Err(AdminError::bad_request("q can be at most 200 characters"));
     }
     let tool = q.tool.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let guardrail: Option<Vec<String>> = match q.guardrail.as_deref().map(str::trim).filter(|g| !g.is_empty()) {
+        Some(list) => {
+            let actions: Vec<String> = list.split(',').map(|a| a.trim().to_string()).collect();
+            if let Some(bad) = actions.iter().find(|a| !matches!(a.as_str(), "passed" | "flagged" | "masked" | "blocked")) {
+                return Err(AdminError::bad_request(format!("guardrail must list passed, flagged, masked or blocked, not '{bad}'")));
+            }
+            Some(actions)
+        }
+        None => None,
+    };
     // The picked project's requests, within what the caller may see.
     let picked = q.project_id.map(|p| [p]);
     let filter = db::LogFilter {
@@ -2345,6 +2358,7 @@ async fn logs(State(state): State<AppState>, Extension(access): Extension<Access
         bodies: q.bodies.unwrap_or(false),
         text,
         tool,
+        guardrail: guardrail.as_deref(),
         body_days: state.settings.get().prompt_log_retention_days,
     };
     Ok(Json(db::recent_logs(&state.db, &filter).await?))

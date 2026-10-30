@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api, type AuditEntry, type LogRow } from "../api";
-import { Button, Select, Tabs, TextInput, TimeRange, Toggle, useHashTab, useTimeRange } from "../components/controls";
+import { Button, MultiSelect, Select, Tabs, TextInput, TimeRange, useHashTab, useTimeRange } from "../components/controls";
 import { Bodies } from "../components/Transcript";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
 import { LabelFilter } from "../components/LabelInput";
@@ -159,6 +159,9 @@ function RequestDetails({ r, routed }: { r: LogRow; routed: boolean }) {
   );
 }
 
+/** What the guardrails did, as the request log's Show filter offers it. */
+const GUARDRAIL_ACTIONS = ["blocked", "masked", "flagged"];
+
 /** The request log, a tab of the Cluster page. */
 const TABS = ["requests", "audit"] as const;
 
@@ -188,10 +191,9 @@ export function RequestLog() {
   const [keyId, setKeyId] = useState("");
   const [labels, setLabels] = useState<Labels>({});
   const labelFilter = labelQuery(labels);
-  const [errorsOnly, setErrorsOnly] = useState(false);
-  // Prompt logging: entries with stored bodies, a search of them (sent on Enter), or a tool their
-  // responses called.
-  const [withBodies, setWithBodies] = useState(false);
+  // Which entries to show: errors, those with stored prompts, and what the guardrails did.
+  const [show, setShow] = useState<string[]>([]);
+  // Prompt logging: a search of the stored prompts (sent on Enter), or a tool their responses called.
   const [contentDraft, setContentDraft] = useState("");
   const [content, setContent] = useState("");
   const [tool, setTool] = useState("");
@@ -217,8 +219,10 @@ export function RequestLog() {
     q.set("limit", "200");
     setKeyFilter(q, keyId);
     if (labelFilter) q.set("labels", labelFilter);
-    if (errorsOnly) q.set("errors", "true");
-    if (withBodies) q.set("bodies", "true");
+    if (show.includes("errors")) q.set("errors", "true");
+    if (show.includes("prompts")) q.set("bodies", "true");
+    const guardrail = show.filter((s) => GUARDRAIL_ACTIONS.includes(s));
+    if (guardrail.length) q.set("guardrail", guardrail.join(","));
     if (content) q.set("q", content);
     if (tool) q.set("tool", tool);
     try {
@@ -227,7 +231,7 @@ export function RequestLog() {
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [time.query, keyId, labelFilter, errorsOnly, withBodies, content, tool]);
+  }, [time.query, keyId, labelFilter, show, content, tool]);
 
   // Tools offered by the tool filter: those of the latest logged responses.
   useEffect(() => {
@@ -250,9 +254,20 @@ export function RequestLog() {
         <TimeRange {...time.props} />
         <KeyFilter value={keyId} onChange={setKeyId} />
         <LabelFilter value={labels} onChange={setLabels} />
-        <Toggle checked={errorsOnly} onChange={setErrorsOnly}>
-          Errors only
-        </Toggle>
+        <MultiSelect
+          caption="Show"
+          hint="Errors, requests whose prompt and response are stored, and what the guardrails did. The guardrail outcomes show requests with any of them; together with errors or stored prompts, only those that are both."
+          values={show}
+          onChange={setShow}
+          searchable={false}
+          options={[
+            { value: "errors", label: "Errors" },
+            { value: "prompts", label: "With prompts" },
+            { value: "blocked", label: "Blocked by a guardrail" },
+            { value: "masked", label: "Masked by a guardrail" },
+            { value: "flagged", label: "Flagged by a guardrail" },
+          ]}
+        />
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -279,9 +294,6 @@ export function RequestLog() {
             options={[{ value: "", label: "Any" }, ...tools.map((t) => ({ value: t.name, label: t.name, note: `${t.requests}` }))]}
           />
         )}
-        <Toggle checked={withBodies} onChange={setWithBodies}>
-          With prompts
-        </Toggle>
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
