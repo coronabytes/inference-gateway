@@ -1,4 +1,5 @@
-//! Price catalog: LiteLLM's model prices, imported on demand and stored per key as JSONB.
+//! Price catalog: LiteLLM's model prices, imported on a schedule or on demand and stored per key
+//! as JSONB.
 //! The admin UI browses it and uses it to fill in deployment prices; billing itself always
 //! uses the prices stored on each deployment.
 
@@ -12,6 +13,7 @@ use axum::{
     extract::{Query, State},
     routing::{get, post},
 };
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -29,6 +31,12 @@ type R<T> = Result<T, AdminError>;
 const SOURCE_URL: &str = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const MAX_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_KEY_LEN: usize = 300;
+/// Held while the catalog is imported, so replicas never import at once.
+const IMPORT_LOCK: i64 = 0x6777_7072_6963; // "gwpric"
+/// How often each replica looks whether a scheduled import is due.
+const SCHEDULE_CHECK: Duration = Duration::from_secs(300);
+/// How long a replica waits after its scheduled import failed before trying again.
+const SCHEDULE_RETRY: Duration = Duration::from_secs(3600);
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -67,14 +75,22 @@ async fn search(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> 
         db::price_facets(&state.db),
         db::last_price_import(&state.db),
     )?;
+    let next_import = next_import(&state, last_import.as_ref());
     Ok(Json(json!({
         "total": total,
         "items": entries(items),
         "providers": providers,
         "modes": modes,
         "last_import": last_import,
+        "next_import": next_import,
         "source": SOURCE_URL,
     })))
+}
+
+/// When the scheduled import is due, if it is on: an interval after the last import, or now.
+fn next_import(state: &AppState, last: Option<&db::PriceImport>) -> Option<DateTime<Utc>> {
+    let every = state.settings.get().price_import_interval()?;
+    Some(last.map_or_else(Utc::now, |i| i.imported_at + every))
 }
 
 fn entries(rows: Vec<(String, Value)>) -> Vec<Value> {
@@ -175,6 +191,56 @@ fn candidates(provider: ProviderKind, model: &str) -> Vec<String> {
 }
 
 async fn import(State(state): State<AppState>, Extension(actor): Extension<Actor>) -> R<Json<Value>> {
+    let summary = db::with_lock(&state.db, IMPORT_LOCK, download_and_replace(&state, &actor))
+        .await?
+        .ok_or_else(|| AdminError::conflict("the price catalog is being imported already; try again in a minute"))??;
+    Ok(Json(json!(summary)))
+}
+
+/// Imports the catalog whenever the last import is older than the gateway setting's interval.
+/// Every replica looks; the import lock and a second look once it is held let only one import.
+pub async fn run_scheduled_import(state: AppState) {
+    let mut tick = tokio::time::interval(SCHEDULE_CHECK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut retry_at = None;
+    loop {
+        tick.tick().await;
+        let Some(every) = state.settings.get().price_import_interval() else { continue };
+        if retry_at.is_some_and(|t| tokio::time::Instant::now() < t) {
+            continue;
+        }
+        match import_if_due(&state, every).await {
+            Ok(_) => retry_at = None,
+            Err(e) => {
+                tracing::warn!(error = %e.1, "scheduled price catalog import failed; retrying in an hour");
+                retry_at = Some(tokio::time::Instant::now() + SCHEDULE_RETRY);
+            }
+        }
+    }
+}
+
+/// The scheduled import, if it is due and no other replica is importing.
+async fn import_if_due(state: &AppState, every: Duration) -> R<Option<db::PriceImport>> {
+    if !is_due(state, every).await? {
+        return Ok(None);
+    }
+    let run = async {
+        // Another replica may have imported between the first look and taking the lock.
+        if !is_due(state, every).await? {
+            return Ok(None);
+        }
+        download_and_replace(state, &Actor::system()).await.map(Some)
+    };
+    Ok(db::with_lock(&state.db, IMPORT_LOCK, run).await?.transpose()?.flatten())
+}
+
+async fn is_due(state: &AppState, every: Duration) -> sqlx::Result<bool> {
+    let last = db::last_price_import(&state.db).await?;
+    Ok(last.is_none_or(|i| Utc::now() >= i.imported_at + every))
+}
+
+/// Download LiteLLM's catalog and make the stored one equal to it.
+async fn download_and_replace(state: &AppState, actor: &Actor) -> R<db::PriceImport> {
     let resp = state
         .http
         .get(SOURCE_URL)
@@ -198,8 +264,8 @@ async fn import(State(state): State<AppState>, Extension(actor): Extension<Actor
     }
     let summary = db::replace_prices(&state.db, catalog, SOURCE_URL).await?;
     tracing::info!(total = summary.total, added = summary.added, updated = summary.updated, removed = summary.removed, "price catalog imported");
-    audit::Event::new("price_catalog", "import").details(json!(summary)).record(&state, &actor).await;
-    Ok(Json(json!(summary)))
+    audit::Event::new("price_catalog", "import").details(json!(summary)).record(state, actor).await;
+    Ok(summary)
 }
 
 /// Catalog entries: every object-valued key except LiteLLM's `sample_spec` template.

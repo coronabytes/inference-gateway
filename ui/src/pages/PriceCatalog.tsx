@@ -1,8 +1,8 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { api, type PriceEntry, type PriceImport, type PriceSearch } from "../api";
-import { Banner, Select, TextInput } from "../components/controls";
+import { Banner, Button, Select, TextInput } from "../components/controls";
 import { ErrorBanner } from "../components/ui";
-import { compact, relative } from "../format";
+import { compact, relative, until } from "../format";
 import { catalogPrices, perMillion } from "../pricing";
 
 const PAGE = 100;
@@ -100,9 +100,21 @@ export function PriceCatalog() {
               Last import {relative(data.last_import.imported_at)}
             </span>
           )}
-          <button className="primary" onClick={runImport} disabled={importing} title="Imports LiteLLM's model prices.">
+          {data && (
+            <span
+              className="muted small"
+              title={
+                data.next_import
+                  ? `${new Date(data.next_import).toLocaleString()}. Change the schedule under Cluster → Settings.`
+                  : "Turn it on under Cluster → Settings."
+              }
+            >
+              {data.next_import ? `next ${until(data.next_import)}` : "scheduled import off"}
+            </span>
+          )}
+          <Button variant="primary" onClick={runImport} disabled={importing} title="Imports LiteLLM's model prices.">
             {importing ? "Importing…" : "Run Import"}
-          </button>
+          </Button>
         </div>
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
@@ -114,7 +126,7 @@ export function PriceCatalog() {
       {empty ? (
         <div className="empty-card">
           The price catalog is empty. <strong>Run Import</strong> downloads LiteLLM's model prices (about 4,000 models) so new deployments can
-          fill in their prices.
+          fill in their prices.{data.next_import && " The scheduled import also does this within a few minutes."}
         </div>
       ) : (
         <div className="table-wrap">

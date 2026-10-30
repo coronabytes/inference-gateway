@@ -312,6 +312,7 @@ const ACTORS: Record<AuditEntry["actor_kind"], string> = {
   virtual_key: "virtual key",
   session: "single sign-on",
   dev: "dev login",
+  system: "scheduled",
 };
 
 function actionTone(action: string): "good" | "warning" | "critical" | "neutral" {

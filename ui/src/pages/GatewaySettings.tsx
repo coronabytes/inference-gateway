@@ -76,6 +76,24 @@ const GROUPS: { title: string; items: Item[] }[] = [
     ],
   },
   {
+    title: "Price catalog",
+    items: [
+      {
+        key: "price_import",
+        caption: "Scheduled import",
+        hint: "Imports LiteLLM's model prices on a schedule, on one replica at a time. Off, the catalog changes only when someone runs the import on the Pricing page.",
+        toggle: true,
+      },
+      {
+        key: "price_import_hours",
+        caption: "Import every (h)",
+        hint: "Hours between scheduled imports, 1 to 720, counted from the last import, scheduled or not.",
+        valid: (n: number) => n >= 1 && n <= 720,
+        rule: "1 to 720",
+      },
+    ],
+  },
+  {
     title: "API reference",
     items: [
       {

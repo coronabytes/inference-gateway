@@ -83,6 +83,8 @@ Changed in the console under **Cluster → Settings**, or with `GET`/`PUT /admin
 | Header timeout | `header_timeout_secs` | 30 s | 1–600 | Time a client has to send its request headers. |
 | Body timeout | `body_timeout_secs` | 120 s | 1–3600 | Time a client has to send its whole request body. Responses are not limited. |
 | Client connections | `max_connections` | 10,000 | 1–1,000,000 | Open client connections per replica; more wait in the listen backlog. |
+| Scheduled import | `price_import` | on | | Imports LiteLLM's model prices into the price catalog on a schedule, on one replica at a time (a Postgres advisory lock). Off, only the **Run Import** button on the Pricing tab does. |
+| Import every | `price_import_hours` | 6 h | 1–720 | Hours between scheduled imports, counted from the last import, scheduled or not. A failed import is retried after an hour. |
 | API reference | `api_docs` | on | | The OpenAPI document at `/admin/openapi.json` and the reference at `/admin/docs/`, for signed-in people and admin and project keys. |
 
 ## Commands
