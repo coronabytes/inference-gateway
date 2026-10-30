@@ -1488,7 +1488,6 @@ pub struct BodiesRow {
     pub ts: DateTime<Utc>,
     pub project_id: Option<Uuid>,
     pub key_id: Option<Uuid>,
-    pub model_name: String,
     pub status: Option<String>,
     pub request: Option<serde_json::Value>,
     pub screened_request: Option<serde_json::Value>,
@@ -1504,7 +1503,7 @@ pub struct BodiesRow {
 pub async fn log_bodies(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<BodiesRow>> {
     sqlx::query_as!(
         BodiesRow,
-        r#"SELECT l.id, l.ts, l.project_id, l.key_id, l.model_name, l.bodies AS status, b.request, b.screened_request,
+        r#"SELECT l.id, l.ts, l.project_id, l.key_id, l.bodies AS status, b.request, b.screened_request,
                   b.guardrails, b.response, b.request_bytes, b.response_bytes, b.response_id, b.previous_response_id,
                   b.conversation
            FROM request_logs l JOIN request_bodies b ON b.id = l.id WHERE l.id = $1"#,

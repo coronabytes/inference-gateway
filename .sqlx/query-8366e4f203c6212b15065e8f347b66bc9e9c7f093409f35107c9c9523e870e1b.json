@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.project_id, l.key_id, l.model_name, l.bodies AS status, b.request, b.screened_request,\n                  b.guardrails, b.response, b.request_bytes, b.response_bytes, b.response_id, b.previous_response_id,\n                  b.conversation\n           FROM request_logs l JOIN request_bodies b ON b.id = l.id WHERE l.id = $1",
+  "query": "SELECT l.id, l.ts, l.project_id, l.key_id, l.bodies AS status, b.request, b.screened_request,\n                  b.guardrails, b.response, b.request_bytes, b.response_bytes, b.response_id, b.previous_response_id,\n                  b.conversation\n           FROM request_logs l JOIN request_bodies b ON b.id = l.id WHERE l.id = $1",
   "describe": {
     "columns": [
       {
@@ -49,17 +49,6 @@
       },
       {
         "ordinal": 4,
-        "name": "model_name",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "request_logs",
-            "name": "model_name"
-          }
-        }
-      },
-      {
-        "ordinal": 5,
         "name": "status",
         "type_info": "Text",
         "origin": {
@@ -70,7 +59,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "request",
         "type_info": "Jsonb",
         "origin": {
@@ -81,7 +70,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "screened_request",
         "type_info": "Jsonb",
         "origin": {
@@ -92,7 +81,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "guardrails",
         "type_info": "Jsonb",
         "origin": {
@@ -103,7 +92,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "response",
         "type_info": "Jsonb",
         "origin": {
@@ -114,7 +103,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "request_bytes",
         "type_info": "Int4",
         "origin": {
@@ -125,7 +114,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "response_bytes",
         "type_info": "Int4",
         "origin": {
@@ -136,7 +125,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 11,
         "name": "response_id",
         "type_info": "Text",
         "origin": {
@@ -147,7 +136,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 12,
         "name": "previous_response_id",
         "type_info": "Text",
         "origin": {
@@ -158,7 +147,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 13,
         "name": "conversation",
         "type_info": "Bytea",
         "origin": {
@@ -179,7 +168,6 @@
       false,
       true,
       true,
-      false,
       true,
       true,
       true,
@@ -192,5 +180,5 @@
       true
     ]
   },
-  "hash": "e0f24a336b65a36bab328454383544b940fc0fd92eea80662c681aad255bd3fb"
+  "hash": "8366e4f203c6212b15065e8f347b66bc9e9c7f093409f35107c9c9523e870e1b"
 }

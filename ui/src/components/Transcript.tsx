@@ -267,8 +267,8 @@ function GuardrailSteps({ steps }: { steps: GuardrailStep[] }) {
 type View = "sent" | "screened" | "json";
 
 /**
- * A logged request's prompt and response (prompt logging), loaded when shown. Reading them is
- * recorded in the audit log. `onConversation` filters the log to the conversation's turns.
+ * A logged request's prompt and response (prompt logging), loaded when shown. `onConversation`
+ * filters the log to the conversation's turns.
  */
 export function Bodies({ id, api: apiName, onConversation }: { id: string; api: string; onConversation?: (conversation: string) => void }) {
   const [current, setCurrent] = useState(id);

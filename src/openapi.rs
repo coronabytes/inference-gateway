@@ -1276,8 +1276,7 @@ mod paths {
     /// A logged request's prompt and response
     ///
     /// For keys with prompt logging on: the request as sent and as the model got it, what each
-    /// guardrail did, the response, and the turns before and after it. Every read is in the
-    /// audit log.
+    /// guardrail did, the response, and the turns before and after it.
     #[utoipa::path(get, path = "/admin/api/logs/{id}/bodies", tag = "Usage",
         params(("id" = Uuid, Path, description = "Request log entry id")),
         responses(

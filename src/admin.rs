@@ -2318,12 +2318,7 @@ pub(crate) struct LogQuery {
     conversation: Option<String>,
 }
 
-async fn logs(
-    State(state): State<AppState>,
-    Extension(access): Extension<Access>,
-    Extension(actor): Extension<Actor>,
-    Query(q): Query<LogQuery>,
-) -> R<Json<Vec<db::LogRow>>> {
+async fn logs(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<LogQuery>) -> R<Json<Vec<db::LogRow>>> {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     let model = q.model.as_deref().map(str::trim).filter(|m| !m.is_empty());
     let (since, until) = log_window(q.range.as_deref(), q.from, q.to, Utc::now())?;
@@ -2359,13 +2354,7 @@ async fn logs(
         conversation: conversation.as_deref(),
         body_days: state.settings.get().prompt_log_retention_days,
     };
-    let rows = db::recent_logs(&state.db, &filter).await?;
-    // Searching logged prompts tells what they contain, so it is audited like reading them.
-    if text.is_some() || tool.is_some() {
-        let details = json!({ "q": text, "tool": tool, "project_id": q.project_id, "matches": rows.len() });
-        audit::Event::new("request_log", "search_bodies").details(details).record(&state, &actor).await;
-    }
-    Ok(Json(rows))
+    Ok(Json(db::recent_logs(&state.db, &filter).await?))
 }
 
 /// What the latest logged responses' tools are sampled from.
@@ -2405,18 +2394,11 @@ pub(crate) struct BodiesView {
     conversation: Option<String>,
 }
 
-/// `GET /logs/{id}/bodies`: a logged request's prompt and response. Every read is audited. An
-/// entry the caller may not see looks like one without bodies.
-async fn log_bodies(
-    State(state): State<AppState>,
-    Extension(access): Extension<Access>,
-    Extension(actor): Extension<Actor>,
-    Path(id): Path<Uuid>,
-) -> R<Json<BodiesView>> {
+/// `GET /logs/{id}/bodies`: a logged request's prompt and response. An entry the caller may not
+/// see looks like one without bodies.
+async fn log_bodies(State(state): State<AppState>, Extension(access): Extension<Access>, Path(id): Path<Uuid>) -> R<Json<BodiesView>> {
     let row = db::log_bodies(&state.db, id).await?.filter(|r| access.sees(r.project_id)).ok_or_else(AdminError::not_found)?;
     let (previous, next) = db::turn_links(&state.db, &row, access.projects()).await?;
-    let details = json!({ "project_id": row.project_id, "key_id": row.key_id });
-    audit::Event::new("request_log", "read_bodies").on(id, &row.model_name).details(details).record(&state, &actor).await;
     Ok(Json(BodiesView {
         request: row.request,
         screened_request: row.screened_request,

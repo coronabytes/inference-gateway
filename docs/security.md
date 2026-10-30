@@ -25,4 +25,4 @@ For debugging, the gateway can store the full prompts and responses of chosen ke
 - **What is not stored:** images, files, audio, embedding vectors and encrypted provider data (replaced by their type and size), and text beyond the size limit (`prompt_log_max_kb`).
 - **Not encrypted.** Unlike provider secrets and conversation history, logged bodies are plain JSON: anyone with access to the database or its backups can read them. Exclude them from backups with `pg_dump --exclude-table-data=request_bodies` if they must not be kept there.
 - **Kept briefly.** `prompt_log_retention_days` (7 by default, at most 60, and never longer than the request log).
-- **Search** covers only the text the model got (after masking) and gave, so a masked name cannot be found by searching for it.
+- **Search** covers the request as the client sent it, whatever the guardrails did (masked and blocked prompts are found by what they said, matched personal data included), and the response. The masked version of a request is stored, not searched.

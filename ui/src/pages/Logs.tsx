@@ -4,7 +4,7 @@ import { Button, Select, Tabs, TextInput, TimeRange, Toggle, useHashTab, useTime
 import { Bodies } from "../components/Transcript";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
 import { LabelFilter } from "../components/LabelInput";
-import { Badge, ChildArrowIcon, ErrorBanner } from "../components/ui";
+import { Badge, ChildArrowIcon, ErrorBanner, SidePanel } from "../components/ui";
 import { compact, dateTime, ms, relative, usd } from "../format";
 import { labelQuery, withLabel, type Labels } from "../labels";
 
@@ -55,7 +55,6 @@ const BODIES_STATUS: Record<NonNullable<LogRow["bodies"]>, string> = {
 
 /** What the table leaves out: the whole error, ids, the token breakdown, the logged bodies. */
 function RequestDetails({ r, routed, onConversation }: { r: LogRow; routed: boolean; onConversation: (c: string) => void }) {
-  const [shown, setShown] = useState(false);
   const readable = r.bodies === "stored" || r.bodies === "truncated";
   return (
     <>
@@ -117,21 +116,13 @@ function RequestDetails({ r, routed, onConversation }: { r: LogRow; routed: bool
               <th>Prompt and response</th>
               <td>
                 {BODIES_STATUS[r.bodies]}
-                {routed && " · the routed call below has the response"}
-                {readable && !shown && (
-                  <>
-                    {" "}
-                    <Button variant="ghost" onClick={() => setShown(true)}>
-                      Show
-                    </Button>
-                  </>
-                )}
+                {routed && " · the routed call beneath it in the log has the response"}
               </td>
             </tr>
           )}
         </tbody>
       </table>
-      {shown && <Bodies id={r.id} api={r.api} onConversation={onConversation} />}
+      {readable && <Bodies key={r.id} id={r.id} api={r.api} onConversation={onConversation} />}
     </>
   );
 }
@@ -176,8 +167,8 @@ export function RequestLog() {
   const [tools, setTools] = useState<{ name: string; requests: number }[]>([]);
   const [conversation, setConversation] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // Entries whose details are shown beneath them.
-  const [details, setDetails] = useState<Set<string>>(new Set());
+  // The entry whose details the side panel shows; kept while the log refreshes around it.
+  const [selected, setSelected] = useState<LogRow | null>(null);
 
   // A routed request's calls (decision, routed call) are shown beneath the router's entry.
   const { top, children } = useMemo(() => {
@@ -221,11 +212,9 @@ export function RequestLog() {
 
   useEffect(() => {
     load();
-    // Content searches are audited: each is run once, not every 10 seconds.
-    if (content || tool) return;
     const t = setInterval(load, 10_000);
     return () => clearInterval(t);
-  }, [load, content, tool]);
+  }, [load]);
 
   return (
     <>
@@ -247,7 +236,7 @@ export function RequestLog() {
             caption="Content"
             type="search"
             placeholder="search, Enter"
-            hint='Searches the stored prompts (after guardrails masked them) and responses of logged requests. Whole words; "a phrase", or, -word and prefix:* work. Each search is recorded in the audit log.'
+            hint='Searches the prompts of logged requests as they were sent (before any guardrail masked them) and their responses. Whole words; "a phrase", or, -word and prefix:* work.'
             value={contentDraft}
             onChange={(e) => {
               setContentDraft(e.target.value);
@@ -298,7 +287,7 @@ export function RequestLog() {
                 <Fragment key={p.id}>
                   {[p, ...calls].map((r) => (
                     <Fragment key={r.id}>
-                      <tr className={r === p ? undefined : "child-row"}>
+                      <tr className={[r === p ? "" : "child-row", selected?.id === r.id ? "selected" : ""].join(" ").trim() || undefined}>
                         <td className="when" title={dateTime(r.ts)}>
                           {r === p ? relative(r.ts) : <ChildArrowIcon />}
                         </td>
@@ -340,18 +329,16 @@ export function RequestLog() {
                           {usd(r.cost_usd)}
                         </td>
                         <td className="num">
-                          <Button variant="ghost" className="details-btn" onClick={() => setDetails(flip(r.id))} aria-expanded={details.has(r.id)}>
-                            {details.has(r.id) ? "Hide details" : "Details"}
+                          <Button
+                            variant="ghost"
+                            className="details-btn"
+                            onClick={() => setSelected((s) => (s?.id === r.id ? null : r))}
+                            aria-expanded={selected?.id === r.id}
+                          >
+                            {selected?.id === r.id ? "Hide details" : "Details"}
                           </Button>
                         </td>
                       </tr>
-                      {details.has(r.id) && (
-                        <tr className="child-row">
-                          <td colSpan={12}>
-                            <RequestDetails r={r} routed={r === p && calls.length > 0} onConversation={setConversation} />
-                          </td>
-                        </tr>
-                      )}
                     </Fragment>
                   ))}
                 </Fragment>
@@ -365,6 +352,11 @@ export function RequestLog() {
           </tbody>
         </table>
       </div>
+      {selected && (
+        <SidePanel title={`${selected.model_name} · ${dateTime(selected.ts)}`} onClose={() => setSelected(null)}>
+          <RequestDetails r={selected} routed={children.has(selected.id)} onConversation={setConversation} />
+        </SidePanel>
+      )}
     </>
   );
 }

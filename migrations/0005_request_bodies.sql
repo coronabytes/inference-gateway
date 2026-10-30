@@ -25,8 +25,8 @@ CREATE TABLE request_bodies (
     -- The tools the model called in the response (function tools, and server tools such as
     -- web_search), for "which requests called tool X".
     tool_calls           TEXT[] NOT NULL DEFAULT '{}',
-    -- Full-text index of what the model got and gave: the request after guardrails, the response,
-    -- tool arguments and search queries. Never the unmasked text.
+    -- Full-text index of the request as the client sent it, whatever the guardrails did, and of
+    -- the response: their text, tool arguments and search queries. Not the masked request.
     search               TSVECTOR,
     -- Links between the logged turns of a conversation: the entry's key, the Responses ids that
     -- chain turns, and for other APIs a keyed hash of how the conversation starts (the one sticky
