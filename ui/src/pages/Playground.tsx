@@ -433,7 +433,12 @@ export function Playground() {
   const guardrailHeaders: Record<string, string> = asked.length ? { [GUARDRAILS_HEADER]: asked.join(",") } : {};
   // Sorted by name.
   const models = useMemo(() => options.models.map((m) => m.name), [options]);
-  const mode: Mode = options.models.find((m) => m.name === model)?.mode ?? "chat";
+  const chosen = options.models.find((m) => m.name === model);
+  const mode: Mode = chosen?.mode ?? "chat";
+  // The model has a web search, and the key and its project allow it. Turned on for another
+  // model, it stays on for the next one that can search.
+  const canSearch = !!chosen?.web_search;
+  const searching = webSearch && canSearch;
   // For chat models only: a router sets its own efforts per route.
   const efforts = mode === "chat" ? (modelEfforts[model] ?? null) : null;
   const schema = useMemo((): { value: object | null; error?: string } => {
@@ -477,7 +482,7 @@ export function Playground() {
     const history: Turn[] = [...sent.map(({ role, text, files }) => ({ role, text, files })), turn];
     // The Responses API always continues the conversation with previous_response_id.
     const useChain = apiId === "responses";
-    const options: ChatOptions = { effort: efforts ? effort : "", webSearch, schema: schema.value };
+    const options: ChatOptions = { effort: efforts ? effort : "", webSearch: searching, schema: schema.value };
     return { turn, useChain, json: !!schema.value, body: buildBody(apiId, model, system, history, useChain ? previousId : null, useChain, options) };
   };
 
@@ -745,7 +750,8 @@ export function Playground() {
                     // A sample fills the composer to edit or send, rather than sending at once.
                     <Button
                       key={s.label}
-                      title={s.prompt}
+                      title={s.webSearch && !canSearch ? `${s.prompt} (needs web search, which this model or key cannot use)` : s.prompt}
+                      disabled={s.webSearch && !canSearch}
                       onClick={() => {
                         setInput(s.prompt);
                         if (s.webSearch) setWebSearch(true);
@@ -782,11 +788,15 @@ export function Playground() {
               </FileButton>
               <Button
                 className="icon-btn composer-attach"
-                aria-pressed={webSearch}
+                aria-pressed={searching}
                 aria-label="Web search"
-                title={`Web search ${webSearch ? "on" : "off"}: the model may search the web while it answers, with the chosen API's own web search tool, billed per search at the deployment's price.`}
+                title={
+                  canSearch
+                    ? `Web search ${webSearch ? "on" : "off"}: the model may search the web while it answers, with the chosen API's own web search tool, billed per search at the deployment's price.`
+                    : "Web search is not available: the model has no web search, or the key or its project forbids it."
+                }
                 onClick={() => setWebSearch((on) => !on)}
-                disabled={!models.length}
+                disabled={!canSearch}
               >
                 <GlobeIcon />
               </Button>

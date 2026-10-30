@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useIsUser } from "../access";
 import { api, callsModels, setListParam, type BudgetPeriod, type Guardrail, type KeyInput, type KeyScope, type Project, type TagInfo, type VirtualKey } from "../api";
-import { Button, MultiSelect, PageActions, Select, Tabs, TextInput, useDebounced, useHashTab } from "../components/controls";
+import { Button, MultiSelect, PageActions, Select, Tabs, TextInput, Toggle, useDebounced, useHashTab } from "../components/controls";
 import { GuardrailList, TagList, TagPicker } from "../components/Tags";
 import {
   Badge,
@@ -173,6 +173,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
     expires_at: k.expires_at,
     enabled: k.enabled,
     guardrail_ids: k.guardrail_ids,
+    web_search: k.web_search,
   });
 
   // Tags the filter offers: those deployments and routers carry, and those keys still hold.
@@ -466,6 +467,7 @@ function KeyForm({
   const [project, setProject] = useState(initial ? (initial.project_id ?? "") : (defaultProject ?? (user ? (projects[0]?.id ?? "") : "")));
   const [allowedTags, setAllowedTags] = useState<string[]>(initial?.allowed_tags ?? []);
   const [guardrailIds, setGuardrailIds] = useState<string[]>(initial?.guardrail_ids ?? []);
+  const [webSearch, setWebSearch] = useState(initial?.web_search ?? true);
   const [rpm, setRpm] = useState(initial?.rpm_limit?.toString() ?? "");
   const [tpm, setTpm] = useState(initial?.tpm_limit?.toString() ?? "");
   const [period, setPeriod] = useState<BudgetPeriod | "">(initial?.budget_period ?? "");
@@ -485,6 +487,8 @@ function KeyForm({
   // Tags, limits and budget only apply to inference calls; an admin-only key saves without them.
   const inference = callsModels(scope);
   const projectGuardrails = guardrails.filter((g) => projects.find((p) => p.id === project)?.guardrail_ids.includes(g.id)).map((g) => g.name);
+  // A project that forbids web search forbids it for its keys, whatever theirs says.
+  const projectForbidsSearch = projects.find((p) => p.id === project)?.web_search === false;
   const amount = optNum(budget);
   const budgetMissing = inference && period !== "" && amount == null;
 
@@ -505,6 +509,8 @@ function KeyForm({
         enabled: initial?.enabled ?? true,
         // Users keep the key's guardrails as they are.
         ...(guardrails.length > 0 && { guardrail_ids: inference ? guardrailIds : [] }),
+        // Kept while the project forbids it, so it applies again once the project allows it.
+        web_search: webSearch,
       });
     } catch (e) {
       setError((e as Error).message);
@@ -580,6 +586,17 @@ function KeyForm({
                 options={guardrails.map((g) => ({ value: g.id, label: g.name, note: g.description }))}
               />
             )}
+            <Toggle
+              caption="Web search"
+              hint={
+                projectForbidsSearch
+                  ? "The key's project forbids web search, so none of its keys can turn it on."
+                  : "Whether requests may have the model search the web, billed per search at the deployment's price. Off, they are refused."
+              }
+              checked={webSearch && !projectForbidsSearch}
+              onChange={setWebSearch}
+              disabled={projectForbidsSearch}
+            />
             <div className="row">
               <TextInput caption="Requests / minute" inputMode="numeric" value={rpm} onChange={(e) => setRpm(e.target.value)} placeholder="unlimited" />
               <TextInput caption="Tokens / minute" inputMode="numeric" value={tpm} onChange={(e) => setTpm(e.target.value)} placeholder="unlimited" />

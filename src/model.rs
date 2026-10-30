@@ -614,6 +614,7 @@ mod tests {
             expires_at: None,
             metadata: serde_json::json!({}),
             guardrail_ids: Vec::new(),
+            web_search: true,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -788,6 +789,9 @@ pub struct ProjectRow {
     pub spend_reset_at: Option<DateTime<Utc>>,
     /// Guardrails every request of the project's keys goes through.
     pub guardrail_ids: Vec<Uuid>,
+    /// Whether its keys' requests may have the model search the web. False forbids it for every
+    /// key in the project, whatever the key's own says.
+    pub web_search: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1013,6 +1017,9 @@ pub struct VirtualKey {
     pub metadata: serde_json::Value,
     /// Guardrails every request of this key goes through, on top of its project's.
     pub guardrail_ids: Vec<Uuid>,
+    /// Whether its requests may have the model search the web (billed per search). Its project
+    /// may forbid it anyway: see `api::web_search_allowed`.
+    pub web_search: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -171,6 +171,9 @@ async fn run(
     check_billing_options(&raw, inbound)?;
     let snap = state.registry.snapshot();
     let requested = headers.get(crate::guardrails::HEADER).and_then(|v| v.to_str().ok());
+    if asks_web_search(&raw) && !web_search_allowed(&snap, &key) {
+        return Err(GatewayError::forbidden("web search is not allowed for this key"));
+    }
     let project = key.project_id.and_then(|p| snap.projects.get(&p));
     let enforced: Vec<Uuid> = key.guardrail_ids.iter().chain(project.into_iter().flat_map(|p| &p.guardrail_ids)).copied().collect();
     let guards = crate::guardrails::for_request(&snap.guardrails, &enforced, requested)?;
@@ -478,6 +481,21 @@ pub(crate) fn key_can_use(snap: &Snapshot, key: &VirtualKey, model: &str) -> boo
             Some(r) => key.allows_router(r) && r.models().any(|m| key.allows_model(m) && reaches(m)),
             None => reaches(target),
         }
+}
+
+/// Whether `key` may have the model search the web: neither the key nor its project forbids it.
+pub(crate) fn web_search_allowed(snap: &Snapshot, key: &VirtualKey) -> bool {
+    key.web_search && key.project_id.and_then(|p| snap.projects.get(&p)).is_none_or(|p| p.web_search)
+}
+
+/// Whether a request body asks for the provider's web search, in any API's field: Chat
+/// Completions' `web_search_options` (`{}` too), or a `web_search…` tool (Responses, Messages).
+/// Read from the body as sent, since passthrough forwards it unparsed.
+fn asks_web_search(raw: &Value) -> bool {
+    raw.get("web_search_options").is_some_and(|w| !w.is_null())
+        || raw.get("tools").and_then(Value::as_array).is_some_and(|ts| {
+            ts.iter().any(|t| t.get("type").and_then(Value::as_str).is_some_and(|ty| ty.starts_with("web_search")))
+        })
 }
 
 fn for_mode(mut candidates: Vec<Arc<Deployment>>, model: &str, mode: Mode) -> Result<Vec<Arc<Deployment>>, GatewayError> {
@@ -1055,6 +1073,7 @@ mod tests {
             expires_at: None,
             metadata: json!({}),
             guardrail_ids: vec![],
+            web_search: true,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1062,6 +1081,69 @@ mod tests {
         assert!(key_can_use(&snap, &key(&["smart"], &["eu"]), "smart"));
         assert!(!key_can_use(&snap, &key(&["luna"], &[]), "smart"), "by the alias's own name");
         assert!(!key_can_use(&snap, &key(&[], &["us"]), "smart"), "with the target's tags");
+    }
+
+    #[test]
+    fn web_search_is_refused_when_the_key_or_its_project_forbids_it() {
+        for asks in [
+            json!({ "web_search_options": {} }),
+            json!({ "tools": [{ "type": "web_search" }] }),
+            json!({ "tools": [{ "type": "function", "name": "f" }, { "type": "web_search_preview_2025_03_11" }] }),
+            json!({ "tools": [{ "type": "web_search_20250305", "name": "web_search" }] }),
+        ] {
+            assert!(asks_web_search(&asks), "{asks}");
+        }
+        for not in [json!({}), json!({ "web_search_options": null }), json!({ "tools": [{ "type": "function", "name": "web_search" }] })] {
+            assert!(!asks_web_search(&not), "{not}");
+        }
+
+        let project = |web_search| crate::model::ProjectRow {
+            id: Uuid::from_u128(1),
+            name: "p".into(),
+            description: None,
+            enabled: true,
+            max_budget_usd: None,
+            budget_period: None,
+            spend_reset_at: None,
+            guardrail_ids: vec![],
+            web_search,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let key = |project_id, web_search| VirtualKey {
+            id: Uuid::nil(),
+            name: "k".into(),
+            key_hash: vec![],
+            key_prefix: "gw-".into(),
+            scope: crate::model::KeyScope::Inference,
+            project_id,
+            project_active: true,
+            allowed_models: vec![],
+            allowed_tags: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            max_budget_usd: None,
+            budget_period: None,
+            spend_usd: 0.0,
+            spend_reset_at: None,
+            enabled: true,
+            expires_at: None,
+            metadata: json!({}),
+            guardrail_ids: vec![],
+            web_search,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let mut snap = Snapshot::default();
+        let p = Some(Uuid::from_u128(1));
+        assert!(web_search_allowed(&snap, &key(None, true)));
+        assert!(!web_search_allowed(&snap, &key(None, false)));
+        snap.projects.insert(Uuid::from_u128(1), Arc::new(project(true)));
+        assert!(web_search_allowed(&snap, &key(p, true)));
+        assert!(!web_search_allowed(&snap, &key(p, false)));
+        // A project that forbids it overrides the key.
+        snap.projects.insert(Uuid::from_u128(1), Arc::new(project(false)));
+        assert!(!web_search_allowed(&snap, &key(p, true)));
     }
 
     #[test]

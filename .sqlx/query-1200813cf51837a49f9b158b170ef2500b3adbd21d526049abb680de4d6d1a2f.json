@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, created_at, updated_at\n         FROM projects WHERE id = $1",
+  "query": "SELECT p.id, p.name, p.description, p.enabled, p.max_budget_usd, p.budget_period, p.spend_reset_at,\n                  p.guardrail_ids, p.web_search, p.created_at, p.updated_at, count(k.id) AS \"keys!\"\n           FROM projects p LEFT JOIN virtual_keys k ON k.project_id = p.id\n           WHERE ($1::text IS NULL OR strpos(lower(p.name || ' ' || coalesce(p.description, '')), $1) > 0)\n             AND ($2::uuid[] IS NULL OR p.id = ANY($2))\n           GROUP BY p.id ORDER BY lower(p.name)",
   "describe": {
     "columns": [
       {
@@ -93,6 +93,17 @@
       },
       {
         "ordinal": 8,
+        "name": "web_search",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "web_search"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -112,11 +123,18 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 11,
+        "name": "keys!",
+        "type_info": "Int8",
+        "origin": "Expression"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "UuidArray"
       ]
     },
     "nullable": [
@@ -129,8 +147,10 @@
       true,
       false,
       false,
-      false
+      false,
+      false,
+      null
     ]
   },
-  "hash": "78919c3ff9f55103b8e4fa237cb246a229684012313e1d0e51d3ad6ad3e104bb"
+  "hash": "1200813cf51837a49f9b158b170ef2500b3adbd21d526049abb680de4d6d1a2f"
 }

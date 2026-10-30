@@ -598,15 +598,26 @@ export function Switch({
   checked,
   onChange,
   label,
+  disabled,
   children,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   label?: string;
+  disabled?: boolean;
   children?: ReactNode;
 }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} aria-label={label} aria-describedby={useHint()?.id} className="switch" onClick={() => onChange(!checked)}>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      aria-describedby={useHint()?.id}
+      className="switch"
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    >
       <span className="switch-track" aria-hidden="true" />
       {children}
     </button>
