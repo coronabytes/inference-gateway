@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { useIsUser } from "../access";
-import { api, callsModels, setListParam, type BudgetPeriod, type Guardrail, type KeyInput, type KeyScope, type Project, type TagInfo, type VirtualKey } from "../api";
-import { Button, MultiSelect, PageActions, Select, Tabs, TextInput, Toggle, useDebounced, useHashTab } from "../components/controls";
+import {
+  api,
+  callsModels,
+  setListParam,
+  type BudgetPeriod,
+  type GatewaySettingsView,
+  type Guardrail,
+  type KeyInput,
+  type KeyScope,
+  type Project,
+  type PromptLogging,
+  type TagInfo,
+  type VirtualKey,
+} from "../api";
+import { Banner, Button, MultiSelect, PageActions, Select, Tabs, TextInput, Toggle, useDebounced, useHashTab } from "../components/controls";
 import { GuardrailList, TagList, TagPicker } from "../components/Tags";
 import {
   Badge,
@@ -101,6 +114,9 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [loggingOnly, setLoggingOnly] = useState(false);
+  // The gateway's prompt logging policy for keys outside projects; users' keys are all in projects.
+  const [gatewayLogging, setGatewayLogging] = useState<PromptLogging>("deny");
   const search = useDebounced(query.trim());
 
   // A filter for a project deleted meanwhile matches nothing; it is dropped instead.
@@ -111,6 +127,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   if (search) keyQuery.set("q", search);
   setListParam(keyQuery, "tags", tagFilter, NO_TAGS);
   setListParam(keyQuery, "projects", projectsPicked, NO_PROJECT);
+  if (loggingOnly) keyQuery.set("logging", "true");
   const filters = keyQuery.toString().replace(/%2C/g, ",");
 
   const loadKeys = useCallback(async () => {
@@ -125,12 +142,14 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   // What the cards and the editors need besides the keys: not reloaded as the filters change.
   const loadContext = useCallback(async () => {
     try {
-      const [t, p, g] = await Promise.all([
+      const [t, p, g, s] = await Promise.all([
         api<TagInfo[]>("/tags"),
         api<Project[]>("/projects"),
         user ? Promise.resolve([]) : api<Guardrail[]>("/guardrails"),
+        user ? Promise.resolve(null) : api<GatewaySettingsView>("/settings"),
       ]);
       setGuardrails(g);
+      if (s) setGatewayLogging(s.settings.prompt_logging);
       setTags(t);
       setProjects(p);
     } catch (e) {
@@ -174,6 +193,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
     enabled: k.enabled,
     guardrail_ids: k.guardrail_ids,
     web_search: k.web_search,
+    prompt_logging: k.prompt_logging,
   });
 
   // Tags the filter offers: those deployments and routers carry, and those keys still hold.
@@ -184,7 +204,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   const guardrailNames = new Map(guardrails.map((g) => [g.id, g.name]));
 
   const shown = keys;
-  const filtering = !!search || tagFilter.length > 0 || projectsPicked.length > 0;
+  const filtering = !!search || tagFilter.length > 0 || projectsPicked.length > 0 || loggingOnly;
 
   // With projects, each one's keys get a card, and a last card holds those without a project.
   const groups = [
@@ -277,6 +297,11 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
             <Badge tone="good">Active</Badge>
           )}
           {k.expires_at && !expired && <span className="muted small">expires {dateTime(k.expires_at)}</span>}
+          {k.prompt_logged && (
+            <span title="Its prompts and responses are logged">
+              <Badge tone="warning">Logging</Badge>
+            </span>
+          )}
         </div>
         <div className="actions">
           <IconButton label={`Edit ${k.name}`} title="Edit" onClick={() => setEditing({ mode: "edit", key: k })}>
@@ -349,6 +374,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
               values={tagFilter}
               onChange={setTagFilter}
             />
+            <Toggle caption="Logging" hint="Only the keys whose prompts and responses are logged now." checked={loggingOnly} onChange={setLoggingOnly} />
             {filtering && (
               <span className="muted small">
                 {shown.length} {shown.length === 1 ? "key matches" : "keys match"}
@@ -382,6 +408,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
           tags={pickableTags}
           projects={projects}
           guardrails={guardrails}
+          gatewayLogging={gatewayLogging}
           user={user}
           defaultProject={filteredProject}
           initial={editing.mode === "edit" ? toInput(editing.key) : undefined}
@@ -440,6 +467,7 @@ function KeyForm({
   tags,
   projects,
   guardrails,
+  gatewayLogging,
   user,
   defaultProject,
   initial,
@@ -452,6 +480,8 @@ function KeyForm({
   projects: Project[];
   /** Empty for users, who do not choose guardrails. */
   guardrails: Guardrail[];
+  /** Prompt logging for keys outside projects. */
+  gatewayLogging: PromptLogging;
   /** A user's keys are in one of their projects. */
   user: boolean;
   /** A new key's project. */
@@ -468,6 +498,7 @@ function KeyForm({
   const [allowedTags, setAllowedTags] = useState<string[]>(initial?.allowed_tags ?? []);
   const [guardrailIds, setGuardrailIds] = useState<string[]>(initial?.guardrail_ids ?? []);
   const [webSearch, setWebSearch] = useState(initial?.web_search ?? true);
+  const [promptLogging, setPromptLogging] = useState(initial?.prompt_logging ?? false);
   const [rpm, setRpm] = useState(initial?.rpm_limit?.toString() ?? "");
   const [tpm, setTpm] = useState(initial?.tpm_limit?.toString() ?? "");
   const [period, setPeriod] = useState<BudgetPeriod | "">(initial?.budget_period ?? "");
@@ -489,6 +520,18 @@ function KeyForm({
   const projectGuardrails = guardrails.filter((g) => projects.find((p) => p.id === project)?.guardrail_ids.includes(g.id)).map((g) => g.name);
   // A project that forbids web search forbids it for its keys, whatever theirs says.
   const projectForbidsSearch = projects.find((p) => p.id === project)?.web_search === false;
+  // The project's prompt logging policy decides, the gateway's for keys outside projects; a key
+  // only chooses where it is allowed.
+  const loggingPolicy = project ? (projects.find((p) => p.id === project)?.prompt_logging ?? "deny") : gatewayLogging;
+  const logged = loggingPolicy === "force" || (loggingPolicy === "allow" && promptLogging);
+  const loggingHint = {
+    deny: project
+      ? "The key's project denies prompt logging, so none of its keys can turn it on."
+      : "Prompt logging is denied for keys outside projects (Cluster → Settings).",
+    allow:
+      "For debugging, not for production keys: stores this key's full prompts, guardrail results and responses, unencrypted. It stays on until it is turned off.",
+    force: "The key's project logs the prompts and responses of all its keys, whatever the key says.",
+  }[loggingPolicy];
   const amount = optNum(budget);
   const budgetMissing = inference && period !== "" && amount == null;
 
@@ -511,6 +554,8 @@ function KeyForm({
         ...(guardrails.length > 0 && { guardrail_ids: inference ? guardrailIds : [] }),
         // Kept while the project forbids it, so it applies again once the project allows it.
         web_search: webSearch,
+        // Likewise kept while the project denies or forces logging.
+        prompt_logging: promptLogging,
       });
     } catch (e) {
       setError((e as Error).message);
@@ -597,6 +642,18 @@ function KeyForm({
               onChange={setWebSearch}
               disabled={projectForbidsSearch}
             />
+            <Toggle
+              caption="Prompt logging"
+              hint={loggingHint}
+              checked={logged}
+              onChange={setPromptLogging}
+              disabled={loggingPolicy !== "allow"}
+            />
+            {loggingPolicy === "allow" && promptLogging && !initial?.prompt_logging && (
+              <Banner tone="warning">
+                This key's prompts and responses will be stored, unencrypted, until logging is turned off. Use it for debugging, not for production traffic.
+              </Banner>
+            )}
             <div className="row">
               <TextInput caption="Requests / minute" inputMode="numeric" value={rpm} onChange={(e) => setRpm(e.target.value)} placeholder="unlimited" />
               <TextInput caption="Tokens / minute" inputMode="numeric" value={tpm} onChange={(e) => setTpm(e.target.value)} placeholder="unlimited" />

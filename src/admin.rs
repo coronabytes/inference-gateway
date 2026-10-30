@@ -25,7 +25,8 @@ use crate::{
     error::AdminError,
     ir::{Aggregator, ChatRequest, Message, Part, Role},
     model::{
-        AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, Mode, ProjectRow, ProviderKind, Route, RouterRow, Secrets,
+        AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, Mode, ProjectRow, PromptLogging, ProviderKind, Route, RouterRow,
+        Secrets,
         VirtualKey, normalize_tags,
     },
     registry,
@@ -1551,6 +1552,10 @@ pub(crate) struct KeyInput {
     /// Whether requests may have the model search the web. A project that forbids it overrides this.
     #[serde(default = "yes")]
     web_search: bool,
+    /// Whether its prompts and responses are logged, for debugging, where its project allows it.
+    /// A project that denies or forces logging overrides this.
+    #[serde(default)]
+    prompt_logging: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1559,6 +1564,9 @@ pub(crate) struct KeyView {
     key: VirtualKey,
     /// Current budget period and its spend; None for unlimited keys.
     budget: Option<crate::budget::BudgetStatus>,
+    /// Whether its prompts and responses are logged now: its own `prompt_logging` where its
+    /// project allows it, always where the project forces it.
+    prompt_logged: bool,
 }
 
 fn validate_key(i: &KeyInput) -> R<()> {
@@ -1693,15 +1701,21 @@ pub(crate) struct KeyQuery {
     tags: Option<String>,
     /// Just the keys in any of these projects (ids, comma-separated); `-` stands for none.
     projects: Option<String>,
+    /// Just the keys whose prompts and responses are logged now.
+    logging: Option<bool>,
 }
 
 async fn list_keys(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<KeyQuery>) -> R<Json<Vec<KeyView>>> {
     let search = search_text(q.q.as_deref());
     let (tags, projects) = (tag_filter(q.tags.as_deref())?, project_filter(q.projects.as_deref())?);
-    let keys = db::search_keys(&state.db, search.as_deref(), &tags, &projects, access.projects()).await?;
+    let settings = state.settings.get();
+    let (logging, gateway_allows) = (q.logging.unwrap_or(false), settings.prompt_logging == PromptLogging::Allow);
+    let keys = db::search_keys(&state.db, search.as_deref(), &tags, &projects, access.projects(), logging, gateway_allows).await?;
     let keys: Vec<VirtualKey> = keys.into_iter().filter(|k| sees_key(&access, k)).collect();
     let budgets = futures::future::join_all(keys.iter().map(|k| crate::budget::status(&state, k))).await;
-    Ok(Json(keys.into_iter().zip(budgets).map(|(key, budget)| KeyView { key, budget }).collect()))
+    let snap = state.registry.snapshot();
+    let view = |(key, budget)| KeyView { prompt_logged: crate::api::prompt_logged(&snap, &settings, &key), key, budget };
+    Ok(Json(keys.into_iter().zip(budgets).map(view).collect()))
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
@@ -1758,6 +1772,7 @@ async fn create_key(
         metadata: i.metadata.unwrap_or_else(|| json!({})),
         guardrail_ids,
         web_search: i.web_search,
+        prompt_logging: i.prompt_logging,
         created_at: now,
         updated_at: now,
     };
@@ -1803,6 +1818,7 @@ async fn update_key(
     k.enabled = i.enabled;
     k.expires_at = i.expires_at;
     k.web_search = i.web_search;
+    k.prompt_logging = i.prompt_logging;
     if let Some(m) = i.metadata {
         k.metadata = m;
     }
@@ -1904,6 +1920,10 @@ pub(crate) struct ProjectInput {
     /// While false, no key in the project may have the model search the web, whatever its own setting.
     #[serde(default = "yes")]
     web_search: bool,
+    /// Whether its keys' prompts and responses are logged, for debugging: `deny` (the default),
+    /// `allow` for the keys that opt in, or `force` for every key.
+    #[serde(default)]
+    prompt_logging: PromptLogging,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1960,7 +1980,8 @@ async fn create_project(
 ) -> R<(StatusCode, Json<ProjectView>)> {
     check_budget(i.max_budget_usd, i.budget_period.as_deref())?;
     let guardrail_ids = pick_guardrails(&state, None, i.guardrail_ids.clone(), &[]).await?;
-    let (enabled, max_budget_usd, budget_period, web_search) = (i.enabled, i.max_budget_usd, i.budget_period.clone(), i.web_search);
+    let (enabled, max_budget_usd, budget_period, web_search, prompt_logging) =
+        (i.enabled, i.max_budget_usd, i.budget_period.clone(), i.web_search, i.prompt_logging);
     let (name, description) = project_fields(i)?;
     let now = Utc::now();
     let p = ProjectRow {
@@ -1973,6 +1994,7 @@ async fn create_project(
         spend_reset_at: None,
         guardrail_ids,
         web_search,
+        prompt_logging,
         created_at: now,
         updated_at: now,
     };
@@ -1991,7 +2013,8 @@ async fn update_project(
     let before = db::get_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     check_budget(i.max_budget_usd, i.budget_period.as_deref())?;
     let guardrail_ids = pick_guardrails(&state, None, i.guardrail_ids.clone(), &before.guardrail_ids).await?;
-    let (enabled, max_budget_usd, budget_period, web_search) = (i.enabled, i.max_budget_usd, i.budget_period.clone(), i.web_search);
+    let (enabled, max_budget_usd, budget_period, web_search, prompt_logging) =
+        (i.enabled, i.max_budget_usd, i.budget_period.clone(), i.web_search, i.prompt_logging);
     let (name, description) = project_fields(i)?;
     let p = ProjectRow {
         name,
@@ -2001,6 +2024,7 @@ async fn update_project(
         budget_period,
         guardrail_ids,
         web_search,
+        prompt_logging,
         updated_at: Utc::now(),
         ..before.clone()
     };
@@ -2016,6 +2040,9 @@ async fn update_project(
         broadcast_reload(&state, "project guardrails changed").await;
     } else if before.web_search != p.web_search {
         broadcast_reload(&state, if p.web_search { "project web search allowed" } else { "project web search forbidden" }).await;
+    } else if before.prompt_logging != p.prompt_logging {
+        broadcast_reload(&state, "project prompt logging changed").await;
+        tracing::info!(project = %id, prompt_logging = p.prompt_logging.as_str(), "project prompt logging changed");
     }
     let changes = audit::changes(&before, &p);
     if !changes.is_empty() {
@@ -2667,6 +2694,7 @@ mod tests {
             metadata: json!({}),
             guardrail_ids: Vec::new(),
             web_search: true,
+            prompt_logging: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -2723,6 +2751,7 @@ mod tests {
             metadata: json!({}),
             guardrail_ids: Vec::new(),
             web_search: true,
+            prompt_logging: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

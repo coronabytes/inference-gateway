@@ -86,6 +86,7 @@ Changed in the console under **Cluster → Settings**, or with `GET`/`PUT /admin
 | Scheduled import | `price_import` | on | | Imports LiteLLM's model prices into the price catalog on a schedule, on one replica at a time (a Postgres advisory lock). Off, only the **Run Import** button on the Pricing tab does. |
 | Import every | `price_import_hours` | 6 h | 1–720 | Hours between scheduled imports, counted from the last import, scheduled or not. A failed import is retried after an hour. |
 | API reference | `api_docs` | on | | The OpenAPI document at `/admin/openapi.json` and the reference at `/admin/docs/`, for signed-in people and admin and project keys. |
+| Prompt logging, keys outside projects | `prompt_logging` | `deny` | `deny`, `allow` | Whether the prompts and responses of keys outside projects (admin keys among them) are stored, for debugging: never, or for the keys that turn it on. Projects set their own, and can also force it for all their keys (see [Projects](access.md#projects)). |
 
 ## Commands
 

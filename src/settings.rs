@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Duration};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use crate::db;
+use crate::{db, model::PromptLogging};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(default)]
@@ -56,6 +56,9 @@ pub struct Settings {
     pub price_import: bool,
     /// Hours between scheduled imports of the price catalog.
     pub price_import_hours: u32,
+    /// Prompt logging for keys outside projects: `deny`, or `allow` for those that opt in. Never
+    /// `force`, which would log every admin key. Projects set their own.
+    pub prompt_logging: PromptLogging,
 }
 
 impl Default for Settings {
@@ -77,6 +80,7 @@ impl Default for Settings {
             api_docs: true,
             price_import: true,
             price_import_hours: 6,
+            prompt_logging: PromptLogging::Deny,
         }
     }
 }
@@ -107,7 +111,11 @@ impl Settings {
         within("header_timeout_secs", self.header_timeout_secs, 1, 600)?;
         within("body_timeout_secs", self.body_timeout_secs, 1, 3600)?;
         within("max_connections", self.max_connections.into(), 1, 1_000_000)?;
-        within("price_import_hours", self.price_import_hours.into(), 1, 720)
+        within("price_import_hours", self.price_import_hours.into(), 1, 720)?;
+        if self.prompt_logging == PromptLogging::Force {
+            return Err("prompt_logging must be deny or allow: keys outside projects cannot be forced".into());
+        }
+        Ok(())
     }
 
     /// Retention saved before `RETENTION_DAYS` applied (anything from 1 to 3650 days) is moved
@@ -229,6 +237,14 @@ mod tests {
         let old = Settings { request_log_retention_days: 3650, audit_log_retention_days: 1, ..Settings::default() }.fit_retention();
         assert_eq!((old.request_log_retention_days, old.audit_log_retention_days), (1080, 7));
         assert_eq!(Settings { request_log_retention_days: 0, ..Settings::default() }.fit_retention().request_log_retention_days, 0);
+    }
+
+    #[test]
+    fn keys_outside_projects_cannot_be_forced_to_log() {
+        assert_eq!(Settings::default().prompt_logging, PromptLogging::Deny);
+        assert!(Settings { prompt_logging: PromptLogging::Allow, ..Settings::default() }.check().is_ok());
+        let forced = Settings { prompt_logging: PromptLogging::Force, ..Settings::default() };
+        assert!(forced.check().unwrap_err().starts_with("prompt_logging must be deny or allow"));
     }
 
     #[test]

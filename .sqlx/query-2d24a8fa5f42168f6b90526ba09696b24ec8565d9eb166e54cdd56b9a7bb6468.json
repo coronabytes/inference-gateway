@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS \"scope: KeyScope\", k.project_id,\n                  coalesce(p.enabled, true) AS \"project_active!\", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,\n                  k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,\n                  k.guardrail_ids, k.web_search, k.created_at, k.updated_at\n           FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id WHERE k.id = $1",
+  "query": "SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS \"scope: KeyScope\", k.project_id,\n                  coalesce(p.enabled, true) AS \"project_active!\", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,\n                  k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,\n                  k.guardrail_ids, k.web_search, k.prompt_logging, k.created_at, k.updated_at\n           FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id ORDER BY k.created_at DESC",
   "describe": {
     "columns": [
       {
@@ -220,6 +220,17 @@
       },
       {
         "ordinal": 20,
+        "name": "prompt_logging",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "prompt_logging"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -230,7 +241,7 @@
         }
       },
       {
-        "ordinal": 21,
+        "ordinal": 22,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -242,9 +253,7 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Uuid"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -268,8 +277,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "572d974446504baab2734b3464c9aa2e7a3047ad31f021615393c095263df58d"
+  "hash": "2d24a8fa5f42168f6b90526ba09696b24ec8565d9eb166e54cdd56b9a7bb6468"
 }

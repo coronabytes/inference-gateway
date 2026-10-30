@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type BudgetPeriod, type Guardrail, type Project, type ProjectInput } from "../api";
-import { Button, MenuButton, MultiSelect, PageActions, Select, TextArea, TextInput, Toggle, useDebounced } from "../components/controls";
+import { api, type BudgetPeriod, type Guardrail, type Project, type ProjectInput, type PromptLogging } from "../api";
+import { Banner, Button, MenuButton, MultiSelect, PageActions, Segmented, Select, TextArea, TextInput, Toggle, useDebounced } from "../components/controls";
 import { Badge, BudgetMeter, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, optNum, type ConfirmRequest } from "../components/ui";
 import { dateTime } from "../format";
 
@@ -13,6 +13,7 @@ function input(p: Project, changes: Partial<ProjectInput>): ProjectInput {
     max_budget_usd: p.max_budget_usd,
     budget_period: p.budget_period,
     web_search: p.web_search,
+    prompt_logging: p.prompt_logging,
     ...changes,
   };
 }
@@ -154,7 +155,15 @@ export function Projects({ onShowKeys }: { onShowKeys: (project: Project) => voi
                   )}
                 </td>
                 <td>{p.budget ? <BudgetMeter budget={p.budget} /> : <span className="muted">unlimited</span>}</td>
-                <td>{p.enabled ? <Badge tone="good">Active</Badge> : <Badge tone="warning">Inactive</Badge>}</td>
+                <td>
+                  {p.enabled ? <Badge tone="good">Active</Badge> : <Badge tone="warning">Inactive</Badge>}
+                  {p.prompt_logging === "force" && (
+                    <span title="Every key's prompts and responses are logged">
+                      {" "}
+                      <Badge tone="warning">Logging</Badge>
+                    </span>
+                  )}
+                </td>
                 <td className="when">{dateTime(p.created_at)}</td>
                 <td className="actions">
                   <IconButton label={`Edit ${p.name}`} title="Edit" onClick={() => setEditing(p)}>
@@ -210,6 +219,7 @@ export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; 
   const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
   const [guardrailIds, setGuardrailIds] = useState<string[]>(initial?.guardrail_ids ?? []);
   const [webSearch, setWebSearch] = useState(initial?.web_search ?? true);
+  const [promptLogging, setPromptLogging] = useState<PromptLogging>(initial?.prompt_logging ?? "deny");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -234,6 +244,7 @@ export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; 
         budget_period: period || null,
         guardrail_ids: guardrailIds,
         web_search: webSearch,
+        prompt_logging: promptLogging,
       };
       if (initial) await api(`/projects/${initial.id}`, { method: "PUT", json });
       else await api("/projects", { method: "POST", json });
@@ -297,6 +308,23 @@ export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; 
           checked={webSearch}
           onChange={setWebSearch}
         />
+        <Segmented
+          caption="Prompt logging"
+          hint="For debugging, not for production keys: whether full prompts, guardrail results and responses of the project's keys are stored, unencrypted. Deny stores none, whatever a key says. Allow stores those of the keys that opt in. Force stores every key's. It stays as set until it is changed."
+          options={[
+            { value: "deny", label: "Deny" },
+            { value: "allow", label: "Allow" },
+            { value: "force", label: "Force" },
+          ]}
+          value={promptLogging}
+          onChange={setPromptLogging}
+        />
+        {promptLogging === "force" && initial?.prompt_logging !== "force" && (
+          <Banner tone="warning">
+            Every request of every key in this project will have its prompt and response stored, unencrypted, until this is changed. Use it for debugging, not for
+            production traffic.
+          </Banner>
+        )}
       </div>
     </Modal>
   );

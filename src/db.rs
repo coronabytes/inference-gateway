@@ -13,7 +13,8 @@ use crate::{
     accounting::RequestRecord,
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailRow},
     model::{
-        AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow, Route,
+        AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
+        PromptLogging, Route,
         RouterRow, VirtualKey,
     },
 };
@@ -822,7 +823,8 @@ pub async fn rename_model_metadata(pool: &PgPool, old: &str, new: &str) -> sqlx:
 pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option<&[Uuid]>) -> sqlx::Result<Vec<(ProjectRow, i64)>> {
     let rows = sqlx::query!(
         r#"SELECT p.id, p.name, p.description, p.enabled, p.max_budget_usd, p.budget_period, p.spend_reset_at,
-                  p.guardrail_ids, p.web_search, p.created_at, p.updated_at, count(k.id) AS "keys!"
+                  p.guardrail_ids, p.web_search, p.prompt_logging AS "prompt_logging: PromptLogging", p.created_at, p.updated_at,
+                  count(k.id) AS "keys!"
            FROM projects p LEFT JOIN virtual_keys k ON k.project_id = p.id
            WHERE ($1::text IS NULL OR strpos(lower(p.name || ' ' || coalesce(p.description, '')), $1) > 0)
              AND ($2::uuid[] IS NULL OR p.id = ANY($2))
@@ -845,6 +847,7 @@ pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option
                 spend_reset_at: r.spend_reset_at,
                 guardrail_ids: r.guardrail_ids,
                 web_search: r.web_search,
+                prompt_logging: r.prompt_logging,
                 created_at: r.created_at,
                 updated_at: r.updated_at,
             };
@@ -856,8 +859,9 @@ pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option
 pub async fn get_project(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<ProjectRow>> {
     sqlx::query_as!(
         ProjectRow,
-        "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search, created_at, updated_at
-         FROM projects WHERE id = $1",
+        r#"SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search,
+                  prompt_logging AS "prompt_logging: PromptLogging", created_at, updated_at
+           FROM projects WHERE id = $1"#,
         id
     )
     .fetch_optional(pool)
@@ -868,11 +872,12 @@ pub async fn get_project(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Project
 /// through `reset_project_spend`.
 pub async fn upsert_project(pool: &PgPool, p: &ProjectRow) -> sqlx::Result<()> {
     sqlx::query!(
-        "INSERT INTO projects (id, name, description, enabled, max_budget_usd, budget_period, guardrail_ids, web_search, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+        "INSERT INTO projects (id, name, description, enabled, max_budget_usd, budget_period, guardrail_ids, web_search, prompt_logging,
+             created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
          ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, enabled = EXCLUDED.enabled,
              max_budget_usd = EXCLUDED.max_budget_usd, budget_period = EXCLUDED.budget_period, guardrail_ids = EXCLUDED.guardrail_ids,
-             web_search = EXCLUDED.web_search, updated_at = now()",
+             web_search = EXCLUDED.web_search, prompt_logging = EXCLUDED.prompt_logging, updated_at = now()",
         p.id,
         p.name,
         p.description,
@@ -881,6 +886,7 @@ pub async fn upsert_project(pool: &PgPool, p: &ProjectRow) -> sqlx::Result<()> {
         p.budget_period,
         &p.guardrail_ids,
         p.web_search,
+        p.prompt_logging.as_str(),
         p.created_at,
     )
     .execute(pool)
@@ -896,7 +902,8 @@ pub async fn reset_project_spend(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> 
 pub async fn list_project_rows(pool: &PgPool) -> sqlx::Result<Vec<ProjectRow>> {
     sqlx::query_as!(
         ProjectRow,
-        "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search, created_at, updated_at FROM projects"
+        r#"SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search,
+                  prompt_logging AS "prompt_logging: PromptLogging", created_at, updated_at FROM projects"#
     )
     .fetch_all(pool)
     .await
@@ -921,7 +928,7 @@ pub async fn list_keys(pool: &PgPool) -> sqlx::Result<Vec<VirtualKey>> {
         r#"SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS "scope: KeyScope", k.project_id,
                   coalesce(p.enabled, true) AS "project_active!", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,
                   k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,
-                  k.guardrail_ids, k.web_search, k.created_at, k.updated_at
+                  k.guardrail_ids, k.web_search, k.prompt_logging, k.created_at, k.updated_at
            FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id ORDER BY k.created_at DESC"#
     )
     .fetch_all(pool)
@@ -930,20 +937,24 @@ pub async fn list_keys(pool: &PgPool) -> sqlx::Result<Vec<VirtualKey>> {
 
 /// The keys the console's key list shows, newest first. `search` (lower case) is part of the
 /// name or of the shown prefix (`sk-gw-c9d0…bb2d`), or a whole key, which starts and ends like
-/// its prefix. `visible` limits a user to their projects' keys that fit a project.
+/// its prefix. `visible` limits a user to their projects' keys that fit a project. `logging` keeps
+/// the keys whose prompts are logged (as `api::prompt_logged` decides), where `gateway_allows` is
+/// the gateway's policy for keys outside projects.
 pub async fn search_keys(
     pool: &PgPool,
     search: Option<&str>,
     tags: &AnyOf<String>,
     projects: &AnyOf<Uuid>,
     visible: Option<&[Uuid]>,
+    logging: bool,
+    gateway_allows: bool,
 ) -> sqlx::Result<Vec<VirtualKey>> {
     sqlx::query_as!(
         VirtualKey,
         r#"SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS "scope: KeyScope", k.project_id,
                   coalesce(p.enabled, true) AS "project_active!", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,
                   k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,
-                  k.guardrail_ids, k.web_search, k.created_at, k.updated_at
+                  k.guardrail_ids, k.web_search, k.prompt_logging, k.created_at, k.updated_at
            FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id
            WHERE ($1::text IS NULL OR strpos(lower(k.name), $1) > 0 OR strpos(lower(k.key_prefix), $1) > 0
                   OR (split_part(k.key_prefix, '…', 2) <> ''
@@ -952,6 +963,8 @@ pub async fn search_keys(
              AND ($2::text[] IS NULL OR k.allowed_tags && $2 OR ($3 AND cardinality(k.allowed_tags) = 0))
              AND ($4::uuid[] IS NULL OR k.project_id = ANY($4) OR ($5 AND k.project_id IS NULL))
              AND ($6::uuid[] IS NULL OR (k.project_id = ANY($6) AND k.scope IN ('inference', 'project')))
+             AND (NOT $7 OR p.prompt_logging = 'force'
+                  OR (k.prompt_logging AND (p.prompt_logging = 'allow' OR (k.project_id IS NULL AND $8))))
            ORDER BY k.created_at DESC"#,
         search,
         tags.any.as_deref(),
@@ -959,6 +972,8 @@ pub async fn search_keys(
         projects.any.as_deref(),
         projects.none,
         visible,
+        logging,
+        gateway_allows,
     )
     .fetch_all(pool)
     .await
@@ -1019,7 +1034,7 @@ pub async fn get_key(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<VirtualKey>
         r#"SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS "scope: KeyScope", k.project_id,
                   coalesce(p.enabled, true) AS "project_active!", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,
                   k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,
-                  k.guardrail_ids, k.web_search, k.created_at, k.updated_at
+                  k.guardrail_ids, k.web_search, k.prompt_logging, k.created_at, k.updated_at
            FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id WHERE k.id = $1"#,
         id
     )
@@ -1031,8 +1046,8 @@ pub async fn insert_key(pool: &PgPool, k: &VirtualKey) -> sqlx::Result<()> {
     sqlx::query!(
         "INSERT INTO virtual_keys (id, name, key_hash, key_prefix, allowed_models, allowed_tags, rpm_limit, tpm_limit,
              max_budget_usd, budget_period, spend_usd, enabled, expires_at, metadata, scope, project_id, guardrail_ids, web_search,
-             created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,now(),now())",
+             prompt_logging, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,$18,now(),now())",
         k.id,
         k.name,
         k.key_hash,
@@ -1050,6 +1065,7 @@ pub async fn insert_key(pool: &PgPool, k: &VirtualKey) -> sqlx::Result<()> {
         k.project_id,
         &k.guardrail_ids,
         k.web_search,
+        k.prompt_logging,
     )
     .execute(pool)
     .await?;
@@ -1060,7 +1076,7 @@ pub async fn update_key(db: impl PgExecutor<'_>, k: &VirtualKey) -> sqlx::Result
     sqlx::query!(
         "UPDATE virtual_keys SET name = $2, allowed_models = $3, allowed_tags = $4, rpm_limit = $5, tpm_limit = $6,
              max_budget_usd = $7, budget_period = $8, enabled = $9, expires_at = $10, metadata = $11, scope = $12,
-             project_id = $13, guardrail_ids = $14, web_search = $15, updated_at = now()
+             project_id = $13, guardrail_ids = $14, web_search = $15, prompt_logging = $16, updated_at = now()
          WHERE id = $1",
         k.id,
         k.name,
@@ -1077,6 +1093,7 @@ pub async fn update_key(db: impl PgExecutor<'_>, k: &VirtualKey) -> sqlx::Result
         k.project_id,
         &k.guardrail_ids,
         k.web_search,
+        k.prompt_logging,
     )
     .execute(db)
     .await?;

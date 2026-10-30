@@ -478,9 +478,16 @@ export interface VirtualKey {
   guardrail_ids: string[];
   /** Requests may have the model search the web, unless the key's project forbids it. */
   web_search: boolean;
+  /** Its prompts and responses are logged, for debugging, where its project allows it. */
+  prompt_logging: boolean;
+  /** Whether they are logged now: its own switch where the project allows it, always where the project forces it. */
+  prompt_logged: boolean;
   created_at: string;
   updated_at: string;
 }
+
+/** Whether a project's keys' prompts and responses are logged: never, those that opt in, or all. */
+export type PromptLogging = "deny" | "allow" | "force";
 
 /** A group of keys. While inactive, its keys are refused like disabled ones; it grants and limits nothing. */
 export interface Project {
@@ -501,6 +508,8 @@ export interface Project {
   guardrail_ids: string[];
   /** While false, no key in the project may have the model search the web, whatever its own setting. */
   web_search: boolean;
+  /** Whether its keys' prompts and responses are logged, for debugging. */
+  prompt_logging: PromptLogging;
   created_at: string;
   updated_at: string;
 }
@@ -513,6 +522,7 @@ export interface ProjectInput {
   budget_period: BudgetPeriod | null;
   guardrail_ids?: string[];
   web_search: boolean;
+  prompt_logging: PromptLogging;
 }
 
 export interface KeyInput {
@@ -530,6 +540,7 @@ export interface KeyInput {
   /** Admins only; omitted, the key keeps its guardrails. */
   guardrail_ids?: string[];
   web_search: boolean;
+  prompt_logging: boolean;
 }
 
 export interface Totals {
@@ -725,6 +736,8 @@ export interface GatewaySettings {
   api_docs: boolean;
   price_import: boolean;
   price_import_hours: number;
+  /** Prompt logging for keys outside projects; projects set their own. Never `force`. */
+  prompt_logging: Exclude<PromptLogging, "force">;
 }
 
 export interface GatewaySettingsView {

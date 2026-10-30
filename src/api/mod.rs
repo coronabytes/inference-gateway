@@ -33,7 +33,7 @@ use crate::{
     conversations::{self, History, Previous, Turn},
     error::{Dialect, ErrorKind, GatewayError},
     ir::{Aggregator, ChatRequest, ChatResponse, Message, Part, Role, StreamEvent, Usage},
-    model::{ApiStyle, AutoRouter, Deployment, Mode, ProviderKind, VirtualKey},
+    model::{ApiStyle, AutoRouter, Deployment, Mode, PromptLogging, ProviderKind, VirtualKey},
     providers::{self, ByteStream, EventStream, Op},
     registry::Snapshot,
     sse::SseParser,
@@ -486,6 +486,22 @@ pub(crate) fn key_can_use(snap: &Snapshot, key: &VirtualKey, model: &str) -> boo
 /// Whether `key` may have the model search the web: neither the key nor its project forbids it.
 pub(crate) fn web_search_allowed(snap: &Snapshot, key: &VirtualKey) -> bool {
     key.web_search && key.project_id.and_then(|p| snap.projects.get(&p)).is_none_or(|p| p.web_search)
+}
+
+/// Whether `key`'s prompts and responses are logged, for debugging. Its project's policy decides
+/// (the gateway's, `settings.prompt_logging`, for keys outside projects): `force` logs every key,
+/// `deny` none, `allow` those that opt in. A key whose project the registry does not know is not
+/// logged.
+pub(crate) fn prompt_logged(snap: &Snapshot, settings: &crate::settings::Settings, key: &VirtualKey) -> bool {
+    let policy = match key.project_id {
+        Some(p) => snap.projects.get(&p).map_or(PromptLogging::Deny, |p| p.prompt_logging),
+        None => settings.prompt_logging,
+    };
+    match policy {
+        PromptLogging::Force => true,
+        PromptLogging::Deny => false,
+        PromptLogging::Allow => key.prompt_logging,
+    }
 }
 
 /// Whether a request body asks for the provider's web search, in any API's field: Chat
@@ -1074,6 +1090,7 @@ mod tests {
             metadata: json!({}),
             guardrail_ids: vec![],
             web_search: true,
+            prompt_logging: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1107,6 +1124,7 @@ mod tests {
             spend_reset_at: None,
             guardrail_ids: vec![],
             web_search,
+            prompt_logging: PromptLogging::Deny,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1131,6 +1149,7 @@ mod tests {
             metadata: json!({}),
             guardrail_ids: vec![],
             web_search,
+            prompt_logging: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1144,6 +1163,70 @@ mod tests {
         // A project that forbids it overrides the key.
         snap.projects.insert(Uuid::from_u128(1), Arc::new(project(false)));
         assert!(!web_search_allowed(&snap, &key(p, true)));
+    }
+
+    #[test]
+    fn prompt_logging_follows_the_project_then_the_key() {
+        use crate::settings::Settings;
+        let project = |prompt_logging| crate::model::ProjectRow {
+            id: Uuid::from_u128(1),
+            name: "p".into(),
+            description: None,
+            enabled: true,
+            max_budget_usd: None,
+            budget_period: None,
+            spend_reset_at: None,
+            guardrail_ids: vec![],
+            web_search: true,
+            prompt_logging,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let key = |project_id, prompt_logging| VirtualKey {
+            id: Uuid::nil(),
+            name: "k".into(),
+            key_hash: vec![],
+            key_prefix: "gw-".into(),
+            scope: crate::model::KeyScope::Inference,
+            project_id,
+            project_active: true,
+            allowed_models: vec![],
+            allowed_tags: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            max_budget_usd: None,
+            budget_period: None,
+            spend_usd: 0.0,
+            spend_reset_at: None,
+            enabled: true,
+            expires_at: None,
+            metadata: json!({}),
+            guardrail_ids: vec![],
+            web_search: true,
+            prompt_logging,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let deny = Settings::default();
+        let allow = Settings { prompt_logging: PromptLogging::Allow, ..Settings::default() };
+        let mut snap = Snapshot::default();
+        let p = Some(Uuid::from_u128(1));
+        // Outside projects, the gateway's policy: denied by default.
+        assert!(!prompt_logged(&snap, &deny, &key(None, true)));
+        assert!(prompt_logged(&snap, &allow, &key(None, true)));
+        assert!(!prompt_logged(&snap, &allow, &key(None, false)));
+        // A project the registry does not know logs nothing, whatever the gateway allows.
+        assert!(!prompt_logged(&snap, &allow, &key(p, true)));
+        for (policy, opted_in, opted_out) in
+            [(PromptLogging::Deny, false, false), (PromptLogging::Allow, true, false), (PromptLogging::Force, true, true)]
+        {
+            snap.projects.insert(Uuid::from_u128(1), Arc::new(project(policy)));
+            // The project decides, not the gateway's policy for keys outside projects.
+            for settings in [&deny, &allow] {
+                assert_eq!(prompt_logged(&snap, settings, &key(p, true)), opted_in, "{policy:?}, key opted in");
+                assert_eq!(prompt_logged(&snap, settings, &key(p, false)), opted_out, "{policy:?}, key not opted in");
+            }
+        }
     }
 
     #[test]
