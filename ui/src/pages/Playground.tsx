@@ -359,7 +359,18 @@ function parseFull(apiId: Api, v: any): Result {
   }
 }
 
+/** The model and key the address asks for, as the hub's play button links them: `#/models/playground?model=…&key=…`. */
+function askedInHash(): { model: string | null; key: string | null } {
+  const h = window.location.hash;
+  const params = new URLSearchParams(h.includes("?") ? h.slice(h.indexOf("?") + 1) : "");
+  return { model: params.get("model"), key: params.get("key") };
+}
+
 export function Playground() {
+  /** The model and key the address asked for when the playground opened. */
+  const fromHash = useRef(askedInHash());
+  /** The model to select once the chosen key's models are known. */
+  const wantedModel = useRef<string | null>(null);
   /** The keys that may call models now. */
   const [keys, setKeys] = useState<NamedItem[] | null>(null);
   /** The chosen key's models and the guardrails its requests may ask for. */
@@ -397,12 +408,26 @@ export function Playground() {
   const composer = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
+    // Loaded once, on mount (twice in development, with the same request).
+    const { model: wanted, key: askedKey } = fromHash.current;
+    if (wanted) {
+      wantedModel.current = wanted;
+      // Taken: a reload starts as usual.
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + window.location.hash.split("?")[0]);
+    }
     try {
-      const [k, d] = await Promise.all([api<NamedItem[]>("/keys/options?usable=true"), api<Record<string, ReasoningEffort[]>>("/efforts")]);
+      const [k, d, able] = await Promise.all([
+        api<NamedItem[]>("/keys/options?usable=true"),
+        api<Record<string, ReasoningEffort[]>>("/efforts"),
+        // The keys that may call the model asked for.
+        wanted ? api<NamedItem[]>(`/keys/options?usable=true&model=${encodeURIComponent(wanted)}`) : null,
+      ]);
       setModelEfforts(d);
       setKeys(k);
-      setKeyId((cur) => cur || k[0]?.id || "");
-      setError(null);
+      // The key asked for if it may call the model, else the first that may.
+      const pick = able?.find((a) => a.id === askedKey) ?? able?.[0];
+      setKeyId((cur) => pick?.id || cur || k[0]?.id || "");
+      setError(able && !able.length ? `No active key may call ${wanted}.` : null);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -457,7 +482,11 @@ export function Playground() {
   }, [model, efforts?.join()]);
 
   useEffect(() => {
-    if (!models.includes(model)) setModel(models[0] ?? "");
+    const wanted = wantedModel.current;
+    if (wanted && models.includes(wanted)) {
+      wantedModel.current = null;
+      setModel(wanted);
+    } else if (!models.includes(model)) setModel(models[0] ?? "");
   }, [models, model]);
 
   // A server-side conversation belongs to one key and API; start fresh when they change.
