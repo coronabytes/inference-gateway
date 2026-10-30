@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, created_at, updated_at FROM projects",
+  "query": "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search, created_at, updated_at FROM projects",
   "describe": {
     "columns": [
       {
@@ -93,6 +93,17 @@
       },
       {
         "ordinal": 8,
+        "name": "web_search",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "web_search"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -127,8 +138,9 @@
       true,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "16d2966af467704d6f067dc71ec21f2933f4172d81f839ab95b7d3bc2e69d6c5"
+  "hash": "10f4fd7abbc0414c82482ef0a56f08b9bfa3fddb684701e44ef06929050bae6f"
 }

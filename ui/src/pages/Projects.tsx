@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type BudgetPeriod, type Guardrail, type Project, type ProjectInput } from "../api";
-import { Button, MenuButton, MultiSelect, PageActions, Select, TextArea, TextInput, useDebounced } from "../components/controls";
+import { Button, MenuButton, MultiSelect, PageActions, Select, TextArea, TextInput, Toggle, useDebounced } from "../components/controls";
 import { Badge, BudgetMeter, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, optNum, type ConfirmRequest } from "../components/ui";
 import { dateTime } from "../format";
 
 /** The project as it is now, as input for saving it with `changes`. */
 function input(p: Project, changes: Partial<ProjectInput>): ProjectInput {
-  return { name: p.name, description: p.description, enabled: p.enabled, max_budget_usd: p.max_budget_usd, budget_period: p.budget_period, ...changes };
+  return {
+    name: p.name,
+    description: p.description,
+    enabled: p.enabled,
+    max_budget_usd: p.max_budget_usd,
+    budget_period: p.budget_period,
+    web_search: p.web_search,
+    ...changes,
+  };
 }
 
 /**
@@ -201,6 +209,7 @@ export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; 
   const [budget, setBudget] = useState(initial?.max_budget_usd?.toString() ?? "");
   const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
   const [guardrailIds, setGuardrailIds] = useState<string[]>(initial?.guardrail_ids ?? []);
+  const [webSearch, setWebSearch] = useState(initial?.web_search ?? true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -224,6 +233,7 @@ export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; 
         max_budget_usd: period ? amount : null,
         budget_period: period || null,
         guardrail_ids: guardrailIds,
+        web_search: webSearch,
       };
       if (initial) await api(`/projects/${initial.id}`, { method: "PUT", json });
       else await api("/projects", { method: "POST", json });
@@ -281,6 +291,12 @@ export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; 
             options={guardrails.map((g) => ({ value: g.id, label: g.name, note: g.description }))}
           />
         )}
+        <Toggle
+          caption="Web search"
+          hint="Whether the project's keys may have the model search the web, billed per search at the deployment's price. Off, no key in the project can turn it on."
+          checked={webSearch}
+          onChange={setWebSearch}
+        />
       </div>
     </Modal>
   );

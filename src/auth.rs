@@ -211,6 +211,7 @@ pub(crate) mod tests {
                 expires_at: None,
                 metadata: serde_json::json!({}),
                 guardrail_ids: Vec::new(),
+                web_search: true,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             };

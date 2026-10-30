@@ -412,7 +412,8 @@ export interface NamedItem {
 
 /** What the playground offers for a key (`GET /playground/options`). */
 export interface PlaygroundOptions {
-  models: { name: string; mode: Mode; router: boolean }[];
+  /** `web_search`: requests may have it search the web (it has a web search, and the key and its project allow it). */
+  models: { name: string; mode: Mode; router: boolean; web_search: boolean }[];
   /** Those enforced on the key or its project always apply. */
   guardrails: { name: string; enforced: boolean }[];
 }
@@ -475,6 +476,8 @@ export interface VirtualKey {
   metadata: Record<string, unknown>;
   /** Guardrails every request of the key goes through, on top of its project's. */
   guardrail_ids: string[];
+  /** Requests may have the model search the web, unless the key's project forbids it. */
+  web_search: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -496,6 +499,8 @@ export interface Project {
   keys: number;
   /** Guardrails every request of the project's keys goes through. */
   guardrail_ids: string[];
+  /** While false, no key in the project may have the model search the web, whatever its own setting. */
+  web_search: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -507,6 +512,7 @@ export interface ProjectInput {
   max_budget_usd: number | null;
   budget_period: BudgetPeriod | null;
   guardrail_ids?: string[];
+  web_search: boolean;
 }
 
 export interface KeyInput {
@@ -523,6 +529,7 @@ export interface KeyInput {
   enabled: boolean;
   /** Admins only; omitted, the key keeps its guardrails. */
   guardrail_ids?: string[];
+  web_search: boolean;
 }
 
 export interface Totals {

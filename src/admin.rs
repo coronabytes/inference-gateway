@@ -1548,6 +1548,9 @@ pub(crate) struct KeyInput {
     /// omitted, they stay as they are.
     #[serde(default)]
     guardrail_ids: Option<Vec<Uuid>>,
+    /// Whether requests may have the model search the web. A project that forbids it overrides this.
+    #[serde(default = "yes")]
+    web_search: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1754,6 +1757,7 @@ async fn create_key(
         expires_at: i.expires_at,
         metadata: i.metadata.unwrap_or_else(|| json!({})),
         guardrail_ids,
+        web_search: i.web_search,
         created_at: now,
         updated_at: now,
     };
@@ -1798,6 +1802,7 @@ async fn update_key(
     k.budget_period = i.budget_period;
     k.enabled = i.enabled;
     k.expires_at = i.expires_at;
+    k.web_search = i.web_search;
     if let Some(m) = i.metadata {
         k.metadata = m;
     }
@@ -1896,6 +1901,9 @@ pub(crate) struct ProjectInput {
     /// Guardrails every request of the project's keys goes through. Omitted, they stay as they are.
     #[serde(default)]
     guardrail_ids: Option<Vec<Uuid>>,
+    /// While false, no key in the project may have the model search the web, whatever its own setting.
+    #[serde(default = "yes")]
+    web_search: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1952,7 +1960,7 @@ async fn create_project(
 ) -> R<(StatusCode, Json<ProjectView>)> {
     check_budget(i.max_budget_usd, i.budget_period.as_deref())?;
     let guardrail_ids = pick_guardrails(&state, None, i.guardrail_ids.clone(), &[]).await?;
-    let (enabled, max_budget_usd, budget_period) = (i.enabled, i.max_budget_usd, i.budget_period.clone());
+    let (enabled, max_budget_usd, budget_period, web_search) = (i.enabled, i.max_budget_usd, i.budget_period.clone(), i.web_search);
     let (name, description) = project_fields(i)?;
     let now = Utc::now();
     let p = ProjectRow {
@@ -1964,6 +1972,7 @@ async fn create_project(
         budget_period,
         spend_reset_at: None,
         guardrail_ids,
+        web_search,
         created_at: now,
         updated_at: now,
     };
@@ -1982,9 +1991,19 @@ async fn update_project(
     let before = db::get_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     check_budget(i.max_budget_usd, i.budget_period.as_deref())?;
     let guardrail_ids = pick_guardrails(&state, None, i.guardrail_ids.clone(), &before.guardrail_ids).await?;
-    let (enabled, max_budget_usd, budget_period) = (i.enabled, i.max_budget_usd, i.budget_period.clone());
+    let (enabled, max_budget_usd, budget_period, web_search) = (i.enabled, i.max_budget_usd, i.budget_period.clone(), i.web_search);
     let (name, description) = project_fields(i)?;
-    let p = ProjectRow { name, description, enabled, max_budget_usd, budget_period, guardrail_ids, updated_at: Utc::now(), ..before.clone() };
+    let p = ProjectRow {
+        name,
+        description,
+        enabled,
+        max_budget_usd,
+        budget_period,
+        guardrail_ids,
+        web_search,
+        updated_at: Utc::now(),
+        ..before.clone()
+    };
     db::upsert_project(&state.db, &p).await.map_err(duplicate_project)?;
     // Keys carry whether their project is active, and requests check the project's budget in
     // the registry: every replica reloads to apply either.
@@ -1995,6 +2014,8 @@ async fn update_project(
         broadcast_reload(&state, "project budget changed").await;
     } else if before.guardrail_ids != p.guardrail_ids {
         broadcast_reload(&state, "project guardrails changed").await;
+    } else if before.web_search != p.web_search {
+        broadcast_reload(&state, if p.web_search { "project web search allowed" } else { "project web search forbidden" }).await;
     }
     let changes = audit::changes(&before, &p);
     if !changes.is_empty() {
@@ -2461,6 +2482,8 @@ pub(crate) struct PlaygroundModel {
     mode: Mode,
     /// An auto router (chat mode).
     router: bool,
+    /// Requests may have it search the web: it has a web search, and the key and its project allow it.
+    web_search: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -2480,7 +2503,8 @@ async fn playground_options(State(state): State<AppState>, Extension(access): Ex
         .map(|name| {
             let router = snap.routers.contains_key(snap.resolve(name));
             let mode = if router { Mode::Chat } else { crate::api::models::deployments(&snap, Some(key), name).first().map_or(Mode::Chat, |d| d.mode) };
-            PlaygroundModel { name: name.clone(), mode, router }
+            let web_search = mode == Mode::Chat && crate::api::models::web_search(&snap, key, name);
+            PlaygroundModel { name: name.clone(), mode, router, web_search }
         })
         .collect();
     let project = key.project_id.and_then(|p| snap.projects.get(&p));
@@ -2642,6 +2666,7 @@ mod tests {
             expires_at: None,
             metadata: json!({}),
             guardrail_ids: Vec::new(),
+            web_search: true,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -2697,6 +2722,7 @@ mod tests {
             expires_at: None,
             metadata: json!({}),
             guardrail_ids: Vec::new(),
+            web_search: true,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

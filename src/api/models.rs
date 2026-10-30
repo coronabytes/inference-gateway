@@ -17,7 +17,7 @@ use axum::{
 use chrono::NaiveDate;
 use serde_json::{Map, Value, json};
 
-use super::key_can_use;
+use super::{key_can_use, web_search_allowed};
 use crate::{
     auth::ClientKey,
     model::{ApiStyle, Deployment, Mode, ProviderKind, VirtualKey},
@@ -179,7 +179,19 @@ pub(crate) fn deployments<'a>(snap: &'a Snapshot, key: Option<&VirtualKey>, name
 
 /// A model as `key` reaches it, described by what holds for all its deployments.
 fn describe(snap: &Snapshot, key: &VirtualKey, name: &str) -> Info {
-    deployments(snap, Some(key), name).into_iter().map(Info::of).reduce(Info::and).unwrap_or_default()
+    let mut info = deployments(snap, Some(key), name).into_iter().map(Info::of).reduce(Info::and).unwrap_or_default();
+    // The key or its project may forbid what the model could do.
+    if let Some(caps) = info.capabilities.as_mut().filter(|_| !web_search_allowed(snap, key)) {
+        caps.0.insert("server_tools.supported", Some(false));
+        caps.0.insert("server_tools.web_search", Some(false));
+    }
+    info
+}
+
+/// Whether a request of `key` to model `name` can search the web: each deployment it may reach
+/// has a web search, and neither the key nor its project forbids it.
+pub(crate) fn web_search(snap: &Snapshot, key: &VirtualKey, name: &str) -> bool {
+    describe(snap, key, name).capabilities.is_some_and(|c| c.0.get("server_tools.web_search").copied().flatten() == Some(true))
 }
 
 /// What the console's model hub shows of a model or a deployment: token limits, a scheduled
