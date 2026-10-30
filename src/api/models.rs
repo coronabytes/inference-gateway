@@ -221,6 +221,11 @@ pub(crate) fn describe_one(d: &Deployment) -> Described {
     Info::of(d).into()
 }
 
+/// Whether `path` names one of the capabilities a model is described with.
+pub(crate) fn is_capability(path: &str) -> bool {
+    CAPS.iter().any(|(p, _)| *p == path)
+}
+
 /// Anthropic's capabilities, by path in its `capabilities` object, and whether the field may be
 /// `null`. A path ending in `supported` is a group's own flag; any other is a `{"supported": …}`.
 const CAPS: &[(&str, bool)] = &[

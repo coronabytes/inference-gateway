@@ -2,7 +2,7 @@
 
 ## Virtual keys
 
-Create a **virtual key** per app or team under **Access → Keys**. The secret is shown once; the gateway stores only a hash. **Regenerate** issues a new secret immediately, and the key keeps its settings, spend and history.
+Create a **virtual key** per app or team under **Access → Keys & projects**. The secret is shown once; the gateway stores only a hash. **Regenerate** issues a new secret immediately, and the key keeps its settings, spend and history.
 
 - **Rate limits:** requests and tokens per minute, enforced across all replicas.
 - **Budgets:** an amount in USD per day, week (from Monday) or month (from the 1st), in UTC. Once spent, requests are refused with `429` and a message saying when the budget resets. Spend can be reset from the console.
@@ -25,7 +25,7 @@ Admin and inference + admin keys stay outside projects. A key in a project is an
 
 ## Projects
 
-**Projects** (Access → Projects) group keys by team, app or customer.
+**Projects** group keys by team, app or customer. They share the **Access → Keys & projects** tab with the keys: each project is a card holding its keys, with **New project** next to **New key**.
 
 - Turning a project off blocks all its keys at once, until it is turned on again.
 - A project can have its own **budget** per day, week or month for all its keys together, on top of each key's own budget. Once spent, the project's keys get `429` until it resets.

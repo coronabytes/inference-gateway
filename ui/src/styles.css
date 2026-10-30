@@ -503,6 +503,10 @@ details.section[open] .section-summary { display: none; }
   display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 999px;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary); cursor: default;
 }
+/* An icon that picks its capability for the hub's filter; lit while picked. */
+button.cap-icon { padding: 0; cursor: pointer; }
+button.cap-icon:hover:not(:disabled) { background: var(--surface-2); color: var(--link); }
+button.cap-icon[aria-pressed="true"], button.cap-icon[aria-pressed="true"]:hover:not(:disabled) { background: var(--wash); color: var(--link); border-color: var(--link); }
 .tag {
   display: inline-flex; align-items: center; gap: 2px; font-size: 12px; line-height: 18px; padding: 0 7px;
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text-secondary);
@@ -731,6 +735,17 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); background:
 /* A value with what it is beneath it. */
 .stat { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .stat .muted.small { font-size: 12px; }
+/* Value and label side by side, one pair per row, values left-aligned so they line up across rows. */
+.stat-pairs { display: grid; grid-template-columns: auto auto; gap: 2px 6px; align-items: baseline; }
+.stat-pairs > :not(.muted) { font-variant-numeric: tabular-nums; }
+/* Numbers right-aligned, in a column wide enough to line up across rows. In a table's number cell
+   the pairs sit at the cell's end. */
+.stat-pairs.num > :not(.muted) { text-align: right; min-width: 3em; }
+td.num > .stat-pairs { display: inline-grid; text-align: left; }
+/* A note that spans both rows, then a second column of pairs, kept close to the note it belongs to. */
+.stat-pairs.wide { grid-template-columns: repeat(5, auto); }
+.stat-pairs > .threshold { grid-column: 3; grid-row: 1 / span 2; align-self: center; padding-left: 12px; white-space: nowrap; }
+.stat-pairs.num > .long { min-width: 0; }
 .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Keys: the project's budget, status and commands stand over its keys' own; keys are indented a
@@ -802,6 +817,9 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); background:
 .detail-table th, .detail-table td { background: transparent; padding: 4px 16px 4px 0; vertical-align: top; overflow-wrap: anywhere; }
 .detail-table td:first-child, .detail-table th:first-child { padding-left: 0; }
 .detail-table tbody th { font-weight: 400; color: var(--text-secondary); text-align: left; }
+/* A deployment's long-context prices: a second row of the same deployment, with no line between them. */
+.detail-table tr:has(+ tr.long-prices) > td { border-bottom: 0; padding-bottom: 0; }
+.detail-table tr.long-prices > td { padding-top: 0; }
 .raw.wrap { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 6px; }
 /* The Playground's request as curl: the dialog's body scrolls, so the command is shown whole. */
 .raw.curl { max-height: none; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
@@ -896,16 +914,32 @@ a.button.primary:hover { background: var(--accent-hover); box-shadow: var(--glow
 .catalog-table col.col-price { width: 96px; }
 .catalog-table col.col-tokens { width: 92px; }
 /* Model hub: a model per row, its prices and deployments beneath it */
-.hub-table { table-layout: fixed; min-width: 960px; }
-.hub-table col.col-vendor { width: 120px; }
-.hub-table col.col-mode { width: 100px; }
-.hub-table col.col-tokens { width: 96px; }
-.hub-table col.col-price { width: 150px; }
+.hub-table { table-layout: fixed; min-width: 1160px; }
+.hub-table col.col-logo { width: 56px; }
+.hub-table col.col-stats { width: 360px; }
+.hub-table col.col-tokens { width: 120px; }
+.hub-table td.logo { padding-right: 0; }
+.hub-table col.col-price { width: 210px; }
 .hub-table col.col-caps { width: 240px; }
-.hub-table col.col-actions { width: 56px; }
+.hub-table col.col-actions { width: 92px; }
+/* The tile footer's status bar, latency and speed, in a row of the list; latency and speed keep fixed widths. */
+.hub-row-stats { display: flex; align-items: flex-end; gap: 16px; }
+.hub-row-stats > .hub-stat { flex: none; width: 52px; }
+.hub-table td.actions .hub-tile-actions { justify-content: flex-end; margin: 0; }
 .hub-table td { vertical-align: top; }
+.hub-table td.middle { vertical-align: middle; }
+/* Like the deployments list, the rows carry their own labels; the header stays for screen readers only. */
+.hub-table > thead.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.hub-table > tbody > tr:first-child > td { border-top: 0; }
+/* A model's row highlights under the pointer; its open details, and their tables' rows, do not. The
+   tables' cells also match `tbody tr:hover td` through the details row, so they stay transparent outright. */
+.hub-table tr.child-row:hover > td { background: var(--surface-1); }
+.hub-table tr.child-row .detail-table td, .hub-table tr.child-row .detail-table th { background: transparent; }
 .hub-table td.clip, .hub-table .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hub-name { font-weight: 550; }
+/* A model's name, then its mode and alias badges, which stay visible when the name is cut off. */
+.hub-model-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hub-model-line > .badge { flex: none; }
 /* Guessed from the model's name, not saved yet */
 .vendor-suggested { color: var(--text-muted); font-style: italic; }
 /* The hub's tile view: a card per model, as many across as fit. */
@@ -930,7 +964,7 @@ a.button.primary:hover { background: var(--accent-hover); box-shadow: var(--glow
 .hub-tile-foot {
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border);
 }
-.hub-tile-foot > button { margin-left: auto; }
+.hub-tile-foot > .hub-tile-actions { margin: 0 -6px -4px auto; }
 .hub-stat, .hub-status { display: grid; gap: 4px 8px; }
 .hub-status { grid-template-columns: auto 1fr; flex: 1 1 140px; }
 .hub-status .status-bar { grid-column: 1 / -1; }

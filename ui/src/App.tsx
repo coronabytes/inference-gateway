@@ -55,7 +55,8 @@ const MOVED: Record<string, string> = {
   settings: "cluster/settings",
   "cluster/admins": "access/users",
   keys: "access",
-  "keys/projects": "access/projects",
+  "keys/projects": "access",
+  "access/projects": "access",
 };
 
 /** The page in the address (`#/page` or `#/page/tab`). */

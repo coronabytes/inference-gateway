@@ -22,7 +22,7 @@ import {
 import { CatalogPicker } from "../components/CatalogPicker";
 import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, SplitButton, Switch, Tabs, TextInput, useDebounced, useHashTab } from "../components/controls";
 import { PRICE_FIELDS, catalogScope, deploymentPrices, priceDifferences, suggestModelName, upstreamFromKey, type DeploymentPrices } from "../pricing";
-import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, Section, optInt, optNum, type ConfirmRequest } from "../components/ui";
+import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, Section, TokenPrices, optInt, optNum, type ConfirmRequest } from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { Credentials, connectionSummary, usesEntra } from "./Credentials";
@@ -595,25 +595,38 @@ export function Models() {
                     <span className="muted small">credential</span>
                   </div>
                   <div className="stat optional" title={`Weight spreads traffic; lower priority is tried first.${healthText(d.health)}`}>
-                    <span>
-                      {d.weight} · {d.priority}
-                    </span>
-                    <span className="muted small">weight · priority</span>
+                    <div className="stat-pairs">
+                      <span>{d.weight}</span>
+                      <span className="muted small">weight</span>
+                      <span>{d.priority}</span>
+                      <span className="muted small">priority</span>
+                    </div>
                     {reduced(d) && <span className="muted small">now ×{d.health!.weight_factor.toFixed(2)}</span>}
                   </div>
                   <div className="stat optional">
-                    <span>
-                      {d.rpm_limit ? compact(d.rpm_limit) : "–"} · {d.tpm_limit ? compact(d.tpm_limit) : "–"}
-                    </span>
-                    <span className="muted small">rpm · tpm</span>
+                    <div className="stat-pairs">
+                      <span>{d.rpm_limit ? compact(d.rpm_limit) : "–"}</span>
+                      <span className="muted small">rpm</span>
+                      <span>{d.tpm_limit ? compact(d.tpm_limit) : "–"}</span>
+                      <span className="muted small">tpm</span>
+                    </div>
                   </div>
                   <div className={`stat${drift ? " price-drift" : ""}`} title={drift ? describeDrift(d, drift) : undefined}>
-                    <span>{d.mode === "rerank" ? (d.cost_per_k_searches ?? 0) : `${d.input_cost_per_mtok} · ${d.output_cost_per_mtok}`}</span>
-                    <span className="muted small">{d.mode === "rerank" ? "$ per 1K searches" : "$ in · out per 1M"}</span>
-                    {d.long_context_threshold != null && (
-                      <span className="muted small">
-                        above {compact(d.long_context_threshold)}: {d.long_input_cost_per_mtok} · {d.long_output_cost_per_mtok}
-                      </span>
+                    {d.mode === "rerank" ? (
+                      <>
+                        <span>{d.cost_per_k_searches ?? 0}</span>
+                        <span className="muted small">$ per 1K searches</span>
+                      </>
+                    ) : (
+                      <TokenPrices
+                        input={d.input_cost_per_mtok}
+                        output={d.mode !== "embedding" ? d.output_cost_per_mtok : undefined}
+                        long={
+                          d.long_context_threshold != null
+                            ? { threshold: d.long_context_threshold, input: d.long_input_cost_per_mtok, output: d.long_output_cost_per_mtok }
+                            : undefined
+                        }
+                      />
                     )}
                     {d.mode === "chat" && d.cost_per_k_searches != null && (
                       <span className="muted small">{d.cost_per_k_searches} per 1K web searches</span>
@@ -623,7 +636,7 @@ export function Models() {
                         <span>
                           catalog{" "}
                           {d.mode === "rerank"
-                            ? (drift.expected.cost_per_k_searches ?? 0)
+                            ? `${drift.expected.cost_per_k_searches ?? 0}`
                             : `${drift.expected.input_cost_per_mtok} · ${drift.expected.output_cost_per_mtok}`}
                           {d.mode === "chat" && drift.fields.includes("cost_per_k_searches") && `, ${drift.expected.cost_per_k_searches ?? 0} per 1K web searches`}
                         </span>

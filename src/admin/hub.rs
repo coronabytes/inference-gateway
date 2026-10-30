@@ -40,6 +40,9 @@ pub(crate) struct HubQuery {
     /// Only models of these vendors (their `vendor`: saved, or suggested from their names), as
     /// `Anthropic,OpenAI`; `-` stands for models without one.
     vendor: Option<String>,
+    /// Only models with all of these capabilities, by path in `capabilities`, as
+    /// `image_input,thinking.supported`.
+    capability: Option<String>,
     /// Only models whose name, display name, vendor, description or an upstream model contains
     /// this text, ignoring case.
     q: Option<String>,
@@ -120,17 +123,19 @@ fn suggest_vendor(names: &str) -> Option<&'static str> {
 }
 
 /// Whether a model passes the hub's filters.
-fn matches(m: &HubModel, modes: &[&str], vendors: &[&str], term: &str) -> bool {
+fn matches(m: &HubModel, modes: &[&str], vendors: &[&str], caps: &[&str], term: &str) -> bool {
     let text = |field: &str| m.metadata.get(field).and_then(Value::as_str);
     let mode_ok = modes.is_empty() || modes.contains(&if m.kind == "router" { "router" } else { m.mode.as_str() });
     let vendor_ok = vendors.is_empty() || vendors.contains(&m.vendor.as_deref().unwrap_or("-"));
+    let has = |c: &&str| m.described.capabilities.as_ref().is_some_and(|cs| cs.get(*c).copied().flatten() == Some(true));
+    let caps_ok = caps.iter().all(has);
     let term_ok = term.is_empty()
         || [Some(m.name.as_str()), m.target.as_deref(), text("display_name"), m.vendor.as_deref(), text("description")]
             .into_iter()
             .flatten()
             .chain(m.deployments.iter().map(|d| d.upstream_model.as_str()))
             .any(|s| s.to_lowercase().contains(term));
-    mode_ok && vendor_ok && term_ok
+    mode_ok && vendor_ok && caps_ok && term_ok
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -277,6 +282,8 @@ pub(crate) struct HubDeployment {
     weight: u32,
     /// Tried before deployments with a higher priority, which serve only when these fail.
     first_choice: bool,
+    /// The deployment's tags, which a key's allowed tags must cover.
+    tags: Vec<String>,
     #[serde(flatten)]
     described: models::Described,
     prices: HubPrices,
@@ -333,6 +340,7 @@ fn hub_deployments(ds: &[&Deployment]) -> Vec<HubDeployment> {
             priority: d.priority,
             weight: d.weight,
             first_choice: Some(d.priority) == first(&d.model_name),
+            tags: d.tags.clone(),
             described: models::describe_one(d),
             prices: prices(d),
         })
@@ -368,9 +376,12 @@ pub(crate) async fn hub(
         None => None,
     };
     let key = key.as_deref();
-    let (modes, vendors) = (list(q.mode.as_deref()), list(q.vendor.as_deref()));
+    let (modes, vendors, caps) = (list(q.mode.as_deref()), list(q.vendor.as_deref()), list(q.capability.as_deref()));
     if let Some(m) = modes.iter().find(|m| **m != "router" && Mode::parse(m).is_none()) {
         return Err(AdminError::bad_request(format!("unknown mode '{m}'")));
+    }
+    if let Some(c) = caps.iter().find(|c| !models::is_capability(c)) {
+        return Err(AdminError::bad_request(format!("unknown capability '{c}'")));
     }
     let term = q.q.as_deref().unwrap_or("").trim().to_lowercase();
 
@@ -425,7 +436,7 @@ pub(crate) async fn hub(
     let mode_of = |m: &HubModel| if m.kind == "router" { "router".to_string() } else { m.mode.as_str().to_string() };
     let known_modes: Vec<String> = all.iter().map(mode_of).collect::<BTreeSet<_>>().into_iter().collect();
     let known_vendors: Vec<String> = all.iter().filter_map(|m| m.vendor.clone()).collect::<BTreeSet<_>>().into_iter().collect();
-    let mut models: Vec<HubModel> = all.into_iter().filter(|m| matches(m, &modes, &vendors, &term)).collect();
+    let mut models: Vec<HubModel> = all.into_iter().filter(|m| matches(m, &modes, &vendors, &caps, &term)).collect();
     if q.stats == Some(true) && !models.is_empty() {
         // A key sees its own traffic, a project's users their projects', admins everyone's.
         let own_key = own.as_ref().map(|Extension(OwnKey(id))| *id);
@@ -649,13 +660,20 @@ mod tests {
         let embed = model("embed", "model", Mode::Embedding, json!({}));
         let auto = model("auto", "router", Mode::Chat, json!({}));
 
-        assert!(matches(&opus, &["chat"], &[], ""));
-        assert!(!matches(&auto, &["chat"], &[], ""), "a router is not a chat model");
-        assert!(matches(&auto, &["embedding", "router"], &[], ""));
-        assert!(matches(&embed, &["embedding"], &["Anthropic", "-"], ""), "- is no vendor");
-        assert!(!matches(&embed, &[], &["Anthropic"], ""));
-        assert!(matches(&opus, &[], &["Anthropic"], "reasoning"));
-        assert!(!matches(&opus, &[], &[], "gpt"));
+        assert!(matches(&opus, &["chat"], &[], &[], ""));
+        assert!(!matches(&auto, &["chat"], &[], &[], ""), "a router is not a chat model");
+        assert!(matches(&auto, &["embedding", "router"], &[], &[], ""));
+        assert!(matches(&embed, &["embedding"], &["Anthropic", "-"], &[], ""), "- is no vendor");
+        assert!(!matches(&embed, &[], &["Anthropic"], &[], ""));
+        assert!(matches(&opus, &[], &["Anthropic"], &[], "reasoning"));
+        assert!(!matches(&opus, &[], &[], &[], "gpt"));
+
+        let mut seeing = model("seeing", "model", Mode::Chat, json!({}));
+        seeing.described.capabilities = Some([("image_input", Some(true)), ("pdf_input", None), ("thinking.supported", Some(false))].into());
+        assert!(matches(&seeing, &[], &[], &["image_input"], ""));
+        assert!(!matches(&seeing, &[], &[], &["image_input", "thinking.supported"], ""), "all of them");
+        assert!(!matches(&seeing, &[], &[], &["pdf_input"], ""), "unknown is not supported");
+        assert!(!matches(&embed, &[], &[], &["image_input"], ""), "no capabilities at all");
     }
 
     #[test]
