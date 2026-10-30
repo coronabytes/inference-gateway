@@ -1406,11 +1406,11 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
                   l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
-                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?", b.tool_calls AS "tool_calls?",
+                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
+                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)
                        THEN 'expired' ELSE l.bodies END AS "bodies?"
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
-                LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id
                 LEFT JOIN request_bodies b ON b.id = l.id
            WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)
              AND ($3::uuid IS NULL OR l.key_id = $3)
@@ -1456,12 +1456,11 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
                   l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
-                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?", b.tool_calls AS "tool_calls?",
+                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
+                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
                        THEN 'expired' ELSE l.bodies END AS "bodies?"
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
-                LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id
-                LEFT JOIN request_bodies b ON b.id = l.id
            WHERE l.parent_id = ANY($1) ORDER BY l.ts"#,
         &parents,
         f.body_days as i32,
@@ -1478,15 +1477,17 @@ async fn logs_by_id(pool: &PgPool, ids: &[Uuid], body_days: u32) -> sqlx::Result
     }
     sqlx::query_as!(
         LogRow,
-        r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
-                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
+        // No join: on an empty table Postgres plans one with request_logs as the inner side, and
+        // sqlx then takes its columns for nullable, unlike on a table with rows.
+        r#"SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS "key_name?", l.model_name,
+                  l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
                   l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
-                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
+                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
+                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
                        THEN 'expired' ELSE l.bodies END AS "bodies?"
-           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
-                LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id
+           FROM request_logs l
            WHERE l.id = ANY($1)"#,
         ids,
         body_days as i32,

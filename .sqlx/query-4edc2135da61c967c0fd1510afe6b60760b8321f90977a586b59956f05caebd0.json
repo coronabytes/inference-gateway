@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  d.upstream_model AS \"upstream_model?\", c.name AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n                LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id\n           WHERE l.id = ANY($1)",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.parent_id = ANY($1) ORDER BY l.ts",
   "describe": {
     "columns": [
       {
@@ -282,23 +282,13 @@
         "ordinal": 25,
         "name": "upstream_model?",
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "deployments",
-            "name": "upstream_model"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 26,
         "name": "credential_name?",
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "credentials",
-            "name": "name"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 27,
@@ -323,33 +313,33 @@
       false,
       false,
       true,
-      true,
-      false,
-      true,
-      true,
-      false,
-      false,
       false,
       false,
       true,
-      false,
-      false,
+      true,
       false,
       false,
       false,
       false,
       true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
       true,
       true,
       true,
       false,
       false,
       false,
-      true,
-      true,
+      null,
+      null,
       null,
       null
     ]
   },
-  "hash": "eb14316a2329496d90207e05f5441663e94b3a9f9906879684b0791d35c0ad8b"
+  "hash": "4edc2135da61c967c0fd1510afe6b60760b8321f90977a586b59956f05caebd0"
 }
