@@ -1330,6 +1330,8 @@ pub struct LogRow {
     /// none once the deployment is deleted.
     pub upstream_model: Option<String>,
     pub credential_name: Option<String>,
+    /// The tools its response called, where its bodies are logged (see `capture`).
+    pub tool_calls: Option<Vec<String>>,
     pub api: String,
     pub stream: bool,
     pub status_code: i32,
@@ -1404,7 +1406,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
                   l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
-                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?",
+                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?", b.tool_calls AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $14)
                        THEN 'expired' ELSE l.bodies END AS "bodies?"
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
@@ -1454,11 +1456,12 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
                   l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
-                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?",
+                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?", b.tool_calls AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
                        THEN 'expired' ELSE l.bodies END AS "bodies?"
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
                 LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id
+                LEFT JOIN request_bodies b ON b.id = l.id
            WHERE l.parent_id = ANY($1) ORDER BY l.ts"#,
         &parents,
         f.body_days as i32,
@@ -1479,7 +1482,7 @@ async fn logs_by_id(pool: &PgPool, ids: &[Uuid], body_days: u32) -> sqlx::Result
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
                   l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
-                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?",
+                  d.upstream_model AS "upstream_model?", c.name AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
                        THEN 'expired' ELSE l.bodies END AS "bodies?"
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id

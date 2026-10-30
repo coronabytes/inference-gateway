@@ -29,6 +29,20 @@ function readableError(error: string): string {
   }
 }
 
+/** The tools a logged request's response called; clicking one filters the log by it. */
+function ToolList({ tools, onPick }: { tools: string[] | null; onPick: (tool: string) => void }) {
+  if (!tools?.length) return <span className="muted">–</span>;
+  return (
+    <span className="tags">
+      {tools.map((t) => (
+        <button key={t} type="button" className="tag label-tag" title={`${t}: show only requests that called this tool`} onClick={() => onPick(t)}>
+          {t}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 /** A request's labels; clicking one filters the log by it. */
 function LabelList({ labels, onPick }: { labels: LogRow["labels"]; onPick: (key: string, value: string) => void }) {
   const entries = Object.entries(labels ?? {});
@@ -68,6 +82,13 @@ function RequestDetails({ r, routed, onConversation }: { r: LogRow; routed: bool
           <tr>
             <th>Request ID</th>
             <td className="mono">{r.id}</td>
+          </tr>
+          <tr>
+            <th>API</th>
+            <td>
+              {r.api}
+              {r.stream && <span className="muted"> · streamed</span>}
+            </td>
           </tr>
           <tr>
             <th>Deployment</th>
@@ -282,7 +303,7 @@ export function RequestLog() {
               <th>Model</th>
               <th>Key</th>
               <th>Labels</th>
-              <th>API</th>
+              <th>Tools</th>
               <th>Provider</th>
               <th className="num">Latency</th>
               <th className="num">TTFT</th>
@@ -325,8 +346,7 @@ export function RequestLog() {
                           {r === p && <LabelList labels={r.labels} onPick={pickLabel} />}
                         </td>
                         <td>
-                          {r.api}
-                          {r.stream && <span className="muted small"> stream</span>}
+                          <ToolList tools={r.tool_calls} onPick={setTool} />
                         </td>
                         <td>{r.provider ?? "–"}</td>
                         <td className="num">{ms(r.latency_ms)}</td>

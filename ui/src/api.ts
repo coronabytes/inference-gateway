@@ -677,6 +677,8 @@ export interface LogRow {
   /** The deployment's provider model and credential, as configured now; null once it is deleted. */
   upstream_model: string | null;
   credential_name: string | null;
+  /** The tools its response called, where its prompt and response are logged. */
+  tool_calls: string[] | null;
   api: string;
   stream: boolean;
   status_code: number;
