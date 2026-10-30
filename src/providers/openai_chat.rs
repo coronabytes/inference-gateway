@@ -200,6 +200,40 @@ impl ChatHandler {
         }
     }
 
+    fn reasoning_delta(&mut self, evs: &mut Vec<StreamEvent>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let i = match self.reasoning {
+            Some(i) => i,
+            None => {
+                let i = self.blocks.start(evs, BlockKind::Reasoning);
+                self.reasoning = Some(i);
+                i
+            }
+        };
+        evs.push(StreamEvent::ReasoningDelta { index: i, text: text.to_string() });
+    }
+
+    /// Answer text ends the reasoning before it.
+    fn text_delta(&mut self, evs: &mut Vec<StreamEvent>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(i) = self.reasoning.take() {
+            self.blocks.stop(evs, i);
+        }
+        let i = match self.text {
+            Some(i) => i,
+            None => {
+                let i = self.blocks.start(evs, BlockKind::Text);
+                self.text = Some(i);
+                i
+            }
+        };
+        evs.push(StreamEvent::TextDelta { index: i, text: text.to_string() });
+    }
+
     fn finish(&mut self, out: &mut Vec<EventResult>) {
         if self.done {
             return;
@@ -239,40 +273,35 @@ impl SseHandler for ChatHandler {
         if let Some(choice) = v.get("choices").and_then(|c| c.get(0)) {
             let delta = &choice["delta"];
             self.searches = self.searches.max(web_searches(delta));
-            let reasoning = delta
-                .get("reasoning_content")
-                .or_else(|| delta.get("reasoning"))
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty());
+            let reasoning = delta.get("reasoning_content").or_else(|| delta.get("reasoning")).and_then(Value::as_str);
             if let Some(r) = reasoning {
-                let i = match self.reasoning {
-                    Some(i) => i,
-                    None => {
-                        let i = self.blocks.start(&mut evs, BlockKind::Reasoning);
-                        self.reasoning = Some(i);
-                        i
-                    }
-                };
-                evs.push(StreamEvent::ReasoningDelta { index: i, text: r.to_string() });
+                self.reasoning_delta(&mut evs, r);
             }
-            let text = delta
-                .get("content")
-                .and_then(Value::as_str)
-                .or_else(|| delta.get("refusal").and_then(Value::as_str))
-                .filter(|s| !s.is_empty());
-            if let Some(t) = text {
-                if let Some(i) = self.reasoning.take() {
-                    self.blocks.stop(&mut evs, i);
-                }
-                let i = match self.text {
-                    Some(i) => i,
-                    None => {
-                        let i = self.blocks.start(&mut evs, BlockKind::Text);
-                        self.text = Some(i);
-                        i
+            match delta.get("content") {
+                Some(Value::String(t)) => self.text_delta(&mut evs, t),
+                // Mistral's reasoning models send parts: `thinking` (its text in parts of its own)
+                // and `text`, both of which one chunk can hold as the reasoning ends.
+                Some(Value::Array(parts)) => {
+                    for part in parts {
+                        match part.get("type").and_then(Value::as_str) {
+                            Some("thinking") => match &part["thinking"] {
+                                Value::String(r) => self.reasoning_delta(&mut evs, r),
+                                Value::Array(rs) => {
+                                    for r in rs.iter().filter_map(|r| r.get("text").and_then(Value::as_str)) {
+                                        self.reasoning_delta(&mut evs, r);
+                                    }
+                                }
+                                _ => {}
+                            },
+                            Some("text") => self.text_delta(&mut evs, part["text"].as_str().unwrap_or_default()),
+                            _ => {}
+                        }
                     }
-                };
-                evs.push(StreamEvent::TextDelta { index: i, text: t.to_string() });
+                }
+                _ => {}
+            }
+            if let Some(t) = delta.get("refusal").and_then(Value::as_str) {
+                self.text_delta(&mut evs, t);
             }
             if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
                 for (n, tc) in calls.iter().enumerate() {
@@ -372,5 +401,25 @@ mod tests {
         // OpenAI's search models: one search for an answer with citations.
         assert_eq!(web_searches(&json!({ "annotations": [{ "type": "url_citation" }] })), 1);
         assert_eq!(web_searches(&json!({ "content": "no search" })), 0);
+    }
+
+    #[test]
+    fn decodes_mistral_thinking_parts() {
+        // The last of the reasoning and the first of the answer can come in one chunk.
+        let sse = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"Easy\"}]}]}}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\".\"}]},{\"type\":\"text\",\"text\":\"{\\\"\"}]}}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\\\": 1}\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let mut dec = Sse::new(ChatHandler::default());
+        let mut out = Vec::new();
+        dec.feed(sse.as_bytes(), &mut out);
+        let mut agg = crate::ir::Aggregator::default();
+        out.iter().for_each(|e| agg.push(e.as_ref().unwrap()));
+        let r = agg.finish();
+        assert!(matches!(&r.content[0], Part::Reasoning { text, .. } if text == "Easy."), "{:?}", r.content);
+        assert!(matches!(&r.content[1], Part::Text { text, .. } if text == "{\"a\": 1}"), "{:?}", r.content);
     }
 }
