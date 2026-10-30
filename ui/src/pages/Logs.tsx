@@ -71,7 +71,18 @@ function RequestDetails({ r, routed, onConversation }: { r: LogRow; routed: bool
           </tr>
           <tr>
             <th>Deployment</th>
-            <td className="mono">{r.deployment_id ?? "–"}</td>
+            <td>
+              {r.deployment_id == null ? (
+                "–"
+              ) : r.upstream_model == null ? (
+                <span className="muted">deleted</span>
+              ) : (
+                <>
+                  <span className="mono">{r.upstream_model}</span> on {r.provider ?? "–"} with <span className="mono">{r.credential_name ?? "–"}</span>
+                </>
+              )}
+              {r.deployment_id && <div className="mono muted small">{r.deployment_id}</div>}
+            </td>
           </tr>
           <tr>
             <th>Tokens</th>

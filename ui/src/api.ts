@@ -674,6 +674,9 @@ export interface LogRow {
   model_name: string;
   deployment_id: string | null;
   provider: string | null;
+  /** The deployment's provider model and credential, as configured now; null once it is deleted. */
+  upstream_model: string | null;
+  credential_name: string | null;
   api: string;
   stream: boolean;
   status_code: number;

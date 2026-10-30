@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.parent_id = ANY($1) ORDER BY l.ts",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  d.upstream_model AS \"upstream_model?\", c.name AS \"credential_name?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n                LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id\n           WHERE l.id = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -280,6 +280,28 @@
       },
       {
         "ordinal": 25,
+        "name": "upstream_model?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "upstream_model"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
+        "name": "credential_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "credentials",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
         "name": "bodies?",
         "type_info": "Text",
         "origin": "Expression"
@@ -295,7 +317,7 @@
       false,
       false,
       true,
-      false,
+      true,
       false,
       true,
       true,
@@ -317,8 +339,10 @@
       false,
       false,
       false,
+      true,
+      true,
       null
     ]
   },
-  "hash": "806ff6f92a4ac1c8eb25b19baf87a45bbb5eb2d442df0a097e4e4c1c5ab63e7c"
+  "hash": "e3be6cad2d723b97fd11193c42ef53c88bdc89634b5de7951af7a88ea15f316e"
 }
