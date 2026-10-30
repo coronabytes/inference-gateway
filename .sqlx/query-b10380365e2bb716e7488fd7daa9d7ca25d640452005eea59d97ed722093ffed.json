@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.parent_id = ANY($1) ORDER BY l.ts",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)\n             AND ($3::uuid IS NULL OR l.key_id = $3)\n             AND (NOT $4 OR l.status_code >= 400)\n             AND ($5::timestamptz IS NULL OR l.ts >= $5)\n             AND ($6::timestamptz IS NULL OR l.ts < $6)\n             AND ($7::uuid[] IS NULL OR l.project_id = ANY($7))\n             AND ($8::jsonb IS NULL OR l.labels @> $8)\n             AND (NOT $9 OR (l.key_id IS NOT NULL AND k.id IS NULL))\n           ORDER BY l.ts DESC LIMIT $1",
   "describe": {
     "columns": [
       {
@@ -255,11 +255,41 @@
             "name": "guardrail_cost_usd"
           }
         }
+      },
+      {
+        "ordinal": 23,
+        "name": "searches",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "searches"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "search_cost_usd",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "search_cost_usd"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "UuidArray"
+        "Int8",
+        "Text",
+        "Uuid",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz",
+        "UuidArray",
+        "Jsonb",
+        "Bool"
       ]
     },
     "nullable": [
@@ -285,8 +315,10 @@
       true,
       true,
       true,
+      false,
+      false,
       false
     ]
   },
-  "hash": "e0523aad0c3a7aa83ecb9441138429d04bf559d96308b9d6d8db9b9a2b9a6512"
+  "hash": "b10380365e2bb716e7488fd7daa9d7ca25d640452005eea59d97ed722093ffed"
 }

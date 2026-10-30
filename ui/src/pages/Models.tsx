@@ -20,7 +20,7 @@ import {
   type TagInfo,
 } from "../api";
 import { CatalogPicker } from "../components/CatalogPicker";
-import { Button, MenuButton, MultiSelect, Segmented, Select, SplitButton, Switch, Tabs, TextInput, useDebounced, useHashTab } from "../components/controls";
+import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, SplitButton, Switch, Tabs, TextInput, useDebounced, useHashTab } from "../components/controls";
 import { PRICE_FIELDS, catalogScope, deploymentPrices, priceDifferences, suggestModelName, upstreamFromKey, type DeploymentPrices } from "../pricing";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, Section, optInt, optNum, type ConfirmRequest } from "../components/ui";
 import { compact, ms } from "../format";
@@ -103,6 +103,13 @@ interface PriceCheck {
   drift: Map<string, PriceDrift>;
   /** Deployments without a catalog entry to compare with. */
   unmatched: number;
+}
+
+/** A listed deployment as its update takes it: without the fields the server reports but does not
+ *  take back, which it refuses as unknown. */
+function deploymentInput(d: Deployment) {
+  const { id: _id, credential_name: _c, cooldown_secs: _cd, health: _h, reasoning_efforts: _e, created_at: _ca, updated_at: _u, ...input } = d;
+  return input;
 }
 
 const pricesOf = (d: Deployment): DeploymentPrices => ({
@@ -320,12 +327,11 @@ export function Models() {
   /** Take the catalog's prices for one deployment, and remember its catalog entry. */
   const acceptPrice = (d: Deployment, drift: PriceDrift) =>
     act(async () => {
-      const { id, credential_name: _c, cooldown_secs: _cd, health: _h, created_at: _ca, updated_at: _u, ...input } = d;
-      await api(`/deployments/${id}`, { method: "PUT", json: { ...input, ...drift.expected, base_model: d.base_model ?? drift.key } });
+      await api(`/deployments/${d.id}`, { method: "PUT", json: { ...deploymentInput(d), ...drift.expected, base_model: d.base_model ?? drift.key } });
       setPriceCheck((pc) => {
         if (!pc) return pc;
         const next = new Map(pc.drift);
-        next.delete(id);
+        next.delete(d.id);
         if (!next.size) setOnlyDrift(false);
         return { ...pc, drift: next };
       });
@@ -368,8 +374,7 @@ export function Models() {
   /** Activate or deactivate a deployment, keeping everything else as it is. */
   const setDeploymentEnabled = (d: Deployment, enabled: boolean) =>
     act(() => {
-      const { id, credential_name: _c, cooldown_secs: _cd, health: _h, created_at: _ca, updated_at: _u, ...input } = d;
-      return api(`/deployments/${id}`, { method: "PUT", json: { ...input, enabled } });
+      return api(`/deployments/${d.id}`, { method: "PUT", json: { ...deploymentInput(d), enabled } });
     });
 
   const setRouterEnabled = (r: AutoRouterListItem, enabled: boolean) =>
@@ -513,36 +518,35 @@ export function Models() {
           </SplitButton>
         </div>
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {priceCheck && (
-        <div className={`banner ${priceCheck.drift.size ? "warn" : "good"}`} role="status">
-          <span>
-            {priceCheck.drift.size
-              ? `${priceCheck.drift.size} deployment${priceCheck.drift.size === 1 ? "" : "s"} no longer match the price catalog.`
-              : "All prices match the price catalog."}
-            {priceCheck.unmatched > 0 && (
-              <span className="muted">
-                {" "}
-                {priceCheck.unmatched} without a catalog entry {priceCheck.unmatched === 1 ? "was" : "were"} not checked.
-              </span>
-            )}
-          </span>
-          <span className="banner-actions">
-            {priceCheck.drift.size > 0 && (
-              <button className="ghost" onClick={() => setOnlyDrift((v) => !v)}>
+        <Banner
+          tone={priceCheck.drift.size ? "warning" : "good"}
+          caption="Price check"
+          actions={
+            priceCheck.drift.size > 0 && (
+              <Button variant="ghost" onClick={() => setOnlyDrift((v) => !v)}>
                 {onlyDrift ? "Show all models" : "Show only these"}
-              </button>
-            )}
-            <button className="ghost" onClick={() => (setPriceCheck(null), setOnlyDrift(false))}>
-              Dismiss
-            </button>
-          </span>
-        </div>
+              </Button>
+            )
+          }
+          onDismiss={() => (setPriceCheck(null), setOnlyDrift(false))}
+        >
+          {priceCheck.drift.size
+            ? `${priceCheck.drift.size} deployment${priceCheck.drift.size === 1 ? "" : "s"} no longer match the price catalog.`
+            : "All prices match the price catalog."}
+          {priceCheck.unmatched > 0 && (
+            <span className="muted">
+              {" "}
+              {priceCheck.unmatched} without a catalog entry {priceCheck.unmatched === 1 ? "was" : "were"} not checked.
+            </span>
+          )}
+        </Banner>
       )}
       {creds?.length === 0 && (
-        <div className="banner">
+        <Banner tone="warning">
           Deployments authenticate with a stored credential. <a href="#/models/credentials">Create a credential</a> first, then add deployments that use it.
-        </div>
+        </Banner>
       )}
       {creds && !hasModels && <div className="empty-card">No models yet. Add a deployment to start routing traffic.</div>}
       {hasModels && shownCount === 0 && <div className="empty-card">No model matches the filter.</div>}
@@ -611,6 +615,9 @@ export function Models() {
                         above {compact(d.long_context_threshold)}: {d.long_input_cost_per_mtok} · {d.long_output_cost_per_mtok}
                       </span>
                     )}
+                    {d.mode === "chat" && d.cost_per_k_searches != null && (
+                      <span className="muted small">{d.cost_per_k_searches} per 1K web searches</span>
+                    )}
                     {drift && (
                       <div className="price-catalog">
                         <span>
@@ -618,6 +625,7 @@ export function Models() {
                           {d.mode === "rerank"
                             ? (drift.expected.cost_per_k_searches ?? 0)
                             : `${drift.expected.input_cost_per_mtok} · ${drift.expected.output_cost_per_mtok}`}
+                          {d.mode === "chat" && drift.fields.includes("cost_per_k_searches") && `, ${drift.expected.cost_per_k_searches ?? 0} per 1K web searches`}
                         </span>
                         <button className="accept" onClick={() => acceptPrice(d, drift)} aria-label={`Accept catalog prices for ${d.upstream_model}`}>
                           Accept
@@ -837,6 +845,8 @@ function DeploymentForm({
   const [busy, setBusy] = useState(false);
 
   const chat = mode === "chat";
+  // Bedrock has no web search to bill (see `Caps::of` in api/models.rs).
+  const webSearch = chat && provider !== "bedrock";
   const anthropicStyle = chat && (style === "anthropic" || style === "invoke" || (provider === "bedrock" && style === "converse"));
   const available = credentials.filter((c) => c.provider === provider);
   const selected = available.find((c) => c.id === credentialId);
@@ -891,6 +901,7 @@ function DeploymentForm({
         ? `${price(inCost)} in`
         : `${price(inCost)} in / ${price(outCost)} out`,
     longOn && `long context above ${compact(Number(longThreshold) || 0)}`,
+    webSearch && optNum(perK) && `${price(perK)} per 1K web searches`,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1093,7 +1104,7 @@ function DeploymentForm({
         long_output_cost_per_mtok: longOn ? optNum(longOut) : null,
         long_cache_read_cost_per_mtok: longOn ? optNum(longCr) : null,
         long_cache_write_cost_per_mtok: longOn ? optNum(longCw) : null,
-        cost_per_k_searches: mode === "rerank" ? optNum(perK) : null,
+        cost_per_k_searches: mode === "rerank" || webSearch ? optNum(perK) : null,
         base_model: baseModel.trim() || null,
         tags,
         project_ids: projectIds,
@@ -1125,7 +1136,7 @@ function DeploymentForm({
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="form">
         <Segmented
           caption="Mode"
@@ -1166,9 +1177,9 @@ function DeploymentForm({
           />
         </div>
         {!available.length && (
-          <div className="banner">
+          <Banner tone="warning">
             No {PROVIDER_LABEL[provider]} credential yet. <a href="#/models/credentials">Create one</a> first.
-          </div>
+          </Banner>
         )}
         <fieldset>
           <legend>Model</legend>
@@ -1473,18 +1484,30 @@ function DeploymentForm({
             )}
           </div>
           {chat && (
-            <TextInput
-              caption="Long context above (input tokens)"
-              hint={
-                longOn
-                  ? "Requests whose input, including cached tokens, exceeds this are billed entirely at the long-context prices below."
-                  : "Leave empty for a single price tier."
-              }
-              inputMode="numeric"
-              value={longThreshold}
-              onChange={priceInput(setLongThreshold)}
-              placeholder="off, e.g. 200000"
-            />
+            <div className={webSearch ? "row wide-first" : "row"}>
+              <TextInput
+                caption="Long context above (input tokens)"
+                hint={
+                  longOn
+                    ? "Requests whose input, including cached tokens, exceeds this are billed entirely at the long-context prices below."
+                    : "Leave empty for a single price tier."
+                }
+                inputMode="numeric"
+                value={longThreshold}
+                onChange={priceInput(setLongThreshold)}
+                placeholder="off, e.g. 200000"
+              />
+              {webSearch && (
+                <TextInput
+                  caption="Per 1K web searches"
+                  hint="Each web search the model runs, as the provider bills it. Empty when the model has none."
+                  inputMode="decimal"
+                  value={perK}
+                  onChange={priceInput(setPerK)}
+                  placeholder="0"
+                />
+              )}
+            </div>
           )}
           {longOn && (
             <div className="row four">

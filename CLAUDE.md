@@ -24,6 +24,7 @@ controls, each a pill with its caption inside, before the value:
 - `Button`: with `variant` `primary` (the main action), `ghost` (quiet) or `danger`.
 - `MenuButton`: a button (for a table row's commands, `className="icon-btn"` with `MenuIcon`) that opens a menu of actions such as Duplicate and Delete. Rows and cards show Edit as an icon first, then this menu.
 - `PageActions`: a page's buttons at the end of its `.page-head`. When they don't fit beside the filters, the secondary ones fold into a "More" menu and the `primary` ones stay.
+- `Banner`: a message across the page, shaped like a control, with its `tone` (`critical`, `warning`, `good`) as the caption. `actions` and `onDismiss` add buttons at the end. A request's error uses `ErrorBanner` (`components/ui.tsx`), which always passes `onDismiss`.
 - `Field`: a label above content that is not a single control. It is rarely needed.
 
 Every control takes `caption` (the text inside the pill, also its accessible name unless `label` is

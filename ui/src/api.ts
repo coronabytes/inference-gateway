@@ -168,7 +168,7 @@ export interface Deployment {
   long_output_cost_per_mtok: number | null;
   long_cache_read_cost_per_mtok: number | null;
   long_cache_write_cost_per_mtok: number | null;
-  /** Rerank models: USD per 1,000 searches. */
+  /** USD per 1,000 searches: rerank queries, or the web searches a chat model runs. */
   cost_per_k_searches: number | null;
   enabled: boolean;
   cooldown_secs: number | null;
@@ -646,6 +646,10 @@ export interface LogRow {
   guardrails: { applied: string[]; action: "passed" | "flagged" | "masked" | "blocked"; findings: string[] } | null;
   /** The guardrails' part of `cost_usd`. */
   guardrail_cost_usd: number;
+  /** Searches billed: web searches a chat model ran, or a rerank model's searches. */
+  searches: number;
+  /** The searches' part of `cost_usd`. */
+  search_cost_usd: number;
 }
 
 /** An audit log entry: who changed what through the admin API. */
@@ -821,7 +825,7 @@ export interface HubDeployment extends HubLimits {
   prices: HubPrices;
 }
 
-/** USD per 1M tokens; `per_k_searches` per 1,000 rerank searches. */
+/** USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches. */
 export interface HubPrices {
   input: number;
   output: number;

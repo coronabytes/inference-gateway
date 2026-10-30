@@ -136,6 +136,17 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Value {
     if let Some(schema) = &req.json_schema {
         body.insert("response_format".into(), json!({ "type": "json_schema", "json_schema": schema }));
     }
+    // OpenAI's search models and Gemini (as Google Search grounding) take it; it has no domain lists.
+    if let Some(ws) = &req.web_search {
+        let mut o = Map::new();
+        if let Some(size) = &ws.context_size {
+            o.insert("search_context_size".into(), size.clone().into());
+        }
+        if let Some(l) = &ws.location {
+            o.insert("user_location".into(), json!({ "type": "approximate", "approximate": l.fields() }));
+        }
+        body.insert("web_search_options".into(), Value::Object(o));
+    }
     if let Some(u) = &req.user {
         body.insert("user".into(), u.clone().into());
     }
@@ -156,6 +167,16 @@ pub fn usage(u: &Value) -> Usage {
     }
 }
 
+/// Web searches a Chat Completions message (or stream delta) reports. Gemini lists the queries it
+/// ran, each billed; OpenAI's search models bill one search per answer, which cites its sources.
+pub fn web_searches(m: &Value) -> u64 {
+    if let Some(queries) = m.pointer("/extra_properties/google/web_search_queries").and_then(Value::as_array) {
+        return queries.len() as u64;
+    }
+    let cites = m.get("annotations").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x["type"] == "url_citation"));
+    u64::from(cites)
+}
+
 #[derive(Default)]
 pub struct ChatHandler {
     blocks: BlockTracker,
@@ -164,6 +185,8 @@ pub struct ChatHandler {
     tools: HashMap<u64, usize>,
     finish: Option<StopReason>,
     usage: Usage,
+    /// The most any delta reported (see `web_searches`): the usage chunk carries none.
+    searches: u64,
     done: bool,
 }
 
@@ -188,7 +211,8 @@ impl ChatHandler {
         if stop == StopReason::EndTurn && !self.tools.is_empty() {
             stop = StopReason::ToolUse;
         }
-        evs.push(StreamEvent::Finish { stop_reason: stop, usage: self.usage });
+        let usage = Usage { search_units: self.searches, ..self.usage };
+        evs.push(StreamEvent::Finish { stop_reason: stop, usage });
         out.extend(evs.into_iter().map(Ok));
     }
 }
@@ -214,6 +238,7 @@ impl SseHandler for ChatHandler {
         let mut evs = Vec::new();
         if let Some(choice) = v.get("choices").and_then(|c| c.get(0)) {
             let delta = &choice["delta"];
+            self.searches = self.searches.max(web_searches(delta));
             let reasoning = delta
                 .get("reasoning_content")
                 .or_else(|| delta.get("reasoning"))
@@ -319,5 +344,33 @@ mod tests {
         assert_eq!(r.stop_reason, StopReason::ToolUse);
         assert_eq!(r.usage.input_tokens, 16);
         assert_eq!(r.usage.cache_read_tokens, 4);
+    }
+
+    #[test]
+    fn counts_web_searches() {
+        // Gemini: the queries it ran, in a delta before the citations.
+        let sse = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Mild.\",\"extra_properties\":{\"google\":{\"web_search_queries\":[\"a\",\"b\"]}}}}]}
+
+",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"annotations\":[{\"type\":\"url_citation\"}]},\"finish_reason\":\"stop\"}]}
+
+",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":5}}
+
+",
+            "data: [DONE]
+
+",
+        );
+        let mut dec = Sse::new(ChatHandler::default());
+        let mut out = Vec::new();
+        dec.feed(sse.as_bytes(), &mut out);
+        let mut agg = crate::ir::Aggregator::default();
+        out.iter().for_each(|e| agg.push(e.as_ref().unwrap()));
+        assert_eq!(agg.finish().usage.search_units, 2);
+        // OpenAI's search models: one search for an answer with citations.
+        assert_eq!(web_searches(&json!({ "annotations": [{ "type": "url_citation" }] })), 1);
+        assert_eq!(web_searches(&json!({ "content": "no search" })), 0);
     }
 }

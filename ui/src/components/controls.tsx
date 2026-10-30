@@ -905,6 +905,49 @@ export function PageActions({ actions }: { actions: PageAction[] }) {
   );
 }
 
+const BANNER_CAPTION = { critical: "Error", warning: "Warning", good: "Done" };
+
+/**
+ * A message across the page, shaped like the controls: a pill (a rounded box once it wraps) with
+ * its tone's caption inside, before the text. `actions` (ghost buttons) and, with `onDismiss`, a
+ * Dismiss button go at the end. An error is announced at once (role "alert"), others politely.
+ */
+export function Banner({
+  tone = "critical",
+  caption = BANNER_CAPTION[tone],
+  actions,
+  onDismiss,
+  className,
+  children,
+}: {
+  tone?: "critical" | "warning" | "good";
+  caption?: string;
+  actions?: ReactNode;
+  onDismiss?: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={cx("banner", `banner-${tone}`, className)} role={tone === "critical" ? "alert" : "status"}>
+      <span className="control-caption">
+        <span className="banner-icon" aria-hidden="true" />
+        {caption}
+      </span>
+      <div className="banner-text">{children}</div>
+      {(actions || onDismiss) && (
+        <span className="banner-actions">
+          {actions}
+          {onDismiss && (
+            <Button variant="ghost" onClick={onDismiss}>
+              Dismiss
+            </Button>
+          )}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /**
  * A label above content that is not one control: a fieldset-like group, a banner, a list. Single
  * controls take their caption inside instead (TextInput, Select, ...).

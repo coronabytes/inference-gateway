@@ -1131,6 +1131,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
     let mut labels = Vec::with_capacity(batch.len());
     let mut guardrails = Vec::with_capacity(batch.len());
     let mut guardrail_costs = Vec::with_capacity(batch.len());
+    let mut searches = Vec::with_capacity(batch.len());
+    let mut search_costs = Vec::with_capacity(batch.len());
     for r in batch {
         ids.push(r.id);
         ts.push(r.ts);
@@ -1155,6 +1157,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         labels.push(r.labels.to_json());
         guardrails.push(r.guardrails.clone());
         guardrail_costs.push(r.guardrail_cost_usd);
+        searches.push(r.usage.search_units as i64);
+        search_costs.push(r.search_cost_usd);
     }
 
     let mut tx = pool.begin().await?;
@@ -1163,11 +1167,12 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
     sqlx::query!(
         "INSERT INTO request_logs (id, ts, key_id, model_name, deployment_id, provider, api, stream,
              status_code, latency_ms, ttft_ms, input_tokens, output_tokens, cache_read_tokens,
-             cache_write_tokens, cost_usd, attempts, error, parent_id, project_id, labels, guardrails, guardrail_cost_usd)
+             cache_write_tokens, cost_usd, attempts, error, parent_id, project_id, labels, guardrails, guardrail_cost_usd,
+             searches, search_cost_usd)
          SELECT * FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::text[], $5::uuid[],
              $6::text[], $7::text[], $8::bool[], $9::int[], $10::int[], $11::int[], $12::bigint[],
              $13::bigint[], $14::bigint[], $15::bigint[], $16::float8[], $17::int[], $18::text[], $19::uuid[],
-             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[])",
+             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[])",
         &ids,
         &ts,
         &key_ids as _,
@@ -1191,6 +1196,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         &labels as _,
         &guardrails as _,
         &guardrail_costs,
+        &searches,
+        &search_costs,
     )
     .execute(&mut *tx)
     .await?;
@@ -1250,6 +1257,10 @@ pub struct LogRow {
     pub guardrails: Option<serde_json::Value>,
     /// The guardrails' part of `cost_usd`.
     pub guardrail_cost_usd: f64,
+    /// Searches billed: web searches a chat model ran, or a rerank model's searches.
+    pub searches: i64,
+    /// The searches' part of `cost_usd`.
+    pub search_cost_usd: f64,
 }
 
 /// `labels` (a JSON object) keeps the entries that have all of these labels. `deleted_keys` keeps
@@ -1271,7 +1282,7 @@ pub async fn recent_logs(
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
            WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)
              AND ($3::uuid IS NULL OR l.key_id = $3)
@@ -1302,7 +1313,7 @@ pub async fn recent_logs(
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
            WHERE l.parent_id = ANY($1) ORDER BY l.ts"#,
         &parents,

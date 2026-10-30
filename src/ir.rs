@@ -17,9 +17,56 @@ pub struct ChatRequest {
     pub reasoning: Option<Reasoning>,
     /// Client asked to see reasoning summaries.
     pub reasoning_summary: bool,
-    /// JSON schema structured output (`{name, schema, strict}`), only for OpenAI upstreams.
+    /// JSON schema structured output (`{name, schema, strict}`), in each upstream's own field.
     pub json_schema: Option<Value>,
+    /// The provider's own web search, which the model may run while it answers.
+    pub web_search: Option<WebSearch>,
     pub user: Option<String>,
+}
+
+/// A provider-run web search, in what every API can say about it. Each upstream takes what it
+/// supports and leaves the rest: Anthropic has no context size, Chat Completions no domain lists.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WebSearch {
+    /// Searches allowed in one request (Anthropic's `max_uses`).
+    pub max_uses: Option<u32>,
+    pub allowed_domains: Vec<String>,
+    pub blocked_domains: Vec<String>,
+    /// OpenAI's `search_context_size`: `low`, `medium` or `high`.
+    pub context_size: Option<String>,
+    /// The user's approximate location, to localise results.
+    pub location: Option<Location>,
+}
+
+/// An approximate location, as every API spells it (`city`, `region`, `country`, `timezone`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Location {
+    pub city: Option<String>,
+    pub region: Option<String>,
+    pub country: Option<String>,
+    pub timezone: Option<String>,
+}
+
+impl Location {
+    /// From an object with any of the four fields; `None` when it has none.
+    pub fn parse(v: &Value) -> Option<Self> {
+        let s = |k: &str| v.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string);
+        let l = Self { city: s("city"), region: s("region"), country: s("country"), timezone: s("timezone") };
+        (l != Self::default()).then_some(l)
+    }
+
+    /// The fields that are set, as a JSON object.
+    pub fn fields(&self) -> serde_json::Map<String, Value> {
+        [("city", &self.city), ("region", &self.region), ("country", &self.country), ("timezone", &self.timezone)]
+            .into_iter()
+            .filter_map(|(k, v)| Some((k.to_string(), Value::String(v.clone()?))))
+            .collect()
+    }
+}
+
+/// Domain lists such as `allowed_domains`: the strings in a JSON array.
+pub fn strings(v: Option<&Value>) -> Vec<String> {
+    v.and_then(Value::as_array).map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()).unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,7 +246,8 @@ pub struct Usage {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub reasoning_tokens: u64,
-    /// Rerank searches billed (a query over up to 100 documents is one).
+    /// Searches billed at the deployment's price per 1,000: a rerank query over up to 100
+    /// documents, or one web search a chat model ran.
     pub search_units: u64,
 }
 

@@ -266,6 +266,21 @@ fn converse_request(
     if let Some(extra) = body.get("additionalModelRequestFields") {
         call = call.additional_model_request_fields(sdk_document(extra));
     }
+    if let Some(def) = body.pointer("/outputConfig/textFormat/structure/jsonSchema") {
+        let s = |k: &str| def.get(k).and_then(Value::as_str).map(str::to_string);
+        let def = bt::JsonSchemaDefinition::builder()
+            .set_schema(s("schema"))
+            .set_name(s("name"))
+            .set_description(s("description"))
+            .build()
+            .map_err(build_error)?;
+        let format = bt::OutputFormat::builder()
+            .r#type(bt::OutputFormatType::JsonSchema)
+            .structure(bt::OutputFormatStructure::JsonSchema(def))
+            .build()
+            .map_err(build_error)?;
+        call = call.output_config(bt::OutputConfig::builder().text_format(format).build());
+    }
     Ok(call)
 }
 
@@ -504,6 +519,9 @@ fn blocks(p: &Part, out: &mut Vec<Value>) -> Result<(), GatewayError> {
 }
 
 pub fn build_body(req: &ChatRequest, d: &Deployment) -> Result<Value, GatewayError> {
+    if req.web_search.is_some() {
+        return Err(GatewayError::invalid("web search is not supported for this model's provider"));
+    }
     let mut messages = Vec::new();
     for m in &req.messages {
         let mut parts: Vec<&Part> = m.content.iter().collect();
@@ -612,10 +630,25 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Result<Value, GatewayErr
             body.insert("toolConfig".into(), json!({ "tools": tools }));
         }
     }
+    if let Some(schema) = &req.json_schema {
+        body.insert("outputConfig".into(), json!({ "textFormat": text_format(schema) }));
+    }
     if !extra.is_empty() {
         body.insert("additionalModelRequestFields".into(), Value::Object(extra));
     }
     Ok(Value::Object(body))
+}
+
+/// Structured output (`{name, schema, strict}`, or a bare schema) as Converse's `textFormat`, which
+/// takes the schema as a JSON string. Converse is always strict.
+fn text_format(schema: &Value) -> Value {
+    let mut def = json!({ "schema": schema.get("schema").unwrap_or(schema).to_string() });
+    for k in ["name", "description"] {
+        if let Some(v) = schema.get(k).and_then(Value::as_str) {
+            def[k] = v.into();
+        }
+    }
+    json!({ "type": "json_schema", "structure": { "jsonSchema": def } })
 }
 
 /// Converse's stream events into the gateway's events.
@@ -778,6 +811,24 @@ mod tests {
         let mut agg = crate::ir::Aggregator::default();
         evs.iter().for_each(|e| agg.push(e));
         agg.finish()
+    }
+
+    #[test]
+    fn structured_output_becomes_the_text_format() {
+        let d = crate::providers::tests::deployment(crate::model::ProviderKind::Bedrock, crate::model::ApiStyle::Converse, "anthropic.claude");
+        let schema = json!({ "type": "object", "properties": { "name": { "type": "string" } } });
+        let req = ChatRequest { json_schema: Some(json!({ "name": "contact", "schema": schema, "strict": true })), ..Default::default() };
+        let body = build_body(&req, &d).unwrap();
+        assert_eq!(
+            body["outputConfig"],
+            json!({ "textFormat": { "type": "json_schema", "structure": { "jsonSchema": { "schema": schema.to_string(), "name": "contact" } } } })
+        );
+        // And on the SDK's request, which is what is sent.
+        let config = aws_sdk_bedrockruntime::Config::builder().behavior_version_latest().build();
+        let client = aws_sdk_bedrockruntime::Client::from_conf(config);
+        let call = converse_request(client.converse_stream().model_id("m"), &body).unwrap();
+        let sent = call.get_output_config().as_ref().and_then(|c| c.text_format()).and_then(|f| f.structure()).unwrap();
+        assert_eq!(sent.as_json_schema().unwrap().schema(), schema.to_string());
     }
 
     #[test]

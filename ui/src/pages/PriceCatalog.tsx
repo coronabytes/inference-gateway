@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { api, type PriceEntry, type PriceImport, type PriceSearch } from "../api";
-import { Select, TextInput } from "../components/controls";
+import { Banner, Select, TextInput } from "../components/controls";
 import { ErrorBanner } from "../components/ui";
 import { compact, relative } from "../format";
 import { catalogPrices, perMillion } from "../pricing";
@@ -105,16 +105,11 @@ export function PriceCatalog() {
           </button>
         </div>
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {notice && (
-        <div className="banner good" role="status">
-          <span>{notice}</span>
-          <span className="banner-actions">
-            <button className="ghost" onClick={() => setNotice(null)}>
-              Dismiss
-            </button>
-          </span>
-        </div>
+        <Banner tone="good" caption="Import" onDismiss={() => setNotice(null)}>
+          {notice}
+        </Banner>
       )}
       {empty ? (
         <div className="empty-card">
@@ -170,6 +165,9 @@ export function PriceCatalog() {
                               {p.long.cacheRead !== null && `, cache read ${perMillion(p.long.cacheRead)}`}
                               {p.long.cacheWrite !== null && `, cache write ${perMillion(p.long.cacheWrite)}`}.
                             </p>
+                          )}
+                          {p.perKWebSearches !== null && (
+                            <p className="small">Web search: ${p.perKWebSearches} per 1,000 searches, filled into chat deployments of this model.</p>
                           )}
                           <pre className="raw">{JSON.stringify(it.data, null, 2)}</pre>
                         </td>

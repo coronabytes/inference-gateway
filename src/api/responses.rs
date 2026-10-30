@@ -9,8 +9,8 @@ use super::{StreamEncoder, sse_event};
 use crate::{
     error::GatewayError,
     ir::{
-        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Message, Part, Reasoning, Role, StopReason,
-        StreamEvent, TextBlock, Tool, ToolChoice, Usage,
+        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, Message, Part, Reasoning, Role, StopReason,
+        StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
     },
     util::prefixed_id,
 };
@@ -110,6 +110,8 @@ pub fn parse_request(v: &Value) -> Result<ChatRequest, GatewayError> {
                         let signature = it.get("encrypted_content").and_then(Value::as_str).map(str::to_string);
                         req.messages.push(Message { role: Role::Assistant, content: vec![Part::Reasoning { text, signature }] });
                     }
+                    // A web search the provider ran in an earlier turn: its answer is in the message that follows.
+                    "web_search_call" => {}
                     other => {
                         return Err(GatewayError::invalid(format!(
                             "input item type '{other}' is not supported for this model's provider"
@@ -123,6 +125,16 @@ pub fn parse_request(v: &Value) -> Result<ChatRequest, GatewayError> {
     if let Some(tools) = v.get("tools").and_then(Value::as_array) {
         for t in tools {
             let ty = t.get("type").and_then(Value::as_str).unwrap_or("function");
+            // `web_search`, `web_search_preview` and their dated versions.
+            if ty.starts_with("web_search") {
+                req.web_search = Some(WebSearch {
+                    allowed_domains: strings(t.pointer("/filters/allowed_domains")),
+                    context_size: t.get("search_context_size").and_then(Value::as_str).map(str::to_string),
+                    location: t.get("user_location").and_then(Location::parse),
+                    ..Default::default()
+                });
+                continue;
+            }
             if ty != "function" {
                 return Err(GatewayError::invalid(format!("built-in tool '{ty}' is not supported for this model's provider")));
             }

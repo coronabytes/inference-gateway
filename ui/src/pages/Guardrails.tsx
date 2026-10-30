@@ -148,7 +148,7 @@ export function Guardrails() {
       <div className="page-head">
         <PageActions actions={[{ label: "New guardrail", onClick: () => setEditing("new"), primary: true }]} />
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
         <table>
           <thead>
@@ -358,7 +358,7 @@ function GuardrailForm({
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="form">
         <TextInput caption="Name" mono value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. pii-and-prompt-attacks" required autoFocus />
         <TextInput caption="Description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="optional" />
@@ -551,9 +551,9 @@ function TryGuardrail({ guardrail, onClose }: { guardrail: Guardrail; onClose: (
         />
         <TextArea caption="Text" rows={4} value={text} onChange={(e) => setText(e.target.value)} />
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {result && !result.ok && (
-        <ErrorBanner error={`The guardrail could not be called (HTTP ${result.status}): ${result.error ?? "no details"}`} />
+        <ErrorBanner error={`The guardrail could not be called (HTTP ${result.status}): ${result.error ?? "no details"}`} onDismiss={() => setResult(null)} />
       )}
       {result?.ok && result.action && (
         <div className="guardrail-result">

@@ -63,7 +63,7 @@ function Instances() {
 
   return (
     <>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {data && (
         <>
           {/* Only trouble is worth a line. */}

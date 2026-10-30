@@ -357,7 +357,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
         )}
         <PageActions actions={[{ label: "New key", onClick: () => setEditing({ mode: "create" }), primary: true }]} />
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {shown.length === 0 ? (
         <div className="card list-card">
           <p className="empty">{filtering ? "No keys match the filters." : "No keys yet."}</p>
@@ -531,7 +531,7 @@ function KeyForm({
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="form">
         <TextInput caption="Name" value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. team-search-prod" required />
         {projects.length > 0 && (

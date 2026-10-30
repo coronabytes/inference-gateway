@@ -335,7 +335,7 @@ export function Credentials() {
           New credential
         </button>
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
         <table>
           <thead>
@@ -583,7 +583,7 @@ function CredentialForm({
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="form">
         <TextInput caption="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. azure-prod-westeurope" required autoFocus />
         <Select

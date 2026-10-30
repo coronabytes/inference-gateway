@@ -68,6 +68,14 @@ function RequestDetails({ r }: { r: LogRow }) {
               {compact(r.input_tokens)} in, {compact(r.cache_read_tokens)} cache read, {compact(r.cache_write_tokens)} cache write, {compact(r.output_tokens)} out
             </td>
           </tr>
+          {r.searches > 0 && (
+            <tr>
+              <th>{r.api === "rerank" ? "Searches" : "Web searches"}</th>
+              <td>
+                {r.searches} · {usd(r.search_cost_usd)} of the cost
+              </td>
+            </tr>
+          )}
           <tr>
             <th>Attempts</th>
             <td>{r.attempts}</td>
@@ -179,7 +187,7 @@ export function RequestLog() {
           Errors only
         </Toggle>
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
         <table>
           <thead>
@@ -370,7 +378,7 @@ export function AuditLog() {
         <Select caption="Type" value={type} onChange={setType} options={[{ value: "", label: "All" }, ...Object.entries(TARGETS).map(([value, label]) => ({ value, label }))]} />
         <TextInput caption="Name" type="search" placeholder="target or who" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
         <table>
           <thead>

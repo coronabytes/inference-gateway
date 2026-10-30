@@ -21,7 +21,7 @@ Attempts, cooldown, adaptive and sticky routing are [settings](configuration.md#
 
 ## Pricing
 
-Each deployment has input, output, cache read and cache write prices per million tokens, and optionally higher prices above a long-context threshold; rerank deployments are priced per 1,000 searches. Prices drive cost reporting and budgets.
+Each deployment has input, output, cache read and cache write prices per million tokens, and optionally higher prices above a long-context threshold; rerank deployments are priced per 1,000 searches, and chat deployments per 1,000 web searches the model runs. Prices drive cost reporting and budgets.
 
 The **Pricing** tab imports a public price list, and the deployment form fills in prices from it when it recognises the model; you can always type your own. Billing uses the prices saved on the deployment.
 

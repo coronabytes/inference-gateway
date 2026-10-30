@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AutoRouter, AutoRouterListItem, Deployment, ReasoningEffort, Route, RouterInput } from "../api";
-import { Button, MenuButton, MultiSelect, Select, TextArea, TextInput, Toggle } from "../components/controls";
+import { Banner, Button, MenuButton, MultiSelect, Select, TextArea, TextInput, Toggle } from "../components/controls";
 import { Badge, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TrashIcon } from "../components/ui";
 import { TagEditor, TagList } from "../components/Tags";
 import { effortOptions, supportedEfforts } from "../efforts";
@@ -218,16 +218,16 @@ export function RouterForm({
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {(!decisionModels.length || !chatModels.length) && (
-        <div className="banner">
+        <Banner tone="warning">
           A router needs a decision model and at least one chat model. <a href="#/models/deployments">Add deployments</a> for them first.
-        </div>
+        </Banner>
       )}
       {missing && (
-        <div className="banner">
+        <Banner tone="warning">
           This router names models that no longer exist (marked missing), for example after a rename. Pick current models to save it.
-        </div>
+        </Banner>
       )}
       <div className="form">
         <div className="row with-switch">

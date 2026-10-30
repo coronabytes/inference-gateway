@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { SessionContext } from "./access";
 import { AuthError, api, setToken, type SessionInfo } from "./api";
+import { Banner } from "./components/controls";
 import { Galaxy } from "./components/Galaxy";
 import { DocsIcon, IconButton, MoonIcon, NarrowIcon, SunIcon, WidenIcon } from "./components/ui";
 import { UserMenu } from "./components/UserMenu";
@@ -238,7 +239,7 @@ function Login({
         </p>
         <h1 className="login-title">Inference Gateway</h1>
         <form onSubmit={submit} className="login-card">
-          {error && <div className="banner">{error}</div>}
+          {error && <Banner onDismiss={() => setError(null)}>{error}</Banner>}
           {dev && (
             <>
               <button type="button" className="login-primary" onClick={() => devLogin("admin")}>

@@ -1,25 +1,43 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, type Hub, type HubDeployment, type HubModel, type HubPrices, type ModelMetadata, type NamedItem } from "../api";
-import { Button, MenuButton, MultiSelect, Select, TextArea, TextInput, useDebounced } from "../components/controls";
+import { Banner, Button, MenuButton, MultiSelect, Select, TextArea, TextInput, useDebounced } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
-import { Badge, EditIcon, ErrorBanner, IconButton, Modal } from "../components/ui";
+import { Badge, BracesIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, Modal, ReasoningIcon } from "../components/ui";
 import { compact } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
 import { GUARDRAIL_LABEL } from "./Guardrails";
 import { MODES } from "./Models";
 
-/** Capabilities the hub names, by path in a model's `capabilities`. */
-const CAPABILITIES: [string, string][] = [
-  ["image_input", "Images"],
-  ["pdf_input", "PDF"],
-  ["thinking.supported", "Reasoning"],
-  ["structured_outputs", "Structured output"],
-  ["server_tools.web_search", "Web search"],
+/** Capabilities the hub shows, by path in a model's `capabilities`: an icon, named by its label. */
+const CAPABILITIES: { path: string; label: string; icon: ReactNode }[] = [
+  { path: "image_input", label: "Images", icon: <ImageIcon /> },
+  { path: "pdf_input", label: "PDF", icon: <DocumentIcon /> },
+  { path: "thinking.supported", label: "Reasoning", icon: <ReasoningIcon /> },
+  { path: "structured_outputs", label: "Structured output", icon: <BracesIcon /> },
+  { path: "server_tools.web_search", label: "Web search", icon: <GlobeIcon /> },
 ];
 
-const capabilityNames = (m: { capabilities: Record<string, boolean | null> | null }) => CAPABILITIES.filter(([path]) => m.capabilities?.[path] === true).map(([, label]) => label);
+type Capable = { capabilities: Record<string, boolean | null> | null };
+const capabilitiesOf = (m: Capable) => CAPABILITIES.filter((c) => m.capabilities?.[c.path] === true);
+/** For the exports, which list them by name. */
+const capabilityNames = (m: Capable) => capabilitiesOf(m).map((c) => c.label);
+
+/** A model's capabilities as icons, each named by its tooltip and for screen readers. */
+function CapabilityIcons({ m }: { m: Capable }) {
+  const caps = capabilitiesOf(m);
+  if (!caps.length) return <span className="muted">–</span>;
+  return (
+    <span className="cap-icons" role="list" aria-label="Capabilities">
+      {caps.map((c) => (
+        <span key={c.path} className="cap-icon" role="listitem" aria-label={c.label} title={c.label}>
+          {c.icon}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 /** A price as typed in a deployment: 0.15, 3, 0.0004. */
 const price = (n: number | undefined) => (n == null ? "–" : String(+n.toFixed(6)));
@@ -49,6 +67,9 @@ function priceOptions(m: HubModel): PriceOption[] {
   }
   return [...byPrice.values()].sort((a, b) => Number(b.firstChoice) - Number(a.firstChoice) || a.prices.input - b.prices.input || a.prices.output - b.prices.output);
 }
+
+/** Rerank models bill searches; chat models may bill the web searches they run. */
+const searches = (m: HubModel) => m.mode === "rerank" || (m.mode === "chat" && m.deployments.some((d) => d.prices.per_k_searches > 0));
 
 /** The headline price of a model: what its deployments charge, as a range where they differ. */
 function priceSummary(m: HubModel): { value: string; unit: string } {
@@ -200,8 +221,8 @@ export function ModelHub() {
           hi((p) => p.input),
           lo((p) => p.output),
           hi((p) => p.output),
-          m.mode === "rerank" ? lo((p) => p.per_k_searches) : null,
-          m.mode === "rerank" ? hi((p) => p.per_k_searches) : null,
+          searches(m) ? lo((p) => p.per_k_searches) : null,
+          searches(m) ? hi((p) => p.per_k_searches) : null,
           priceOptions(m).length,
           m.deployments.length,
           capabilityNames(m).join(", "),
@@ -235,7 +256,7 @@ export function ModelHub() {
           d.prices.long_output,
           d.prices.long_cache_read,
           d.prices.long_cache_write,
-          m.mode === "rerank" ? d.prices.per_k_searches : null,
+          searches(m) ? d.prices.per_k_searches : null,
         ]),
       ),
     ];
@@ -323,7 +344,7 @@ export function ModelHub() {
           </MenuButton>
         </div>
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {curl && (
         <CurlDialog
           request={curl}
@@ -342,7 +363,7 @@ export function ModelHub() {
           onClose={() => setCurl(null)}
         />
       )}
-      {key && key.status !== "active" && <div className="banner warn">{STATUS_TEXT[key.status]}</div>}
+      {key && key.status !== "active" && <Banner tone="warning">{STATUS_TEXT[key.status]}</Banner>}
       {key && (
         <div className="hub-summary">
           <p className="small">
@@ -435,13 +456,7 @@ export function ModelHub() {
                         <div className="muted small">{options.length > 1 ? `${options.length} prices` : p.unit}</div>
                       </td>
                       <td>
-                        <span className="tags">
-                          {capabilityNames(m).map((c) => (
-                            <span key={c} className="tag">
-                              {c}
-                            </span>
-                          ))}
-                        </span>
+                        <CapabilityIcons m={m} />
                       </td>
                       <td className="actions" onClick={(e) => e.stopPropagation()}>
                         <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={() => setEditing(m)}>
@@ -538,6 +553,7 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
             {chat && <th className="num">Cache read</th>}
             {chat && <th className="num">Cache write</th>}
             {chat && <th>Long context</th>}
+            {chat && searches(m) && <th className="num">Per 1K web searches</th>}
             <th>Served by</th>
           </tr>
         </thead>
@@ -556,6 +572,7 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
                     : "–"}
                 </td>
               )}
+              {chat && searches(m) && <td className="num">{o.prices.per_k_searches ? price(o.prices.per_k_searches) : "–"}</td>}
               <td>
                 {o.deployments.map((d) => (
                   <div key={d.id} className="small">
@@ -569,7 +586,9 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
           ))}
         </tbody>
       </table>
-      <p className="muted small">{m.mode === "rerank" ? "USD per 1,000 searches; tokens per 1M." : "USD per 1M tokens."}</p>
+      <p className="muted small">
+        {m.mode === "rerank" ? "USD per 1,000 searches; tokens per 1M." : searches(m) ? "USD per 1M tokens; web searches per 1,000." : "USD per 1M tokens."}
+      </p>
       <h4>Deployments</h4>
       <table className="detail-table">
         <thead>
@@ -594,7 +613,9 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
               <td className="num">{d.weight}</td>
               <td className="num">{d.max_input_tokens ? compact(d.max_input_tokens) : "–"}</td>
               <td className="num">{d.max_output_tokens ? compact(d.max_output_tokens) : "–"}</td>
-              <td>{capabilityNames(d).join(", ") || "–"}</td>
+              <td>
+                <CapabilityIcons m={d} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -645,7 +666,7 @@ function MetadataForm({ model, vendors, onClose, onSaved }: { model: HubModel; v
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="form">
         <TextInput
           caption="Display name"
