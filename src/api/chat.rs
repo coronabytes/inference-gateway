@@ -9,8 +9,8 @@ use super::StreamEncoder;
 use crate::{
     error::{Dialect, GatewayError},
     ir::{
-        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Message, Part, Reasoning, Role, StopReason,
-        StreamEvent, TextBlock, Tool, ToolChoice, Usage,
+        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, Message, Part, Reasoning, Role, StopReason,
+        StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch,
     },
 };
 
@@ -131,6 +131,14 @@ pub fn parse_request(v: &Value) -> Result<ChatRequest, GatewayError> {
         && rf.get("type").and_then(Value::as_str) == Some("json_schema")
     {
         req.json_schema = rf.get("json_schema").cloned();
+    }
+    // `{}` asks for a search too: only an absent or null field means none.
+    if let Some(ws) = v.get("web_search_options").filter(|w| !w.is_null()) {
+        req.web_search = Some(WebSearch {
+            context_size: ws.get("search_context_size").and_then(Value::as_str).map(str::to_string),
+            location: ws.pointer("/user_location/approximate").and_then(Location::parse),
+            ..Default::default()
+        });
     }
     req.user = v.get("user").and_then(Value::as_str).map(str::to_string);
     req.normalize();

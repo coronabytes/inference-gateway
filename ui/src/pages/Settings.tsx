@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type AdminUser, type NamedItem, type OidcSettings, type OidcSettingsInput } from "../api";
-import { Button, MultiSelect, TextInput, Toggle } from "../components/controls";
+import { Banner, Button, MultiSelect, TextInput, Toggle } from "../components/controls";
 import { Badge, ConfirmDialog, ErrorBanner, IconButton, TrashIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, relative } from "../format";
 
@@ -24,7 +24,7 @@ export function SingleSignOn() {
 
   return (
     <div className="page">
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {settings && <OidcForm key={settings.updated_at ?? "new"} initial={settings} onSaved={load} />}
     </div>
   );
@@ -54,7 +54,7 @@ export function Admins() {
 
   return (
     <div className="page">
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <section className="card">
         <h3>Users</h3>
         <p className="muted small">
@@ -198,8 +198,12 @@ function OidcForm({ initial, onSaved }: { initial: OidcSettings; onSaved: () => 
         Admins sign in with your identity provider. The master key keeps working as a fallback. Register a confidential (or public, PKCE) client
         at the provider with this redirect URI: <code>{redirectUri}</code>
       </p>
-      <ErrorBanner error={error} />
-      {notice && <div className="banner good">{notice}</div>}
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      {notice && (
+        <Banner tone="good" caption="Test" onDismiss={() => setNotice(null)}>
+          {notice}
+        </Banner>
+      )}
       <Toggle checked={enabled} onChange={setEnabled}>
         Enable single sign-on
       </Toggle>
@@ -256,7 +260,7 @@ function OidcForm({ initial, onSaved }: { initial: OidcSettings; onSaved: () => 
           />
         </div>
       </fieldset>
-      {enabled && noRole && <div className="banner">Set the admin role; otherwise everyone at the provider could sign in.</div>}
+      {enabled && noRole && <Banner tone="warning">Set the admin role; otherwise everyone at the provider could sign in.</Banner>}
       <div className="modal-foot">
         {initial.configured && (
           <Button onClick={test} disabled={busy}>

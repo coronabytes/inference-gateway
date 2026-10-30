@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use super::{EventResult, EventStream, Op, Sse, SseHandler};
 use crate::{
     error::{ErrorKind, GatewayError},
-    ir::{BlockKind, BlockTracker, ChatRequest, Part, Role, StopReason, StreamEvent, ToolChoice},
+    ir::{BlockKind, BlockTracker, ChatRequest, Part, Role, StopReason, StreamEvent, ToolChoice, WebSearch},
     model::Deployment,
     state::AppState,
 };
@@ -81,22 +81,23 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Value {
     if let Some(p) = req.top_p {
         body.insert("top_p".into(), p.into());
     }
-    if !req.tools.is_empty() {
-        let tools: Vec<Value> = req
-            .tools
-            .iter()
-            .map(|t| {
-                let mut o = Map::new();
-                o.insert("type".into(), "function".into());
-                o.insert("name".into(), t.name.clone().into());
-                if let Some(desc) = &t.description {
-                    o.insert("description".into(), desc.clone().into());
-                }
-                o.insert("parameters".into(), t.parameters.clone());
-                o.insert("strict".into(), false.into());
-                Value::Object(o)
-            })
-            .collect();
+    let mut tools: Vec<Value> = req
+        .tools
+        .iter()
+        .map(|t| {
+            let mut o = Map::new();
+            o.insert("type".into(), "function".into());
+            o.insert("name".into(), t.name.clone().into());
+            if let Some(desc) = &t.description {
+                o.insert("description".into(), desc.clone().into());
+            }
+            o.insert("parameters".into(), t.parameters.clone());
+            o.insert("strict".into(), false.into());
+            Value::Object(o)
+        })
+        .collect();
+    tools.extend(req.web_search.as_ref().map(web_search_tool));
+    if !tools.is_empty() {
         body.insert("tools".into(), Value::Array(tools));
         if let Some(tc) = &req.tool_choice {
             body.insert(
@@ -133,6 +134,30 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Value {
     Value::Object(body)
 }
 
+/// The Responses API's web search tool. It has no search limit or blocked domains.
+fn web_search_tool(ws: &WebSearch) -> Value {
+    let mut t = json!({ "type": "web_search" });
+    if let Some(size) = &ws.context_size {
+        t["search_context_size"] = size.clone().into();
+    }
+    if !ws.allowed_domains.is_empty() {
+        t["filters"] = json!({ "allowed_domains": ws.allowed_domains });
+    }
+    if let Some(l) = &ws.location {
+        let mut o = l.fields();
+        o.insert("type".into(), "approximate".into());
+        t["user_location"] = Value::Object(o);
+    }
+    t
+}
+
+/// Web search calls in a finished response's `output`: each is billed as one search.
+pub fn web_searches(resp: &Value) -> u64 {
+    resp.get("output")
+        .and_then(Value::as_array)
+        .map_or(0, |items| items.iter().filter(|i| i.get("type").and_then(Value::as_str) == Some("web_search_call")).count() as u64)
+}
+
 #[derive(Default)]
 pub struct ResponsesHandler {
     blocks: BlockTracker,
@@ -147,7 +172,8 @@ pub struct ResponsesHandler {
 impl ResponsesHandler {
     fn finish(&mut self, resp: &Value, out: &mut Vec<StreamEvent>) {
         self.blocks.stop_all(out);
-        let usage = resp.get("usage").map(super::openai_chat::usage).unwrap_or_default();
+        let mut usage = resp.get("usage").map(super::openai_chat::usage).unwrap_or_default();
+        usage.search_units = web_searches(resp);
         let reason = resp.pointer("/incomplete_details/reason").and_then(Value::as_str);
         let stop = match reason {
             Some("max_output_tokens") => StopReason::MaxTokens,
@@ -255,5 +281,34 @@ impl SseHandler for ResponsesHandler {
             _ => {}
         }
         out.extend(evs.into_iter().map(Ok));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ir::Location,
+        model::{ApiStyle, ProviderKind},
+    };
+
+    #[test]
+    fn web_search_becomes_the_tool_and_its_calls_are_counted() {
+        let d = crate::providers::tests::deployment(ProviderKind::Azure, ApiStyle::Responses, "gpt");
+        let location = Location { city: Some("London".into()), country: Some("GB".into()), ..Default::default() };
+        let req = ChatRequest {
+            web_search: Some(WebSearch { context_size: Some("low".into()), location: Some(location), ..Default::default() }),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_body(&req, &d)["tools"],
+            json!([{ "type": "web_search", "search_context_size": "low",
+                     "user_location": { "type": "approximate", "city": "London", "country": "GB" } }])
+        );
+        let resp = json!({ "output": [
+            { "type": "web_search_call", "status": "completed" }, { "type": "reasoning" },
+            { "type": "web_search_call", "status": "completed" }, { "type": "message" }
+        ] });
+        assert_eq!(web_searches(&resp), 2);
     }
 }

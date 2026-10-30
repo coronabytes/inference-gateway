@@ -1,6 +1,7 @@
 /** Reading LiteLLM catalog entries, which price per token, into the gateway's USD per 1M tokens. */
 
 const perM = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? Number((v * 1e6).toPrecision(8)) : null);
+const perK = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? Number((v * 1000).toPrecision(8)) : null);
 const int = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 export interface Tier {
@@ -19,6 +20,12 @@ export interface CatalogPrices extends Tier {
   mode: string | null;
   /** Rerank models: USD per 1,000 searches (LiteLLM prices them per query). */
   perKSearches: number | null;
+  /**
+   * Chat models: USD per 1,000 web searches, at the medium search context size (LiteLLM prices
+   * them per query and size). `null` where the model has no web search, or the gateway cannot ask
+   * for one: Bedrock has none (see `Caps::of` in api/models.rs).
+   */
+  perKWebSearches: number | null;
 }
 
 const LONG_INPUT = /^input_cost_per_token_above_(\d+)k_tokens$/;
@@ -49,9 +56,11 @@ export function catalogPrices(data: Record<string, unknown>): CatalogPrices {
     maxOutput: int(data.max_output_tokens),
     provider: typeof data.litellm_provider === "string" ? data.litellm_provider : null,
     mode: typeof data.mode === "string" ? data.mode : null,
-    perKSearches: typeof data.input_cost_per_query === "number" && Number.isFinite(data.input_cost_per_query)
-      ? Number((data.input_cost_per_query * 1000).toPrecision(8))
-      : null,
+    perKSearches: perK(data.input_cost_per_query),
+    perKWebSearches:
+      data.supports_web_search === true && !String(data.litellm_provider ?? "").startsWith("bedrock")
+        ? perK((data.search_context_cost_per_query as Record<string, unknown> | undefined)?.search_context_size_medium)
+        : null,
   };
 }
 
@@ -66,7 +75,7 @@ export interface DeploymentPrices {
   long_output_cost_per_mtok: number | null;
   long_cache_read_cost_per_mtok: number | null;
   long_cache_write_cost_per_mtok: number | null;
-  /** Rerank models: USD per 1,000 searches. */
+  /** USD per 1,000 searches: rerank queries, or the web searches a chat model runs. */
   cost_per_k_searches: number | null;
 }
 
@@ -86,8 +95,8 @@ export const PRICE_FIELDS: { key: keyof DeploymentPrices; label: string }[] = [
 /**
  * The prices a deployment of `mode` gets from a catalog entry, exactly as the deployment form
  * fills them in: cache prices stay empty when they equal the input price, embedding and rerank
- * models have no output price, only chat models get cache and long-context prices, and only rerank
- * models a price per search.
+ * models have no output price, only chat models get cache and long-context prices, and rerank
+ * models a price per search, chat models one per web search.
  */
 export function deploymentPrices(data: Record<string, unknown>, mode: string): DeploymentPrices {
   const p = catalogPrices(data);
@@ -104,7 +113,7 @@ export function deploymentPrices(data: Record<string, unknown>, mode: string): D
     long_output_cost_per_mtok: long ? long.output : null,
     long_cache_read_cost_per_mtok: long ? differs(long.cacheRead, long.input) : null,
     long_cache_write_cost_per_mtok: long ? differs(long.cacheWrite, long.input) : null,
-    cost_per_k_searches: mode === "rerank" ? p.perKSearches : null,
+    cost_per_k_searches: mode === "rerank" ? p.perKSearches : chat ? p.perKWebSearches : null,
   };
 }
 

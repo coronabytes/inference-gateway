@@ -743,15 +743,23 @@ async fn passthrough(
         return Ok(Outcome::PassStream(providers::body_stream(resp)));
     }
     let bytes = resp.bytes().await.map_err(|e| GatewayError::from_reqwest(&e))?;
-    let usage = serde_json::from_slice::<Value>(&bytes)
-        .ok()
-        .and_then(|v| v.get("usage").cloned())
-        .map(|u| match inbound {
-            Inbound::Messages => providers::anthropic::usage(&u),
-            Inbound::Responses | Inbound::Chat => providers::openai_chat::usage(&u),
-        })
-        .unwrap_or_default();
+    let usage = serde_json::from_slice::<Value>(&bytes).ok().map(|v| passthrough_usage(inbound, &v)).unwrap_or_default();
     Ok(Outcome::PassFull(bytes, usage))
+}
+
+/// What a same-protocol upstream's finished response reports: its tokens and web searches.
+fn passthrough_usage(inbound: Inbound, v: &Value) -> Usage {
+    let Some(u) = v.get("usage") else { return Usage::default() };
+    match inbound {
+        Inbound::Messages => providers::anthropic::usage(u),
+        Inbound::Responses => {
+            Usage { search_units: providers::openai_responses::web_searches(v), ..providers::openai_chat::usage(u) }
+        }
+        Inbound::Chat => Usage {
+            search_units: v.pointer("/choices/0/message").map_or(0, providers::openai_chat::web_searches),
+            ..providers::openai_chat::usage(u)
+        },
+    }
 }
 
 /// Refuses request options that would have the provider bill outside what the gateway accounts.
@@ -876,6 +884,9 @@ fn inspect(tracker: &mut Tracker, inbound: Inbound, data: &str, pin: Option<&Pin
             tracker.set_usage(providers::openai_chat::usage(u));
         }
         let delta = v.pointer("/choices/0/delta");
+        if let Some(d) = delta {
+            tracker.searched(providers::openai_chat::web_searches(d));
+        }
         if delta.is_some_and(|d| d.get("content").and_then(Value::as_str).is_some_and(|s| !s.is_empty()) || d.get("tool_calls").is_some()) {
             tracker.first_token();
         }
@@ -910,7 +921,8 @@ fn inspect(tracker: &mut Tracker, inbound: Inbound, data: &str, pin: Option<&Pin
         (Inbound::Responses, t) if t.ends_with(".delta") => tracker.first_token(),
         (Inbound::Responses, "response.completed" | "response.incomplete") => {
             if let Some(u) = v.pointer("/response/usage") {
-                tracker.set_usage(providers::openai_chat::usage(u));
+                let searches = providers::openai_responses::web_searches(&v["response"]);
+                tracker.set_usage(Usage { search_units: searches, ..providers::openai_chat::usage(u) });
             }
             if let (Some(pin), Some(id)) = (pin, v.pointer("/response/id").and_then(Value::as_str)) {
                 pin.save(id.to_string());

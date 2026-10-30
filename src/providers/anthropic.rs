@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use super::{EventResult, EventStream, Op, Sse, SseHandler};
 use crate::{
     error::{ErrorKind, GatewayError},
-    ir::{BlockKind, BlockTracker, ChatRequest, Effort, ImageSource, Part, Role, StopReason, StreamEvent, ToolChoice, Usage},
+    ir::{BlockKind, BlockTracker, ChatRequest, Effort, ImageSource, Part, Role, StopReason, StreamEvent, ToolChoice, Usage, WebSearch},
     model::Deployment,
     state::AppState,
 };
@@ -128,21 +128,22 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Value {
             .collect();
         body.insert("system".into(), Value::Array(sys));
     }
-    if !req.tools.is_empty() {
-        let tools: Vec<Value> = req
-            .tools
-            .iter()
-            .map(|t| {
-                let mut o = Map::new();
-                o.insert("name".into(), t.name.clone().into());
-                if let Some(desc) = &t.description {
-                    o.insert("description".into(), desc.clone().into());
-                }
-                o.insert("input_schema".into(), t.parameters.clone());
-                cache_control(t.cache, &mut o);
-                Value::Object(o)
-            })
-            .collect();
+    let mut tools: Vec<Value> = req
+        .tools
+        .iter()
+        .map(|t| {
+            let mut o = Map::new();
+            o.insert("name".into(), t.name.clone().into());
+            if let Some(desc) = &t.description {
+                o.insert("description".into(), desc.clone().into());
+            }
+            o.insert("input_schema".into(), t.parameters.clone());
+            cache_control(t.cache, &mut o);
+            Value::Object(o)
+        })
+        .collect();
+    tools.extend(req.web_search.as_ref().map(web_search_tool));
+    if !tools.is_empty() {
         body.insert("tools".into(), Value::Array(tools));
         if let Some(tc) = &req.tool_choice {
             body.insert(
@@ -201,6 +202,26 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Value {
     Value::Object(body)
 }
 
+/// Anthropic's web search tool, in its first version: every Claude model with web search takes it.
+fn web_search_tool(ws: &WebSearch) -> Value {
+    let mut t = json!({ "type": "web_search_20250305", "name": "web_search" });
+    if let Some(n) = ws.max_uses {
+        t["max_uses"] = n.into();
+    }
+    // One list or the other: Anthropic refuses both.
+    if !ws.allowed_domains.is_empty() {
+        t["allowed_domains"] = json!(ws.allowed_domains);
+    } else if !ws.blocked_domains.is_empty() {
+        t["blocked_domains"] = json!(ws.blocked_domains);
+    }
+    if let Some(l) = &ws.location {
+        let mut o = l.fields();
+        o.insert("type".into(), "approximate".into());
+        t["user_location"] = Value::Object(o);
+    }
+    t
+}
+
 pub fn stop_reason(s: &str) -> StopReason {
     match s {
         "max_tokens" | "model_context_window_exceeded" => StopReason::MaxTokens,
@@ -219,7 +240,7 @@ pub fn usage(v: &Value) -> Usage {
         cache_read_tokens: g("cache_read_input_tokens"),
         cache_write_tokens: g("cache_creation_input_tokens"),
         reasoning_tokens: 0,
-        search_units: 0,
+        search_units: v.pointer("/server_tool_use/web_search_requests").and_then(Value::as_u64).unwrap_or(0),
     }
 }
 
@@ -359,5 +380,21 @@ mod tests {
         assert_eq!(r.usage.input_tokens, 10);
         assert_eq!(r.usage.output_tokens, 7);
         assert!(matches!(&r.content[1], Part::ToolCall { arguments, .. } if arguments == "{\"a\":1}"));
+    }
+
+    #[test]
+    fn web_search_becomes_the_server_tool_and_its_searches_are_counted() {
+        let d = crate::providers::tests::deployment(crate::model::ProviderKind::Anthropic, crate::model::ApiStyle::Anthropic, "claude");
+        let req = ChatRequest {
+            web_search: Some(WebSearch { max_uses: Some(2), blocked_domains: vec!["example.com".into()], ..Default::default() }),
+            ..Default::default()
+        };
+        let body = build_body(&req, &d);
+        assert_eq!(
+            body["tools"],
+            json!([{ "type": "web_search_20250305", "name": "web_search", "max_uses": 2, "blocked_domains": ["example.com"] }])
+        );
+        let u = usage(&json!({ "input_tokens": 5, "output_tokens": 2, "server_tool_use": { "web_search_requests": 3 } }));
+        assert_eq!(u.search_units, 3);
     }
 }

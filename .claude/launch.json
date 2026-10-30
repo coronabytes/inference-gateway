@@ -12,12 +12,6 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "ui"],
       "port": 5173
-    },
-    {
-      "name": "ui-build",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "preview", "--prefix", "ui", "--", "--port", "4173", "--strictPort"],
-      "port": 4173
     }
   ]
 }

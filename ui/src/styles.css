@@ -139,7 +139,7 @@ a:hover { color: var(--link-hover); }
 }
 /* Panels are glass, in each theme's own (--glass-*). Nested ones (a table inside a card) stay
    clear, so nothing is blurred twice. */
-:is(.card, .tile, .chart, .empty-card, .banner),
+:is(.card, .tile, .chart, .empty-card),
 .table-wrap:not(.card *) {
   border-color: var(--glass-edge);
   box-shadow: var(--glass-shadow);
@@ -404,7 +404,21 @@ td.error-cell { max-width: 360px; overflow: hidden; text-overflow: ellipsis; whi
 .meter > div { height: 100%; background: var(--series-1); border-radius: 2px; }
 .meter-warning > div { background: var(--status-warning); }
 .meter-critical > div { background: var(--status-critical); }
-.banner { border: 1px solid var(--border); border-left: 3px solid var(--status-critical); background: var(--surface-1); padding: 8px 12px; border-radius: 10px; }
+/* Banner (controls.tsx): a message shaped like the controls, a pill that rounds into a box once it
+   wraps. The caption names the tone, its icon in the tone's colour; actions sit at the end. */
+.banner {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 0; min-height: 34px; box-sizing: border-box;
+  padding: 5px 4px 5px 14px; border: 1px solid var(--border); border-radius: 17px; background: var(--field);
+}
+/* The caption keeps its text on the banner's baseline. Its icon is a shape drawn in CSS (a glyph's
+   ink sits low in its box), centred on the caption's lowercase letters: square, triangle, dot. */
+.banner > .control-caption { align-self: auto; }
+.banner-icon { display: inline-block; width: 7px; height: 7px; margin-right: 6px; vertical-align: middle; background: var(--status-critical); }
+.banner-warning .banner-icon { width: 8px; background: var(--status-warning); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.banner-good .banner-icon { background: var(--status-good); border-radius: 50%; }
+.banner-text { flex: 1 1 240px; min-width: 0; padding: 1px 10px 1px 8px; line-height: 20px; }
+.banner-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.banner-actions button { padding-block: 2px; }
 
 /* modal & form */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); backdrop-filter: var(--scrim-blur); display: grid; place-items: center; padding: 16px; z-index: 10; }
@@ -466,6 +480,12 @@ details.section[open] .section-summary { display: none; }
 
 /* tags */
 .tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+/* Model hub: a model's capabilities as icons in round chips, named by their tooltips. */
+.cap-icons { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.cap-icon {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary); cursor: default;
+}
 .tag {
   display: inline-flex; align-items: center; gap: 2px; font-size: 12px; line-height: 18px; padding: 0 7px;
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text-secondary);
@@ -528,6 +548,7 @@ button.tag-toggle.on:hover:not(:disabled) { background: var(--accent); filter: b
 .login-card { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 300px; }
 .login-card p { margin: 0; }
 .login-card .banner { background: rgba(60, 14, 20, 0.55); border-color: var(--login-line); color: var(--login-ink); }
+.login-card .banner > .control-caption { color: var(--login-dim); border-color: var(--login-line); }
 .login-card input { background: rgba(255, 255, 255, 0.06); border-color: var(--login-line); color: var(--login-ink); padding: 9px 16px; }
 .login-card input::placeholder { color: rgba(220, 228, 255, 0.4); }
 .login-card .login-primary, .login-card .login-secondary {
@@ -560,7 +581,12 @@ button.tag-toggle.on:hover:not(:disabled) { background: var(--accent); filter: b
 /* playground */
 .playground { height: calc(100vh - 175px); min-height: 480px; }
 .system-prompt summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
-.system-prompt textarea { width: 100%; margin-top: 6px; }
+.system-prompt > textarea { width: 100%; margin-top: 6px; }
+/* Structured output: the JSON schema, in a captioned box under its summary. */
+.schema-input { margin-top: 6px; }
+/* It grows with the schema up to a few lines, then scrolls: the chat below keeps its room. */
+.schema-input .control.multiline > textarea { font-family: var(--mono); font-size: 12.5px; max-height: 140px; overflow-y: auto; }
+.schema-error { margin: 4px 0 0; color: var(--critical-text); font-size: 12.5px; }
 textarea {
   font: inherit; color: inherit; border: 1px solid var(--border); background: var(--field);
   padding: 8px 14px; border-radius: 14px; resize: vertical;
@@ -580,12 +606,17 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .bubble.user { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 4px; }
 .bubble.assistant { background: var(--surface-2); border-bottom-left-radius: 4px; }
 .bubble.failed { border: 1px solid var(--status-critical); }
+/* Structured output: the answer's JSON, indented (Playground.tsx: indented). */
+.bubble.json { font-family: var(--mono); font-size: 12.5px; line-height: 1.45; }
 /* Under a user turn the guardrails masked: the text the model got instead. */
 .bubble.masked {
   background: transparent; color: var(--text-secondary); border: 1px dashed var(--axis); border-top-right-radius: 4px; font-size: 13.5px;
 }
 .masked-label { display: block; font-size: 11px; color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 2px; }
 .bubble-error { color: var(--critical-text); font-size: 13px; }
+/* The pages a web-searched answer cites. */
+.bubble-sources { margin-top: 6px; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+.bubble-sources a { color: var(--link); }
 .bubble-meta { font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .typing { color: var(--text-muted); letter-spacing: 2px; }
 /* Above the composer while the chat is empty: the sample prompts. */
@@ -599,6 +630,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .samples button:hover:not(:disabled) { color: var(--text-primary); border-color: var(--axis); }
 .composer { display: flex; gap: 8px; align-items: flex-end; padding: 10px; border-top: 1px solid var(--grid); }
 .composer .composer-attach { width: 34px; height: 34px; flex: none; }
+/* An icon toggle in the composer (web search): lit while on. */
+.composer .icon-btn[aria-pressed="true"],
+.composer .icon-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--wash); color: var(--link); }
 /* Files to send with the next message, between the chat bar and the composer. */
 .attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 10px 0; border-top: 1px solid var(--grid); }
 .attachments + .composer { border-top: 0; }
@@ -810,7 +844,6 @@ a.button.primary:hover { background: var(--accent-hover); box-shadow: var(--glow
 }
 .user-pop-who { display: flex; flex-direction: column; gap: 2px; padding: 0 4px 10px; border-bottom: 1px solid var(--grid); white-space: normal; overflow-wrap: anywhere; }
 .user-pop-action { text-align: left; border-radius: 999px; padding: 6px 12px; }
-.banner.good { border-left-color: var(--status-good); }
 
 /* Tabs (Models: deployments, pricing catalog) */
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: calc(var(--tabs-gap, 16px) - 12px); }
@@ -915,9 +948,6 @@ tr.clickable:hover td { background: var(--wash); }
 .time-custom-note { padding: 0 6px; font-size: 12.5px; color: var(--critical-text); }
 
 /* Models: prices that no longer match the catalog */
-.banner.warn { border-left-color: var(--status-warning); }
-.banner[role="status"] { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.banner-actions { display: inline-flex; gap: 4px; }
 .price-drift { margin: -6px 0; padding: 6px 8px; border-radius: 8px; background: rgba(250, 178, 25, 0.08); box-shadow: inset 2px 0 0 var(--status-warning); }
 .list-item:hover .price-drift { background: rgba(250, 178, 25, 0.12); }
 .price-catalog { display: flex; align-items: center; justify-content: flex-start; gap: 6px; margin-top: 3px; font-size: 12px; color: var(--warning-text); }

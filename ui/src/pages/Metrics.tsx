@@ -77,7 +77,7 @@ export function Metrics() {
         />
         <LabelFilter value={labels} onChange={setLabels} />
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
       {t && (
         <div className="tiles">

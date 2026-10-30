@@ -139,7 +139,7 @@ export function EmbeddingPanel({ keyId, keyName, model, labels }: PanelProps) {
         </div>
       </div>
       <div className="card">
-        <ErrorBanner error={error} />
+        <ErrorBanner error={error} onDismiss={() => setError(null)} />
         {!result && !error && <div className="muted">Vectors and their cosine similarities appear here.</div>}
         {result && (
           <>
@@ -264,7 +264,7 @@ export function RerankPanel({ keyId, keyName, model, labels }: PanelProps) {
         </div>
       </div>
       <div className="card">
-        <ErrorBanner error={error} />
+        <ErrorBanner error={error} onDismiss={() => setError(null)} />
         {!result && !error && <div className="muted">The documents, most relevant first, appear here.</div>}
         {result && (
           <>
@@ -566,7 +566,7 @@ export function DecisionPanel({ keyId, keyName, model, labels }: PanelProps) {
         </div>
       </div>
       <div className="card">
-        <ErrorBanner error={error} />
+        <ErrorBanner error={error} onDismiss={() => setError(null)} />
         {!result && !error && <div className="muted">Answers appear here, with the probability of every option.</div>}
         {result && (
           <>

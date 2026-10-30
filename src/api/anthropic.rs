@@ -7,8 +7,8 @@ use super::{StreamEncoder, sse_event};
 use crate::{
     error::{Dialect, GatewayError},
     ir::{
-        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Message, Part, Reasoning, Role, StopReason,
-        StreamEvent, TextBlock, Tool, ToolChoice, Usage,
+        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, Message, Part, Reasoning, Role, StopReason,
+        StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
     },
 };
 
@@ -70,7 +70,8 @@ fn parse_blocks(content: &Value) -> Result<Vec<Part>, GatewayError> {
                 text: b["thinking"].as_str().unwrap_or_default().to_string(),
                 signature: b.get("signature").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string),
             }),
-            "redacted_thinking" => {}
+            // A web search the provider ran in an earlier turn: its answer is in the text that follows.
+            "redacted_thinking" | "server_tool_use" | "web_search_tool_result" => {}
             other => {
                 return Err(GatewayError::invalid(format!(
                     "content block type '{other}' is not supported for this model's provider"
@@ -104,10 +105,19 @@ pub fn parse_request(v: &Value) -> Result<ChatRequest, GatewayError> {
     }
     if let Some(tools) = v.get("tools").and_then(Value::as_array) {
         for t in tools {
-            if let Some(ty) = t.get("type").and_then(Value::as_str)
-                && ty != "custom"
-            {
-                return Err(GatewayError::invalid(format!("server tool '{ty}' is not supported for this model's provider")));
+            match t.get("type").and_then(Value::as_str) {
+                None | Some("custom") => {}
+                Some(ty) if ty.starts_with("web_search_") => {
+                    req.web_search = Some(WebSearch {
+                        max_uses: t.get("max_uses").and_then(Value::as_u64).map(|n| n as u32),
+                        allowed_domains: strings(t.get("allowed_domains")),
+                        blocked_domains: strings(t.get("blocked_domains")),
+                        context_size: None,
+                        location: t.get("user_location").and_then(Location::parse),
+                    });
+                    continue;
+                }
+                Some(ty) => return Err(GatewayError::invalid(format!("server tool '{ty}' is not supported for this model's provider"))),
             }
             req.tools.push(Tool {
                 name: t["name"].as_str().unwrap_or_default().to_string(),
@@ -165,12 +175,16 @@ pub fn stop_reason_str(s: StopReason) -> &'static str {
 }
 
 fn usage_json(u: &Usage) -> Value {
-    json!({
+    let mut v = json!({
         "input_tokens": u.input_tokens,
         "output_tokens": u.output_tokens,
         "cache_creation_input_tokens": u.cache_write_tokens,
         "cache_read_input_tokens": u.cache_read_tokens,
-    })
+    });
+    if u.search_units > 0 {
+        v["server_tool_use"] = json!({ "web_search_requests": u.search_units });
+    }
+    v
 }
 
 pub fn render_response(r: &ChatResponse, id: &str, model: &str) -> Value {
@@ -299,8 +313,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_server_tools() {
-        let v = json!({"messages": [], "tools": [{"type": "web_search_20260209", "name": "web_search"}]});
+    fn rejects_server_tools_but_web_search() {
+        let v = json!({"messages": [], "tools": [{"type": "code_execution_20250825", "name": "code_execution"}]});
         assert!(parse_request(&v).is_err());
+        let v = json!({"messages": [], "tools": [{
+            "type": "web_search_20260209", "name": "web_search", "max_uses": 3, "allowed_domains": ["metoffice.gov.uk"],
+            "user_location": {"type": "approximate", "city": "London", "country": "GB"}
+        }]});
+        let ws = parse_request(&v).unwrap().web_search.unwrap();
+        assert_eq!((ws.max_uses, ws.allowed_domains.as_slice()), (Some(3), ["metoffice.gov.uk".to_string()].as_slice()));
+        assert_eq!(ws.location.unwrap().city.as_deref(), Some("London"));
     }
 }

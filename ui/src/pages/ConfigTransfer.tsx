@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
-import { Button, FileButton } from "../components/controls";
+import { Banner, Button, FileButton } from "../components/controls";
 import { ErrorBanner } from "../components/ui";
 
 interface Changes {
@@ -150,7 +150,7 @@ export function ConfigTransfer() {
         in the file; the guardrails set on them stay as they are. Renames carry over:
         routers, keys and descriptions of a renamed model follow the new name, and aliases follow the model they point to.
       </p>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="transfer-actions">
         <Button onClick={exportConfig} disabled={busy}>
           Export configuration
@@ -183,15 +183,14 @@ export function ConfigTransfer() {
       )}
 
       {done && (
-        <div className="banner good" role="status">
-          <p>Imported.</p>
+        <Banner tone="good" caption="Imported" onDismiss={() => setDone(null)}>
           <Summary result={done} />
           {done.needs_secrets.length > 0 && (
             <p>
               Enter the secrets of {done.needs_secrets.join(", ")} on the <a href="#/models/credentials">Credentials</a> tab.
             </p>
           )}
-        </div>
+        </Banner>
       )}
     </section>
   );

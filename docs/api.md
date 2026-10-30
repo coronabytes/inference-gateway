@@ -23,7 +23,9 @@ The `model` in a request is the model name you chose in the gateway, not the pro
 | `POST /v1/decisions`, `POST /v1/systemone` | Decision models |
 | `GET /v1/models` | The models this key may use |
 
-When client and provider speak the same protocol, requests pass through untouched, so provider-specific features keep working. Otherwise the gateway translates text, images, tools, reasoning, prompt caching, structured output and usage between them.
+When client and provider speak the same protocol, requests pass through untouched, so provider-specific features keep working. Otherwise the gateway translates text, images, tools, reasoning, prompt caching, structured output, web search and usage between them.
+
+Web search is each API's own: the `web_search` tool (Responses), `web_search_options` (Chat Completions, also Google Search grounding for Gemini) and the `web_search_*` server tool (Messages). The gateway sends whichever the deployment's provider takes; Bedrock has none and refuses it. The answer comes back as text, with its citations only when client and provider speak the same protocol. Each search the model runs is billed at the deployment's price per 1,000 web searches.
 
 ## API reference
 

@@ -653,7 +653,8 @@ pub(crate) struct DeploymentInput {
     long_output_cost_per_mtok: Option<f64>,
     long_cache_read_cost_per_mtok: Option<f64>,
     long_cache_write_cost_per_mtok: Option<f64>,
-    /// Rerank models: USD per 1,000 searches (a query over up to 100 documents is one).
+    /// USD per 1,000 searches: for rerank models a query over up to 100 documents, for chat
+    /// models a web search the model ran.
     cost_per_k_searches: Option<f64>,
     /// Price catalog key, e.g. `azure/gpt-4o` for an Azure deployment with its own name.
     #[serde(default)]
@@ -819,8 +820,8 @@ fn to_row(id: Uuid, i: DeploymentInput, created: DateTime<Utc>) -> DeploymentRow
         long_output_cost_per_mtok: i.long_context_threshold.and(i.long_output_cost_per_mtok),
         long_cache_read_cost_per_mtok: i.long_context_threshold.and(i.long_cache_read_cost_per_mtok),
         long_cache_write_cost_per_mtok: i.long_context_threshold.and(i.long_cache_write_cost_per_mtok),
-        // Only rerank models bill searches.
-        cost_per_k_searches: i.cost_per_k_searches.filter(|_| i.mode == Mode::Rerank),
+        // Rerank models bill their searches, chat models the web searches they run.
+        cost_per_k_searches: i.cost_per_k_searches.filter(|_| matches!(i.mode, Mode::Rerank | Mode::Chat)),
         base_model: i.base_model.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()),
         tags: i.tags,
         project_ids: i.project_ids.unwrap_or_default(),

@@ -117,7 +117,7 @@ export function Projects({ onShowKeys }: { onShowKeys: (project: Project) => voi
         )}
         <PageActions actions={[{ label: "New project", onClick: () => setEditing("new"), primary: true }]} />
       </div>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
         <table>
           <thead>
@@ -248,7 +248,7 @@ export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; 
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="form">
         <TextInput caption="Name" value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. search-team" required />
         <TextArea caption="Description" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="optional" />

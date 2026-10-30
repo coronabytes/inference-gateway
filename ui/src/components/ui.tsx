@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import type { BudgetPeriod, BudgetStatus } from "../api";
 import { dateTime, until, usd } from "../format";
+import { Banner } from "./controls";
 
 const PERIOD_LABEL: Record<BudgetPeriod, string> = { day: "per day", week: "per week", month: "per month" };
 
@@ -145,7 +146,7 @@ export function ConfirmDialog({ request, onClose }: { request: ConfirmRequest; o
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="confirm-message">{request.message}</p>
     </Modal>
   );
@@ -187,6 +188,57 @@ export function AttachIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l8.6-8.6a4 4 0 0 1 5.7 5.7l-8.6 8.6a2 2 0 0 1-2.8-2.8l8.5-8.5" />
+    </svg>
+  );
+}
+
+/** Image input: a picture. */
+export function ImageIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+    </svg>
+  );
+}
+
+/** Document (PDF) input: a page with a folded corner. */
+export function DocumentIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6M8 13h8M8 17h5" />
+    </svg>
+  );
+}
+
+/** Reasoning: a light bulb. */
+export function ReasoningIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 18h6M10 22h4" />
+      <path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z" />
+    </svg>
+  );
+}
+
+/** Structured (JSON) output: curly braces. */
+export function BracesIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1" />
+      <path d="M16 3h1a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-1" />
+    </svg>
+  );
+}
+
+/** Search the web: a globe. */
+export function GlobeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
     </svg>
   );
 }
@@ -323,13 +375,10 @@ export function Badge({ tone, children }: { tone: "good" | "warning" | "critical
   );
 }
 
-export function ErrorBanner({ error }: { error: string | null }) {
+/** A failed request's error as a `Banner`, shown while `error` is set; Dismiss clears it. */
+export function ErrorBanner({ error, onDismiss }: { error: string | null; onDismiss: () => void }) {
   if (!error) return null;
-  return (
-    <div className="banner" role="alert">
-      <Badge tone="critical">Error</Badge> {error}
-    </div>
-  );
+  return <Banner onDismiss={onDismiss}>{error}</Banner>;
 }
 
 /** Parse an optional positive integer from an input string. */

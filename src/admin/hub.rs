@@ -145,7 +145,7 @@ pub(crate) struct HubDeployment {
     prices: HubPrices,
 }
 
-/// USD per 1M tokens (per 1,000 searches for rerank).
+/// USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches.
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct HubPrices {
     input: f64,

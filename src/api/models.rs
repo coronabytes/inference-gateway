@@ -20,7 +20,7 @@ use serde_json::{Map, Value, json};
 use super::key_can_use;
 use crate::{
     auth::ClientKey,
-    model::{ApiStyle, Deployment, Mode, VirtualKey},
+    model::{ApiStyle, Deployment, Mode, ProviderKind, VirtualKey},
     registry::Snapshot,
     state::AppState,
 };
@@ -144,7 +144,7 @@ impl Info {
             max_input_tokens: tokens("max_input_tokens"),
             max_tokens: tokens("max_output_tokens").or_else(|| tokens("max_tokens")),
             retires: c.get("deprecation_date").and_then(Value::as_str).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
-            capabilities: (d.mode == Mode::Chat).then(|| Caps::of(d.style, c)),
+            capabilities: (d.mode == Mode::Chat).then(|| Caps::of(d.style, d.provider, c)),
         }
     }
 
@@ -244,15 +244,17 @@ const CAPS: &[(&str, bool)] = &[
 struct Caps(BTreeMap<&'static str, Option<bool>>);
 
 impl Caps {
-    fn of(style: ApiStyle, c: &Value) -> Self {
+    fn of(style: ApiStyle, provider: ProviderKind, c: &Value) -> Self {
         // LiteLLM leaves out flags that are false.
         let has = |k: &str| c.get(k).and_then(Value::as_bool) == Some(true);
         let reasoning = has("supports_reasoning");
+        // Each upstream API has a web search (see `ir::WebSearch`) but Bedrock's: Converse cannot
+        // ask for one, and Claude through InvokeModel refuses the tool.
+        let web_search = has("supports_web_search") && provider != ProviderKind::Bedrock;
         let caps: Vec<(&'static str, Option<bool>)> = if style == ApiStyle::Anthropic {
             // Forwarded as is: the provider decides, and the catalog says what it supports.
             let effort = reasoning && has("supports_output_config");
             let compact = has("supports_anthropic_compaction");
-            let web_search = has("supports_web_search");
             let adaptive = has("supports_adaptive_thinking");
             vec![
                 ("citations", None),
@@ -280,9 +282,9 @@ impl Caps {
             ]
         } else {
             // Translated (see `anthropic::parse_request`): base64 documents become the provider's
-            // file input, citations and server tools are refused,
-            // context management is dropped, and effort and thinking become the provider's
-            // reasoning settings.
+            // file input, web search becomes the provider's own, citations and other server tools
+            // are refused, context management is dropped, and effort and thinking become the
+            // provider's reasoning settings.
             vec![
                 ("citations", Some(false)),
                 ("code_execution", Some(false)),
@@ -298,9 +300,9 @@ impl Caps {
                 ("effort.xhigh", Some(reasoning)),
                 ("image_input", Some(has("supports_vision"))),
                 ("pdf_input", Some(has("supports_pdf_input"))),
-                ("server_tools.supported", Some(false)),
+                ("server_tools.supported", Some(web_search)),
                 ("server_tools.code_execution", Some(false)),
-                ("server_tools.web_search", Some(false)),
+                ("server_tools.web_search", Some(web_search)),
                 ("thinking.supported", Some(reasoning)),
                 ("thinking.types.adaptive", Some(reasoning)),
                 ("thinking.types.between_tools", Some(true)),
@@ -360,7 +362,7 @@ mod tests {
     #[test]
     fn every_capability_is_described() {
         for style in [ApiStyle::Anthropic, ApiStyle::Responses] {
-            let caps = Caps::of(style, &json!({}));
+            let caps = Caps::of(style, ProviderKind::Openai, &json!({}));
             let mut paths: Vec<&str> = caps.0.keys().copied().collect();
             let mut all: Vec<&str> = CAPS.iter().map(|(p, _)| *p).collect();
             paths.sort();
@@ -375,7 +377,7 @@ mod tests {
             "supports_reasoning": true, "supports_output_config": true, "supports_adaptive_thinking": true,
             "supports_xhigh_reasoning_effort": true, "supports_vision": true, "supports_pdf_input": true,
         });
-        let v = Caps::of(ApiStyle::Anthropic, &catalog).to_json();
+        let v = Caps::of(ApiStyle::Anthropic, ProviderKind::Anthropic, &catalog).to_json();
         assert_eq!(v["batch"], json!({ "supported": false }));
         assert_eq!(v["citations"], json!({ "supported": false }));
         assert_eq!(v["pdf_input"], json!({ "supported": true }));
@@ -387,16 +389,30 @@ mod tests {
         assert_eq!(v["context_management"]["clear_thinking_20251015"], Value::Null);
 
         // Translated: base64 documents become the provider's file input, so the model decides.
-        let v = Caps::of(ApiStyle::Responses, &catalog).to_json();
+        let v = Caps::of(ApiStyle::Responses, ProviderKind::Azure, &catalog).to_json();
         assert_eq!(v["pdf_input"], json!({ "supported": true }));
         assert_eq!(v["image_input"], json!({ "supported": true }));
         assert_eq!(v["effort"]["max"], json!({ "supported": true }));
     }
 
     #[test]
+    fn web_search_where_the_upstream_has_one() {
+        let catalog = json!({ "supports_web_search": true });
+        let web = |style, provider| Caps::of(style, provider, &catalog).to_json()["server_tools"].clone();
+        let on = json!({ "supported": true, "code_execution": { "supported": false }, "web_search": { "supported": true } });
+        assert_eq!(web(ApiStyle::Responses, ProviderKind::Azure), on);
+        assert_eq!(web(ApiStyle::Chat, ProviderKind::Vertex), on);
+        assert_eq!(web(ApiStyle::Anthropic, ProviderKind::Anthropic)["web_search"], json!({ "supported": true }));
+        assert_eq!(web(ApiStyle::Anthropic, ProviderKind::Bedrock)["web_search"], json!({ "supported": false }));
+        assert_eq!(web(ApiStyle::Converse, ProviderKind::Bedrock)["web_search"], json!({ "supported": false }));
+        let none = Caps::of(ApiStyle::Chat, ProviderKind::Vertex, &json!({})).to_json();
+        assert_eq!(none["server_tools"]["web_search"], json!({ "supported": false }));
+    }
+
+    #[test]
     fn several_deployments_are_described_by_what_all_of_them_support() {
         let info = |c: Value, style| {
-            let caps = Caps::of(style, &c);
+            let caps = Caps::of(style, ProviderKind::Openai, &c);
             Info {
                 max_input_tokens: c["max_input_tokens"].as_u64(),
                 max_tokens: c["max_output_tokens"].as_u64(),

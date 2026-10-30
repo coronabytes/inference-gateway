@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { AliasInput, AutoRouter, Deployment, ModelAlias } from "../api";
-import { Button, MenuButton, Select, TextInput, Toggle } from "../components/controls";
+import { Banner, Button, MenuButton, Select, TextInput, Toggle } from "../components/controls";
 import type { SelectOption } from "../components/SearchSelect";
 import { Badge, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal } from "../components/ui";
 
@@ -155,13 +155,13 @@ export function AliasForm({
         </>
       }
     >
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {!all.length && (
-        <div className="banner">
+        <Banner tone="warning">
           An alias serves an existing model. <a href="#/models/deployments">Add a deployment</a> first.
-        </div>
+        </Banner>
       )}
-      {missing && <div className="banner">The model this alias served was deleted. Pick another one to save it.</div>}
+      {missing && <Banner tone="warning">The model this alias served was deleted. Pick another one to save it.</Banner>}
       <div className="form">
         <div className="row with-switch">
           <TextInput

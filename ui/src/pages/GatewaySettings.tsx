@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type GatewaySettings as Settings, type GatewaySettingsView } from "../api";
-import { Button, TextInput, Toggle } from "../components/controls";
+import { Banner, Button, TextInput, Toggle } from "../components/controls";
 import { ErrorBanner } from "../components/ui";
 import { dateTime, relative } from "../format";
 
@@ -115,7 +115,7 @@ export function GatewaySettings() {
 
   return (
     <div className="page">
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {view && <SettingsForm key={view.updated_at ?? "defaults"} view={view} onSaved={setView} />}
     </div>
   );
@@ -155,7 +155,7 @@ function SettingsForm({ view, onSaved }: { view: GatewaySettingsView; onSaved: (
         after the change.{" "}
         {view.updated_at ? <span title={dateTime(view.updated_at)}>Last saved {relative(view.updated_at)}.</span> : "All settings are at their defaults."}
       </p>
-      <ErrorBanner error={error} />
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {GROUPS.map((g) => (
         <fieldset key={g.title}>
           <legend>{g.title}</legend>
@@ -179,11 +179,11 @@ function SettingsForm({ view, onSaved }: { view: GatewaySettingsView; onSaved: (
           </div>
         </fieldset>
       ))}
-      {invalid.length > 0 && <div className="banner">Enter a whole number for {invalid.join(", ")}.</div>}
+      {invalid.length > 0 && <Banner>Enter a whole number for {invalid.join(", ")}.</Banner>}
       {outOfRange.map((i) => (
-        <div key={i.key} className="banner">
+        <Banner key={i.key}>
           {i.caption} must be {i.rule}.
-        </div>
+        </Banner>
       ))}
       <div className="modal-foot">
         <Button variant="ghost" onClick={() => setDraft(defaults)} disabled={busy || same(draft, defaults)}>

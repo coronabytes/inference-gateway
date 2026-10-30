@@ -53,6 +53,8 @@ pub struct RequestRecord {
     pub guardrails: Option<serde_json::Value>,
     /// The guardrails' part of `cost_usd`.
     pub guardrail_cost_usd: f64,
+    /// The searches' part of `cost_usd` (`usage.search_units` of them).
+    pub search_cost_usd: f64,
 }
 
 /// What screening a request with guardrails cost and found, for its entry in the request log.
@@ -193,9 +195,15 @@ impl Tracker {
 
     /// The upstream's final usage report. An empty one does not count as a report: upstreams
     /// that leave usage out (or a body without it) are estimated instead of charged nothing.
+    /// The whole usage. Web searches a stream reported before it (see `searched`) are kept.
     pub fn set_usage(&mut self, u: Usage) {
-        self.usage = u;
+        self.usage = Usage { search_units: self.usage.search_units.max(u.search_units), ..u };
         self.usage_reported |= u.total() > 0 || u.search_units > 0;
+    }
+
+    /// Web searches a passthrough stream reported apart from its usage (Chat Completions).
+    pub fn searched(&mut self, n: u64) {
+        self.usage.search_units = self.usage.search_units.max(n);
     }
 
     /// Part of the usage (Anthropic streams report input first and output at the end).
@@ -278,6 +286,7 @@ impl Drop for Tracker {
             labels: std::mem::take(&mut self.labels),
             guardrails: guardrails.summary,
             guardrail_cost_usd: guardrails.cost_usd,
+            search_cost_usd: self.deployment.as_ref().map_or(0.0, |d| d.pricing.search_cost(&self.usage)),
         };
         telemetry::end_call(&self.cx, &rec, self.deployment.as_ref().map(|d| d.upstream_model.as_str()));
         if let Some((parent, decides_status)) = self.parent.take() {
@@ -293,6 +302,7 @@ impl Drop for Tracker {
 struct RollupState {
     usage: Usage,
     cost_usd: f64,
+    search_cost_usd: f64,
     guardrails: GuardrailCharge,
     attempts: u32,
     status: Option<u16>,
@@ -356,6 +366,7 @@ impl Rollup {
         let mut s = self.state.lock().expect("rollup lock");
         s.usage.add(&child.usage);
         s.cost_usd += child.cost_usd;
+        s.search_cost_usd += child.search_cost_usd;
         if decides_status {
             s.attempts = child.attempts;
             s.status = Some(child.status_code);
@@ -392,6 +403,7 @@ impl Drop for Rollup {
             labels: std::mem::take(&mut self.labels),
             guardrails: s.guardrails.summary,
             guardrail_cost_usd: s.guardrails.cost_usd,
+            search_cost_usd: s.search_cost_usd,
         };
         telemetry::end_call(&self.cx, &rec, None);
         if self.tx.try_send(rec).is_err() {
@@ -476,6 +488,11 @@ mod tests {
 
     /// A deployment at $1 per million input and $2 per million output tokens.
     fn deployment() -> Arc<Deployment> {
+        priced(0.0)
+    }
+
+    /// `deployment`, with a price per 1,000 searches.
+    fn priced(per_k_searches: f64) -> Arc<Deployment> {
         Arc::new(Deployment {
             id: Uuid::nil(),
             model_name: "m".into(),
@@ -491,7 +508,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             timeout: Duration::from_secs(1),
-            pricing: Pricing { standard: Rates::new(1.0, 2.0, None, None), long_context: None, per_k_searches: 0.0 },
+            pricing: Pricing { standard: Rates::new(1.0, 2.0, None, None), long_context: None, per_k_searches },
             tags: vec![],
             project_ids: vec![],
             catalog: None,
@@ -523,6 +540,21 @@ mod tests {
         assert_eq!(r.status_code, 499);
         assert!(r.error.as_deref().unwrap().contains("estimated"));
         assert!((r.cost_usd - (1000.0 * 1.0 + 100.0 * 2.0) / 1e6).abs() < 1e-12);
+    }
+
+    #[tokio::test]
+    async fn web_searches_are_logged_with_their_cost() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let mut t = Tracker::new(&crate::state::test_state(), None, &Labels::default(), "m", "chat", false);
+        t.tx = tx;
+        t.attempt(priced(14.0));
+        // A stream reports its searches before its usage (Chat Completions from Gemini).
+        t.searched(2);
+        t.set_usage(Usage { input_tokens: 1000, output_tokens: 100, ..Default::default() });
+        let r = record(t, &mut rx);
+        assert_eq!(r.usage.search_units, 2);
+        assert!((r.search_cost_usd - 0.028).abs() < 1e-12);
+        assert!((r.cost_usd - (0.0012 + 0.028)).abs() < 1e-12);
     }
 
     #[tokio::test]
