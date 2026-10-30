@@ -815,6 +815,10 @@ export interface HubModel extends HubLimits {
   kind: "model" | "router";
   mode: Mode;
   metadata: ModelMetadata;
+  /** Who makes it: the metadata's vendor, or without one the vendor its names suggest. */
+  vendor?: string;
+  /** Set when `vendor` is suggested from its names rather than saved. */
+  vendor_suggested?: boolean;
   tags: string[];
   /** Set for a model alias: the model name it serves. */
   target?: string;
@@ -822,6 +826,18 @@ export interface HubModel extends HubLimits {
   routes?: string[];
   /** Lowest priority (tried first) first. */
   deployments: HubDeployment[];
+  /** With `stats=true`, when it had requests in the last 24 hours. */
+  stats?: HubStats;
+}
+
+/** A model's requests over the last 24 hours. */
+export interface HubStats {
+  requests: number;
+  errors: number;
+  p50_latency_ms?: number;
+  tokens_per_second?: number;
+  /** `[requests, errors]` per hour, oldest first; the last is the current hour. */
+  hours: [number, number][];
 }
 
 export interface HubDeployment extends HubLimits {

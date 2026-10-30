@@ -1,10 +1,11 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
-import { api, type Hub, type HubDeployment, type HubModel, type HubPrices, type ModelMetadata, type NamedItem } from "../api";
-import { Banner, Button, MenuButton, MultiSelect, Select, TextArea, TextInput, useDebounced } from "../components/controls";
+import { api, type Hub, type HubDeployment, type HubModel, type HubPrices, type HubStats, type ModelMetadata, type NamedItem } from "../api";
+import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, TextArea, TextInput, useDebounced } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
-import { Badge, BracesIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, Modal, ReasoningIcon } from "../components/ui";
-import { compact } from "../format";
+import { VendorLogo } from "../components/VendorLogo";
+import { Badge, BracesIcon, CopyIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, ReasoningIcon, TilesIcon } from "../components/ui";
+import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
 import { GUARDRAIL_LABEL } from "./Guardrails";
@@ -87,29 +88,6 @@ const displayName = (m: HubModel) => m.metadata.display_name?.trim() || m.name;
 /** Vendors offered in the editor; others can be typed. */
 const VENDORS = ["Alibaba", "Amazon", "Anthropic", "Cohere", "DeepSeek", "Google", "Meta", "Microsoft", "Mistral AI", "Moonshot AI", "OpenAI", "TypeSafe", "xAI", "Zhipu AI"];
 
-/** Who likely makes a model, from its name and its upstream models: claude → Anthropic. */
-const VENDOR_PATTERNS: [RegExp, string][] = [
-  [/claude|anthropic/, "Anthropic"],
-  [/\bgpt|\bo[1-9]\b|openai|text-embedding-|davinci|whisper/, "OpenAI"],
-  [/gemini|gemma|google|palm/, "Google"],
-  [/mistral|mixtral|codestral|pixtral|ministral|magistral/, "Mistral AI"],
-  [/llama|\bmeta\b/, "Meta"],
-  [/deepseek/, "DeepSeek"],
-  [/qwen|alibaba/, "Alibaba"],
-  [/\bglm|zhipu|z-ai/, "Zhipu AI"],
-  [/kimi|moonshot/, "Moonshot AI"],
-  [/cohere|command-r|\bembed-(english|multilingual)/, "Cohere"],
-  [/titan|amazon\.nova|\bnova-/, "Amazon"],
-  [/microsoft|\bphi-|decision-1/, "Microsoft"],
-  [/grok|x-ai|xai/, "xAI"],
-  [/\bjev/, "TypeSafe"],
-];
-
-function guessVendor(m: HubModel): string {
-  const names = [m.name, ...m.deployments.map((d) => d.upstream_model)].join(" ").toLowerCase();
-  return VENDOR_PATTERNS.find(([re]) => re.test(names))?.[1] ?? "";
-}
-
 const STATUS_TEXT: Record<NonNullable<Hub["key"]>["status"], string> = {
   active: "",
   disabled: "This key is disabled: its requests are refused.",
@@ -125,6 +103,18 @@ function save(blob: Blob, name: string) {
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+type View = "list" | "tiles";
+const VIEW_KEY = "gateway-hub-view";
+
+/** The view picked last in this browser; tiles to start with. */
+function initialView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "tiles";
+  } catch {
+    return "tiles";
+  }
 }
 
 /** A file name's part for a key: "Team A (prod)" → "team-a-prod". */
@@ -147,6 +137,18 @@ export function ModelHub() {
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<HubModel | null>(null);
   const [curl, setCurl] = useState<CurlRequest | null>(null);
+  const [view, setView] = useState<View>(initialView);
+  // The model whose details are open in a dialog, in the tile view.
+  const [details, setDetails] = useState<HubModel | null>(null);
+
+  const pickView = (v: View) => {
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // Not remembered, but still switched for this visit.
+    }
+    setView(v);
+  };
 
   useEffect(() => {
     api<NamedItem[]>("/keys/options")
@@ -172,15 +174,18 @@ export function ModelHub() {
     return params.toString().replace(/%2C/g, ",");
   };
   const query = hubQuery(search);
+  // The tiles show each model's last 24 hours from the request log; the list does not.
+  const tiles = view === "tiles";
 
   const load = useCallback(async () => {
     try {
-      setHub(await api<Hub>(`/hub${query ? `?${query}` : ""}`));
+      const q = [query, tiles && "stats=true"].filter(Boolean).join("&");
+      setHub(await api<Hub>(`/hub${q ? `?${q}` : ""}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [query]);
+  }, [query, tiles]);
 
   useEffect(() => {
     load();
@@ -328,6 +333,15 @@ export function ModelHub() {
           )}
         </div>
         <div className="page-actions">
+          <Segmented
+            label="View"
+            options={[
+              { value: "tiles", label: "Tiles", icon: <TilesIcon /> },
+              { value: "list", label: "List", icon: <ListIcon /> },
+            ]}
+            value={view}
+            onChange={pickView}
+          />
           <MenuButton
             label="Export"
             className="more-button primary"
@@ -391,6 +405,16 @@ export function ModelHub() {
       )}
       {hub && !total ? (
         <div className="empty-card">{key ? "This key may use no model." : "No models yet. Add a deployment on the Deployments tab."}</div>
+      ) : tiles ? (
+        hub && !visible.length ? (
+          <div className="empty-card">No model matches the filter.</div>
+        ) : (
+          <div className="hub-tiles">
+            {visible.map((m) => (
+              <ModelTile key={m.name} model={m} onEdit={() => setEditing(m)} onDetails={() => setDetails(m)} />
+            ))}
+          </div>
+        )
       ) : (
         <div className="table-wrap">
           <table className="hub-table">
@@ -485,6 +509,11 @@ export function ModelHub() {
           </table>
         </div>
       )}
+      {details && (
+        <Modal title={displayName(details)} size="wide" onClose={() => setDetails(null)} footer={<Button onClick={() => setDetails(null)}>Close</Button>}>
+          <HubDetails model={details} options={priceOptions(details)} />
+        </Modal>
+      )}
       {editing && (
         <MetadataForm
           model={editing}
@@ -500,12 +529,139 @@ export function ModelHub() {
   );
 }
 
-/** A model's vendor; without one saved, the guess from its names, marked as such. */
+/** A price for a tile: "$3", "$0.8–3". */
+const dollars = (values: number[]) => (values.length ? `$${range(values)}` : "–");
+
+/** The prices a tile shows, by the model's mode: per 1M tokens, or per 1K searches for rerank. */
+function tilePrices(m: HubModel): { label: string; value: string; unit: string }[] {
+  const ps = m.deployments.map((d) => d.prices);
+  if (m.mode === "rerank") return [{ label: "Searches", value: dollars(ps.map((p) => p.per_k_searches)), unit: "1K" }];
+  if (m.mode === "embedding") return [{ label: "Input", value: dollars(ps.map((p) => p.input)), unit: "1M" }];
+  return [
+    { label: "Input", value: dollars(ps.map((p) => p.input)), unit: "1M" },
+    { label: "Output", value: dollars(ps.map((p) => p.output)), unit: "1M" },
+    { label: "Cached", value: dollars(ps.map((p) => p.cache_read)), unit: "1M" },
+  ];
+}
+
+/** A success rate: "100%", "99.95%", "87.5%". */
+function percent(ok: number, all: number): string {
+  const p = (100 * ok) / all;
+  return p === 100 ? "100%" : `${+p.toFixed(p >= 99 ? 2 : 1)}%`;
+}
+
+/** An hour's share of errors as a tone: none, a few (up to 5%), or more. */
+function hourTone(requests: number, errors: number): string {
+  if (!requests) return "idle";
+  if (!errors) return "good";
+  return errors / requests <= 0.05 ? "warning" : "critical";
+}
+
+const NO_HOURS: [number, number][] = Array.from({ length: 24 }, () => [0, 0]);
+
+/** The last 24 hours as one bar per hour, coloured by its errors, with the success rate. */
+function StatusBar({ stats }: { stats?: HubStats }) {
+  const hour = 3_600_000;
+  const now = Math.floor(Date.now() / hour) * hour;
+  const hours = stats?.hours ?? NO_HOURS;
+  const time = (i: number) => new Date(now - (hours.length - 1 - i) * hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return (
+    <div className="hub-status">
+      <span className="hub-stat-label">Status</span>
+      <span className="hub-stat-value">{stats?.requests ? percent(stats.requests - stats.errors, stats.requests) : "–"}</span>
+      <span className="status-bar" role="img" aria-label={stats?.requests ? `${stats.errors} of ${stats.requests} requests failed in the last 24 hours` : "No requests in the last 24 hours"}>
+        {hours.map(([requests, errors], i) => (
+          <span
+            key={i}
+            className={`status-hour ${hourTone(requests, errors)}`}
+            title={requests ? `${time(i)}: ${requests.toLocaleString()} requests, ${errors.toLocaleString()} failed` : `${time(i)}: no requests`}
+          />
+        ))}
+      </span>
+    </div>
+  );
+}
+
+/** A model as a card: who makes it, what it is for and can do, what it costs, and how it ran today. */
+function ModelTile({ model: m, onEdit, onDetails }: { model: HubModel; onEdit: () => void; onDetails: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const vendor = m.vendor ?? "";
+  const s = m.stats;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(m.name);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // The browser refused; the name is on the card to copy by hand.
+    }
+  };
+  return (
+    <article className="card hub-tile">
+      <div className="hub-tile-head">
+        <VendorLogo vendor={vendor} fallback={m.name} />
+        <div className="hub-tile-title">
+          <div className="hub-name clip" title={displayName(m)}>
+            {displayName(m)}
+          </div>
+          <div className="muted small clip">
+            <Vendor model={m} />
+            {m.metadata.display_name && <span className="mono"> · {m.name}</span>}
+          </div>
+        </div>
+        <div className="hub-tile-actions">
+          <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={onEdit}>
+            <EditIcon />
+          </IconButton>
+          <IconButton label={copied ? "Copied" : `Copy the model name ${m.name}`} title={copied ? "Copied" : "Copy the model name"} onClick={copy}>
+            <CopyIcon />
+          </IconButton>
+        </div>
+      </div>
+      {m.metadata.description && <p className="hub-tile-description">{m.metadata.description}</p>}
+      <div className="hub-tile-facts small">
+        <Badge tone="neutral">{m.kind === "router" ? "router" : m.mode}</Badge>
+        {m.target && <Badge tone="neutral">alias</Badge>}
+        {m.max_input_tokens != null && <span title={`${m.max_input_tokens.toLocaleString()} input tokens`}>{compact(m.max_input_tokens)} context</span>}
+        {m.max_output_tokens != null && <span title={`${m.max_output_tokens.toLocaleString()} output tokens`}>{compact(m.max_output_tokens)} out</span>}
+        <CapabilityIcons m={m} />
+      </div>
+      {m.tags.length > 0 && <TagList tags={m.tags} />}
+      <dl className="hub-tile-prices">
+        {tilePrices(m).map((p) => (
+          <div key={p.label}>
+            <dt className="muted small">{p.label}</dt>
+            <dd>
+              <span className="mono">{p.value}</span> <span className="muted small">/ {p.unit}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div className="hub-tile-foot">
+        <StatusBar stats={s} />
+        <div className="hub-stat" title="Median latency of the successful requests in the last 24 hours">
+          <span className="hub-stat-label">Latency</span>
+          <span className="hub-stat-value">{ms(s?.p50_latency_ms)}</span>
+        </div>
+        {m.mode === "chat" && (
+          <div className="hub-stat" title="Output tokens per second while generating, in the last 24 hours">
+            <span className="hub-stat-label">Speed</span>
+            <span className="hub-stat-value">{s?.tokens_per_second != null ? `${s.tokens_per_second.toFixed(s.tokens_per_second >= 100 ? 0 : 1)} t/s` : "–"}</span>
+          </div>
+        )}
+        <Button variant="ghost" onClick={onDetails}>
+          Details ›
+        </Button>
+      </div>
+    </article>
+  );
+}
+
+/** A model's vendor; without one saved, the one its names suggest, marked as such. */
 function Vendor({ model }: { model: HubModel }) {
-  const saved = model.metadata.vendor;
-  const vendor = saved || guessVendor(model);
+  const vendor = model.vendor;
   if (!vendor) return <span className="muted">–</span>;
-  return saved ? (
+  return !model.vendor_suggested ? (
     <span title={vendor}>{vendor}</span>
   ) : (
     <span className="vendor-suggested" title="Suggested from the model's name; edit the model to save it">
@@ -628,7 +784,7 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
 function MetadataForm({ model, vendors, onClose, onSaved }: { model: HubModel; vendors: string[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const [name, setName] = useState(model.metadata.display_name ?? "");
   // Without one yet, a guess from the model's names; the form shows it before it is saved.
-  const [vendor, setVendor] = useState(model.metadata.vendor ?? guessVendor(model));
+  const [vendor, setVendor] = useState(model.metadata.vendor ?? model.vendor ?? "");
   const [otherVendor, setOtherVendor] = useState("");
   const [description, setDescription] = useState(model.metadata.description ?? "");
   const vendorOptions = [...new Set([...VENDORS, ...vendors, ...(vendor ? [vendor] : [])])].sort((a, b) => a.localeCompare(b));

@@ -496,6 +496,8 @@ export function KeyValueInput({
 export interface SegmentOption<T extends string> {
   value: T;
   label: string;
+  /** Shown instead of the label, which stays the choice's accessible name and tooltip. */
+  icon?: ReactNode;
   disabled?: boolean;
 }
 
@@ -531,12 +533,12 @@ export function Segmented<T extends string>({
               type="button"
               role="radio"
               aria-checked={value === o.value}
-              className={value === o.value ? "active" : ""}
+              className={cx(value === o.value && "active", o.icon != null && "icon-choice")}
               disabled={o.disabled}
               onClick={() => onChange(o.value)}
-              data-label={o.label}
+              {...(o.icon != null ? { "aria-label": o.label, title: o.label } : { "data-label": o.label })}
             >
-              {o.label}
+              {o.icon ?? o.label}
             </button>
           ))}
         </RadioGroup>

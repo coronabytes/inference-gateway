@@ -3,7 +3,7 @@ import { SessionContext } from "./access";
 import { AuthError, api, setToken, type SessionInfo } from "./api";
 import { Banner } from "./components/controls";
 import { Galaxy } from "./components/Galaxy";
-import { DocsIcon, IconButton, MoonIcon, NarrowIcon, SunIcon, WidenIcon } from "./components/ui";
+import { DocsIcon, IconButton, MoonIcon, SunIcon } from "./components/ui";
 import { UserMenu } from "./components/UserMenu";
 import { Cluster } from "./pages/Cluster";
 import { Keys } from "./pages/Keys";
@@ -11,7 +11,7 @@ import { Logs, RequestLog } from "./pages/Logs";
 import { Metrics } from "./pages/Metrics";
 import { Models } from "./pages/Models";
 import { Playground } from "./pages/Playground";
-import { useTheme, useWide } from "./theme";
+import { useTheme } from "./theme";
 
 type PageId = "metrics" | "logs" | "access" | "models" | "cluster";
 
@@ -79,7 +79,6 @@ export function App() {
   const [page, setPage] = useState<PageId>(currentPage);
   const [loginError] = useState(takeLoginError);
   const [theme, toggleTheme] = useTheme();
-  const [wide, toggleWide] = useWide();
 
   const refresh = useCallback(async () => {
     try {
@@ -160,9 +159,6 @@ export function App() {
               <DocsIcon />
             </a>
           )}
-          <IconButton label={wide ? "Use a centred column" : "Use the full window width"} onClick={toggleWide}>
-            {wide ? <NarrowIcon /> : <WidenIcon />}
-          </IconButton>
           <IconButton label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"} onClick={toggleTheme}>
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
           </IconButton>

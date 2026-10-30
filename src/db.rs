@@ -1573,6 +1573,82 @@ pub async fn selection_totals(
     .await
 }
 
+/// One model's requests in one hour, for the model hub's status bar.
+#[derive(Debug)]
+pub struct ModelHour {
+    pub model_name: String,
+    /// Start of the hour (Unix seconds).
+    pub bucket: i64,
+    pub requests: i64,
+    pub errors: i64,
+}
+
+/// Each of `models`' requests per hour since `since`, of one key or within `projects` when given.
+pub async fn model_hours(
+    pool: &PgPool,
+    since: DateTime<Utc>,
+    models: &[String],
+    key_id: Option<Uuid>,
+    projects: Option<&[Uuid]>,
+) -> sqlx::Result<Vec<ModelHour>> {
+    sqlx::query_as!(
+        ModelHour,
+        r#"SELECT model_name, (floor(extract(epoch FROM ts) / 3600) * 3600)::bigint AS "bucket!",
+                  count(*) AS "requests!", count(*) FILTER (WHERE status_code >= 400) AS "errors!"
+           FROM request_logs
+           WHERE ts >= $1 AND model_name = ANY($2) AND ($3::uuid IS NULL OR key_id = $3) AND ($4::uuid[] IS NULL OR project_id = ANY($4))
+           GROUP BY 1, 2"#,
+        since,
+        models,
+        key_id,
+        projects,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// How fast one model answered its successful requests, for the model hub.
+#[derive(Debug)]
+pub struct ModelSpeed {
+    pub model_name: String,
+    pub p50_latency_ms: Option<i32>,
+    /// Output tokens and the milliseconds spent generating them (after the first token) in
+    /// streamed answers; non-streamed ones count their whole latency, in `whole_*`.
+    pub stream_tokens: i64,
+    pub stream_ms: i64,
+    pub whole_tokens: i64,
+    pub whole_ms: i64,
+}
+
+/// The successful requests' median latency and generation speed per model, filtered as `model_hours`.
+pub async fn model_speeds(
+    pool: &PgPool,
+    since: DateTime<Utc>,
+    models: &[String],
+    key_id: Option<Uuid>,
+    projects: Option<&[Uuid]>,
+) -> sqlx::Result<Vec<ModelSpeed>> {
+    sqlx::query_as!(
+        ModelSpeed,
+        r#"SELECT model_name,
+                  percentile_disc(0.5) WITHIN GROUP (ORDER BY latency_ms) AS "p50_latency_ms?",
+                  coalesce(sum(output_tokens) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms), 0)::bigint AS "stream_tokens!",
+                  coalesce(sum(latency_ms - ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms), 0)::bigint AS "stream_ms!",
+                  coalesce(sum(output_tokens) FILTER (WHERE ttft_ms IS NULL), 0)::bigint AS "whole_tokens!",
+                  coalesce(sum(latency_ms) FILTER (WHERE ttft_ms IS NULL), 0)::bigint AS "whole_ms!"
+           FROM request_logs
+           WHERE ts >= $1 AND model_name = ANY($2) AND ($3::uuid IS NULL OR key_id = $3) AND ($4::uuid[] IS NULL OR project_id = ANY($4))
+             AND status_code < 400
+           GROUP BY 1"#,
+        since,
+        models,
+        key_id,
+        projects,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct KeyUsageRow {
     pub key_id: Option<Uuid>,
