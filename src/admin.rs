@@ -2314,8 +2314,6 @@ pub(crate) struct LogQuery {
     q: Option<String>,
     /// Just the requests whose stored response called this tool (`web_search` for web searches).
     tool: Option<String>,
-    /// Just the logged turns of one conversation, as `GET /logs/{id}/bodies` gives it.
-    conversation: Option<String>,
 }
 
 async fn logs(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<LogQuery>) -> R<Json<Vec<db::LogRow>>> {
@@ -2332,10 +2330,6 @@ async fn logs(State(state): State<AppState>, Extension(access): Extension<Access
         return Err(AdminError::bad_request("q can be at most 200 characters"));
     }
     let tool = q.tool.as_deref().map(str::trim).filter(|t| !t.is_empty());
-    let conversation = match q.conversation.as_deref().filter(|c| !c.is_empty()) {
-        Some(c) => Some(hex::decode(c).map_err(|_| AdminError::bad_request("conversation must be hex"))?),
-        None => None,
-    };
     // The picked project's requests, within what the caller may see.
     let picked = q.project_id.map(|p| [p]);
     let filter = db::LogFilter {
@@ -2351,7 +2345,6 @@ async fn logs(State(state): State<AppState>, Extension(access): Extension<Access
         bodies: q.bodies.unwrap_or(false),
         text,
         tool,
-        conversation: conversation.as_deref(),
         body_days: state.settings.get().prompt_log_retention_days,
     };
     Ok(Json(db::recent_logs(&state.db, &filter).await?))
@@ -2390,8 +2383,6 @@ pub(crate) struct BodiesView {
     /// may see them.
     previous: Option<Uuid>,
     next: Option<Uuid>,
-    /// The conversation, for the request log's `conversation` filter.
-    conversation: Option<String>,
 }
 
 /// `GET /logs/{id}/bodies`: a logged request's prompt and response. An entry the caller may not
@@ -2409,7 +2400,6 @@ async fn log_bodies(State(state): State<AppState>, Extension(access): Extension<
         status: row.status,
         previous,
         next,
-        conversation: row.conversation.map(hex::encode),
     }))
 }
 

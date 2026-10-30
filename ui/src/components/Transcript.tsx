@@ -267,10 +267,10 @@ function GuardrailSteps({ steps }: { steps: GuardrailStep[] }) {
 type View = "sent" | "screened" | "json";
 
 /**
- * A logged request's prompt and response (prompt logging), loaded when shown. `onConversation`
- * filters the log to the conversation's turns.
+ * A logged request's prompt and response (prompt logging), loaded when shown, with the turns
+ * before and after it in its conversation.
  */
-export function Bodies({ id, api: apiName, onConversation }: { id: string; api: string; onConversation?: (conversation: string) => void }) {
+export function Bodies({ id, api: apiName }: { id: string; api: string }) {
   const [current, setCurrent] = useState(id);
   const [data, setData] = useState<LogBodies | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -355,14 +355,6 @@ export function Bodies({ id, api: apiName, onConversation }: { id: string; api: 
             Next turn
           </Button>
         )}
-        {data.conversation && onConversation && (
-          <Button variant="ghost" onClick={() => onConversation(data.conversation!)}>
-            All turns
-          </Button>
-        )}
-        <Button variant="ghost" onClick={() => navigator.clipboard?.writeText(JSON.stringify(data, null, 2))}>
-          Copy JSON
-        </Button>
       </div>
     </div>
   );

@@ -1384,8 +1384,6 @@ pub struct LogFilter<'a> {
     pub text: Option<&'a str>,
     /// Entries whose response called this tool.
     pub tool: Option<&'a str>,
-    /// The logged turns of one conversation (`request_bodies.conversation`).
-    pub conversation: Option<&'a [u8]>,
     /// Days logged bodies are kept: older entries report theirs as expired.
     pub body_days: u32,
 }
@@ -1393,7 +1391,7 @@ pub struct LogFilter<'a> {
 impl LogFilter<'_> {
     /// Whether the filter looks inside stored bodies.
     pub fn by_content(&self) -> bool {
-        self.bodies || self.text.is_some() || self.tool.is_some() || self.conversation.is_some()
+        self.bodies || self.text.is_some() || self.tool.is_some()
     }
 }
 
@@ -1407,7 +1405,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
                   l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
                   d.upstream_model AS "upstream_model?", c.name AS "credential_name?", b.tool_calls AS "tool_calls?",
-                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $14)
+                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)
                        THEN 'expired' ELSE l.bodies END AS "bodies?"
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
                 LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id
@@ -1423,7 +1421,6 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
              AND (NOT $10 OR b.id IS NOT NULL)
              AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))
              AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text])
-             AND ($13::bytea IS NULL OR b.conversation = $13)
            ORDER BY l.ts DESC LIMIT $1"#,
         f.limit,
         f.model,
@@ -1437,7 +1434,6 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
         f.bodies,
         f.text,
         f.tool,
-        f.conversation,
         f.body_days as i32,
     )
     .fetch_all(pool)

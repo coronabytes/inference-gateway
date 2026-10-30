@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  d.upstream_model AS \"upstream_model?\", c.name AS \"credential_name?\", b.tool_calls AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $14)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n                LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id\n                LEFT JOIN request_bodies b ON b.id = l.id\n           WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)\n             AND ($3::uuid IS NULL OR l.key_id = $3)\n             AND (NOT $4 OR l.status_code >= 400)\n             AND ($5::timestamptz IS NULL OR l.ts >= $5)\n             AND ($6::timestamptz IS NULL OR l.ts < $6)\n             AND ($7::uuid[] IS NULL OR l.project_id = ANY($7))\n             AND ($8::jsonb IS NULL OR l.labels @> $8)\n             AND (NOT $9 OR (l.key_id IS NOT NULL AND k.id IS NULL))\n             AND (NOT $10 OR b.id IS NOT NULL)\n             AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))\n             AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text])\n             AND ($13::bytea IS NULL OR b.conversation = $13)\n           ORDER BY l.ts DESC LIMIT $1",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  d.upstream_model AS \"upstream_model?\", c.name AS \"credential_name?\", b.tool_calls AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n                LEFT JOIN deployments d ON d.id = l.deployment_id LEFT JOIN credentials c ON c.id = d.credential_id\n                LEFT JOIN request_bodies b ON b.id = l.id\n           WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)\n             AND ($3::uuid IS NULL OR l.key_id = $3)\n             AND (NOT $4 OR l.status_code >= 400)\n             AND ($5::timestamptz IS NULL OR l.ts >= $5)\n             AND ($6::timestamptz IS NULL OR l.ts < $6)\n             AND ($7::uuid[] IS NULL OR l.project_id = ANY($7))\n             AND ($8::jsonb IS NULL OR l.labels @> $8)\n             AND (NOT $9 OR (l.key_id IS NOT NULL AND k.id IS NULL))\n             AND (NOT $10 OR b.id IS NOT NULL)\n             AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))\n             AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text])\n           ORDER BY l.ts DESC LIMIT $1",
   "describe": {
     "columns": [
       {
@@ -332,7 +332,6 @@
         "Bool",
         "Text",
         "Text",
-        "Bytea",
         "Int4"
       ]
     },
@@ -368,5 +367,5 @@
       null
     ]
   },
-  "hash": "6b96fdb24c72602769ec31d5e0e5202413b832b60eaecca8ad7c6cd60bee92c7"
+  "hash": "b8e026221299a3e3a60714decfaebb638e09c83733f82f3a56e5b087c5189ddb"
 }

@@ -68,7 +68,7 @@ const BODIES_STATUS: Record<NonNullable<LogRow["bodies"]>, string> = {
 };
 
 /** What the table leaves out: the whole error, ids, the token breakdown, the logged bodies. */
-function RequestDetails({ r, routed, onConversation }: { r: LogRow; routed: boolean; onConversation: (c: string) => void }) {
+function RequestDetails({ r, routed }: { r: LogRow; routed: boolean }) {
   const readable = r.bodies === "stored" || r.bodies === "truncated";
   return (
     <>
@@ -154,7 +154,7 @@ function RequestDetails({ r, routed, onConversation }: { r: LogRow; routed: bool
           )}
         </tbody>
       </table>
-      {readable && <Bodies key={r.id} id={r.id} api={r.api} onConversation={onConversation} />}
+      {readable && <Bodies key={r.id} id={r.id} api={r.api} />}
     </>
   );
 }
@@ -190,14 +190,13 @@ export function RequestLog() {
   const [labels, setLabels] = useState<Labels>({});
   const labelFilter = labelQuery(labels);
   const [errorsOnly, setErrorsOnly] = useState(false);
-  // Prompt logging: entries with stored bodies, a search of them (sent on Enter), a tool their
-  // responses called, or one conversation's turns.
+  // Prompt logging: entries with stored bodies, a search of them (sent on Enter), or a tool their
+  // responses called.
   const [withBodies, setWithBodies] = useState(false);
   const [contentDraft, setContentDraft] = useState("");
   const [content, setContent] = useState("");
   const [tool, setTool] = useState("");
   const [tools, setTools] = useState<{ name: string; requests: number }[]>([]);
-  const [conversation, setConversation] = useState("");
   const [error, setError] = useState<string | null>(null);
   // The entry whose details the side panel shows; kept while the log refreshes around it.
   const [selected, setSelected] = useState<LogRow | null>(null);
@@ -224,14 +223,13 @@ export function RequestLog() {
     if (withBodies) q.set("bodies", "true");
     if (content) q.set("q", content);
     if (tool) q.set("tool", tool);
-    if (conversation) q.set("conversation", conversation);
     try {
       setRows(await api<LogRow[]>(`/logs?${q}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [time.query, keyId, model, labelFilter, errorsOnly, withBodies, content, tool, conversation]);
+  }, [time.query, keyId, model, labelFilter, errorsOnly, withBodies, content, tool]);
 
   // Tools offered by the tool filter: those of the latest logged responses.
   useEffect(() => {
@@ -287,11 +285,6 @@ export function RequestLog() {
         <Toggle checked={withBodies} onChange={setWithBodies}>
           With prompts
         </Toggle>
-        {conversation && (
-          <Button variant="ghost" onClick={() => setConversation("")}>
-            One conversation · show all
-          </Button>
-        )}
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
@@ -384,7 +377,7 @@ export function RequestLog() {
       </div>
       {selected && (
         <SidePanel title={`${selected.model_name} · ${dateTime(selected.ts)}`} onClose={() => setSelected(null)}>
-          <RequestDetails r={selected} routed={children.has(selected.id)} onConversation={setConversation} />
+          <RequestDetails r={selected} routed={children.has(selected.id)} />
         </SidePanel>
       )}
     </>

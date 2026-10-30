@@ -663,7 +663,6 @@ export interface LogBodies {
   status: "stored" | "truncated" | null;
   previous: string | null;
   next: string | null;
-  conversation: string | null;
 }
 
 export interface LogRow {
