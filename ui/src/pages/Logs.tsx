@@ -287,6 +287,7 @@ export function RequestLog() {
               <th className="num">Latency</th>
               <th className="num">TTFT</th>
               <th className="num">In / out</th>
+              <th aria-label="Guardrails and prompt logging" />
               <th className="num">Cost</th>
             </tr>
           </thead>
@@ -333,7 +334,8 @@ export function RequestLog() {
                         <td className="num">
                           {compact(r.input_tokens + r.cache_read_tokens + r.cache_write_tokens)} / {compact(r.output_tokens)}
                         </td>
-                        <td className="num">
+                        {/* Marks in a column of their own, so they line up whatever the cost's width. */}
+                        <td className="marks">
                           {r.guardrails && r.guardrails.action !== "passed" && (
                             <span className={`guardrail-mark ${r.guardrails.action}`} title={`Guardrails ${r.guardrails.action} the prompt; see details`}>
                               {r.guardrails.action}
@@ -344,8 +346,8 @@ export function RequestLog() {
                               logged
                             </span>
                           )}
-                          {usd(r.cost_usd)}
                         </td>
+                        <td className="num">{usd(r.cost_usd)}</td>
                       </tr>
                     </Fragment>
                   ))}
@@ -354,7 +356,7 @@ export function RequestLog() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={11} className="empty">No requests match these filters.</td>
+                <td colSpan={12} className="empty">No requests match these filters.</td>
               </tr>
             )}
           </tbody>

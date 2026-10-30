@@ -639,7 +639,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Above the composer while the chat is empty: the sample prompts. */
 .chat-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 10px 10px; }
 /* Request log: what the guardrails did, before the cost they add to. */
-.guardrail-mark { font-size: 11px; margin-right: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+.guardrail-mark { display: inline-block; vertical-align: middle; line-height: 16px; font-size: 11px; margin-right: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+td.marks { white-space: nowrap; padding-left: 0; padding-right: 0; }
+td.marks .guardrail-mark:last-child { margin-right: 0; }
 .guardrail-mark.masked { color: var(--warning-text); border-color: var(--status-warning); }
 .guardrail-mark.blocked { color: var(--critical-text); border-color: var(--status-critical); }
 .guardrail-mark.logged { color: var(--link); border-color: var(--link); }
