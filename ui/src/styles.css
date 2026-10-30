@@ -666,7 +666,10 @@ td.marks .guardrail-mark:last-child { margin-right: 0; }
 .composer .composer-attach { width: 34px; height: 34px; flex: none; }
 /* An icon toggle in the composer (web search): lit while on. */
 .composer .icon-btn[aria-pressed="true"],
-.composer .icon-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--wash); color: var(--link); }
+.composer .icon-btn[aria-pressed="true"]:hover:not(:disabled),
+.composer .icon-btn.lit,
+.composer .icon-btn.lit:hover:not(:disabled) { background: var(--wash); color: var(--link); }
+.composer .menu-button { flex: none; }
 /* Files to send with the next message, between the chat bar and the composer. */
 .attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 10px 0; border-top: 1px solid var(--grid); }
 .attachments + .composer { border-top: 0; }
@@ -855,8 +858,11 @@ button.danger-solid:hover:not(:disabled) { filter: brightness(1.08); background:
 }
 .split-button.primary > .menu-button > .split-toggle { border-left: 1px solid color-mix(in srgb, var(--accent-ink) 25%, transparent); }
 .select-popup.menu-popup { position: fixed; left: auto; min-width: 160px; z-index: 40; }
-.menu-popup [role="menuitem"] { border: 0; background: transparent; text-align: left; padding: 6px 12px; color: var(--text-secondary); }
-.menu-popup [role="menuitem"]:hover:not(:disabled), .menu-popup [role="menuitem"]:focus-visible { background: var(--wash); color: var(--text-primary); }
+.menu-popup :is([role="menuitem"], [role="menuitemradio"]) { border: 0; background: transparent; text-align: left; padding: 6px 12px; color: var(--text-secondary); }
+.menu-popup :is([role="menuitem"], [role="menuitemradio"]):hover:not(:disabled),
+.menu-popup :is([role="menuitem"], [role="menuitemradio"]):focus-visible { background: var(--wash); color: var(--text-primary); }
+.menu-popup [role="menuitemradio"][aria-checked="true"] { color: var(--text-primary); }
+.menu-check { display: inline-block; width: 1.3em; color: var(--link); }
 .menu-popup [role="menuitem"].danger { color: var(--critical-text); }
 .menu-popup [role="menuitem"].danger:hover:not(:disabled) { color: var(--critical-text); }
 /* The page head's "More" button, with its chevron. */

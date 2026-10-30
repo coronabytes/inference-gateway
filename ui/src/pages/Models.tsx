@@ -160,7 +160,7 @@ interface AllModels {
   aliases: ModelAlias[];
 }
 
-const TABS = ["hub", "deployments", "guardrails", "credentials", "pricing", "playground"] as const;
+const TABS = ["hub", "playground", "deployments", "guardrails", "credentials", "pricing"] as const;
 
 export function Models() {
   const [deps, setDeps] = useState<Deployment[]>([]);
@@ -419,11 +419,11 @@ export function Models() {
       label="Models"
       options={[
         { value: "hub", label: "Hub" },
+        { value: "playground", label: "Playground" },
         { value: "deployments", label: "Deployments" },
         { value: "guardrails", label: "Guardrails" },
         { value: "credentials", label: "Credentials" },
         { value: "pricing", label: "Pricing" },
-        { value: "playground", label: "Playground" },
       ]}
       value={tab}
       onChange={setTab}

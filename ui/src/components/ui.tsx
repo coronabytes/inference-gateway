@@ -270,6 +270,17 @@ export function GlobeIcon() {
   );
 }
 
+/** Reasoning effort: a gauge. */
+export function EffortIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.5 18a9 9 0 1 1 15 0" />
+      <path d="M12 13.5 16 9" />
+      <circle cx="12" cy="14" r="1" />
+    </svg>
+  );
+}
+
 /** A menu of more actions: three bars. */
 export function MenuIcon() {
   return (
