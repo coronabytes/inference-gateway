@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type BudgetPeriod, type Guardrail, type Project, type ProjectInput, type PromptLogging } from "../api";
 import { Banner, Button, MenuButton, MultiSelect, PageActions, Segmented, Select, TextArea, TextInput, Toggle, useDebounced } from "../components/controls";
 import { Badge, BudgetMeter, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, optNum, type ConfirmRequest } from "../components/ui";
+import { offerDeleteStoredPrompts } from "../components/StoredPrompts";
 import { dateTime } from "../format";
 
 /** The project as it is now, as input for saving it with `changes`. */
@@ -70,10 +71,12 @@ export function confirmDelete(p: Project, confirm: (r: ConfirmRequest) => void, 
         Delete the project <strong>{p.name}</strong>?{" "}
         {p.keys
           ? `Its ${p.keys === 1 ? "key is" : `${p.keys} keys are`} deleted with it and stop${p.keys === 1 ? "s" : ""} working.`
-          : "It groups no keys."}
+          : "It groups no keys."}{" "}
+        Prompts and responses its requests logged are deleted too.
       </>
     ),
     action: async () => {
+      await api(`/projects/${p.id}/bodies`, { method: "DELETE" });
       await api(`/projects/${p.id}`, { method: "DELETE" });
       await done();
     },
@@ -176,6 +179,10 @@ export function Projects({ onShowKeys }: { onShowKeys: (project: Project) => voi
                       { label: "Show keys", onClick: () => onShowKeys(p), disabled: !p.keys },
                       { label: p.enabled ? "Deactivate" : "Activate", onClick: () => toggle(p) },
                       { label: "Reset spend", onClick: () => askReset(p), disabled: !p.budget },
+                      {
+                        label: "Delete stored prompts",
+                        onClick: () => offerDeleteStoredPrompts(`/projects/${p.id}`, p.name, setConfirming, { always: true, done: load }).catch((e) => setError((e as Error).message)),
+                      },
                       { label: "Delete", onClick: () => askDelete(p), danger: true },
                     ]}
                   >
@@ -198,6 +205,7 @@ export function Projects({ onShowKeys }: { onShowKeys: (project: Project) => voi
       {editing && (
         <ProjectForm
           initial={editing === "new" ? undefined : editing}
+          confirm={setConfirming}
           onClose={() => setEditing(null)}
           onSaved={async () => {
             setEditing(null);
@@ -211,7 +219,18 @@ export function Projects({ onShowKeys }: { onShowKeys: (project: Project) => voi
 }
 
 /** Creates a project, or edits `initial`; `onSaved` runs once it is saved. */
-export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; onSaved: () => Promise<void>; onClose: () => void }) {
+export function ProjectForm({
+  initial,
+  confirm,
+  onSaved,
+  onClose,
+}: {
+  initial?: Project;
+  /** Asks, once saved, whether to delete what logging stored when logging was just denied. */
+  confirm?: (r: ConfirmRequest) => void;
+  onSaved: () => Promise<void>;
+  onClose: () => void;
+}) {
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [period, setPeriod] = useState<BudgetPeriod | "">(initial?.budget_period ?? "");
@@ -249,6 +268,9 @@ export function ProjectForm({ initial, onSaved, onClose }: { initial?: Project; 
       if (initial) await api(`/projects/${initial.id}`, { method: "PUT", json });
       else await api("/projects", { method: "POST", json });
       await onSaved();
+      if (initial && confirm && initial.prompt_logging !== "deny" && promptLogging === "deny") {
+        await offerDeleteStoredPrompts(`/projects/${initial.id}`, name, confirm);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {

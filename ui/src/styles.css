@@ -624,6 +624,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .guardrail-mark { font-size: 11px; margin-right: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
 .guardrail-mark.masked { color: var(--warning-text); border-color: var(--status-warning); }
 .guardrail-mark.blocked { color: var(--critical-text); border-color: var(--status-critical); }
+.guardrail-mark.logged { color: var(--link); border-color: var(--link); }
+/* A logged request's prompt and response, in the request log's details. */
+.bodies { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; max-width: 980px; }
+.bodies h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.bodies-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.transcript { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.transcript-turn { display: grid; grid-template-columns: 110px 1fr; gap: 10px; }
+.transcript-role { font-size: 12px; color: var(--text-secondary); padding-top: 2px; overflow-wrap: anywhere; }
+.transcript-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.transcript-tool, .transcript-reasoning { margin: 4px 0; }
+.transcript-sources { margin: 4px 0 0; padding-left: 18px; }
+.transcript-change { display: flex; flex-direction: column; gap: 2px; font-size: 13px; margin: 4px 0; }
+.transcript-change del { color: var(--critical-text); }
+.transcript-change ins { color: var(--good-text, var(--text-primary)); text-decoration: none; }
 .samples { display: flex; flex-wrap: wrap; gap: 6px; }
 .samples button { font-size: 13px; padding: 4px 12px; color: var(--text-secondary); }
 .samples button:hover:not(:disabled) { color: var(--text-primary); border-color: var(--axis); }

@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api, type AuditEntry, type LogRow } from "../api";
 import { Button, Select, Tabs, TextInput, TimeRange, Toggle, useHashTab, useTimeRange } from "../components/controls";
+import { Bodies } from "../components/Transcript";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
 import { LabelFilter } from "../components/LabelInput";
 import { Badge, ChildArrowIcon, ErrorBanner } from "../components/ui";
@@ -43,8 +44,19 @@ function LabelList({ labels, onPick }: { labels: LogRow["labels"]; onPick: (key:
   );
 }
 
-/** What the table leaves out: the whole error, ids, the token breakdown. */
-function RequestDetails({ r }: { r: LogRow }) {
+/** What a logged entry's `bodies` says, for its details. */
+const BODIES_STATUS: Record<NonNullable<LogRow["bodies"]>, string> = {
+  stored: "stored",
+  truncated: "stored, long texts cut to the size limit",
+  expired: "expired: removed after their retention",
+  dropped: "not kept: the gateway's buffer was full, or the database refused them",
+  deleted: "deleted on request",
+};
+
+/** What the table leaves out: the whole error, ids, the token breakdown, the logged bodies. */
+function RequestDetails({ r, routed, onConversation }: { r: LogRow; routed: boolean; onConversation: (c: string) => void }) {
+  const [shown, setShown] = useState(false);
+  const readable = r.bodies === "stored" || r.bodies === "truncated";
   return (
     <>
       {r.error && <pre className="raw wrap">{readableError(r.error)}</pre>}
@@ -100,8 +112,26 @@ function RequestDetails({ r }: { r: LogRow }) {
               </td>
             </tr>
           )}
+          {r.bodies && (
+            <tr>
+              <th>Prompt and response</th>
+              <td>
+                {BODIES_STATUS[r.bodies]}
+                {routed && " · the routed call below has the response"}
+                {readable && !shown && (
+                  <>
+                    {" "}
+                    <Button variant="ghost" onClick={() => setShown(true)}>
+                      Show
+                    </Button>
+                  </>
+                )}
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
+      {shown && <Bodies id={r.id} api={r.api} onConversation={onConversation} />}
     </>
   );
 }
@@ -137,6 +167,14 @@ export function RequestLog() {
   const [labels, setLabels] = useState<Labels>({});
   const labelFilter = labelQuery(labels);
   const [errorsOnly, setErrorsOnly] = useState(false);
+  // Prompt logging: entries with stored bodies, a search of them (sent on Enter), a tool their
+  // responses called, or one conversation's turns.
+  const [withBodies, setWithBodies] = useState(false);
+  const [contentDraft, setContentDraft] = useState("");
+  const [content, setContent] = useState("");
+  const [tool, setTool] = useState("");
+  const [tools, setTools] = useState<{ name: string; requests: number }[]>([]);
+  const [conversation, setConversation] = useState("");
   const [error, setError] = useState<string | null>(null);
   // Entries whose details are shown beneath them.
   const [details, setDetails] = useState<Set<string>>(new Set());
@@ -160,21 +198,34 @@ export function RequestLog() {
     if (model.trim()) q.set("model", model.trim());
     if (labelFilter) q.set("labels", labelFilter);
     if (errorsOnly) q.set("errors", "true");
+    if (withBodies) q.set("bodies", "true");
+    if (content) q.set("q", content);
+    if (tool) q.set("tool", tool);
+    if (conversation) q.set("conversation", conversation);
     try {
       setRows(await api<LogRow[]>(`/logs?${q}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [time.query, keyId, model, labelFilter, errorsOnly]);
+  }, [time.query, keyId, model, labelFilter, errorsOnly, withBodies, content, tool, conversation]);
+
+  // Tools offered by the tool filter: those of the latest logged responses.
+  useEffect(() => {
+    api<{ name: string; requests: number }[]>("/logs/tools")
+      .then(setTools)
+      .catch(() => setTools([]));
+  }, []);
 
   const pickLabel = (key: string, value: string) => setLabels((l) => withLabel(l, key, value));
 
   useEffect(() => {
     load();
+    // Content searches are audited: each is run once, not every 10 seconds.
+    if (content || tool) return;
     const t = setInterval(load, 10_000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, content, tool]);
 
   return (
     <>
@@ -186,6 +237,40 @@ export function RequestLog() {
         <Toggle checked={errorsOnly} onChange={setErrorsOnly}>
           Errors only
         </Toggle>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setContent(contentDraft.trim());
+          }}
+        >
+          <TextInput
+            caption="Content"
+            type="search"
+            placeholder="search, Enter"
+            hint='Searches the stored prompts (after guardrails masked them) and responses of logged requests. Whole words; "a phrase", or, -word and prefix:* work. Each search is recorded in the audit log.'
+            value={contentDraft}
+            onChange={(e) => {
+              setContentDraft(e.target.value);
+              if (!e.target.value) setContent("");
+            }}
+          />
+        </form>
+        {tools.length > 0 && (
+          <Select
+            caption="Tool called"
+            value={tool}
+            onChange={setTool}
+            options={[{ value: "", label: "Any" }, ...tools.map((t) => ({ value: t.name, label: t.name, note: `${t.requests}` }))]}
+          />
+        )}
+        <Toggle checked={withBodies} onChange={setWithBodies}>
+          With prompts
+        </Toggle>
+        {conversation && (
+          <Button variant="ghost" onClick={() => setConversation("")}>
+            One conversation · show all
+          </Button>
+        )}
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
@@ -247,6 +332,11 @@ export function RequestLog() {
                               {r.guardrails.action}
                             </span>
                           )}
+                          {(r.bodies === "stored" || r.bodies === "truncated") && (
+                            <span className="guardrail-mark logged" title="Its prompt and response are stored; see details">
+                              logged
+                            </span>
+                          )}
                           {usd(r.cost_usd)}
                         </td>
                         <td className="num">
@@ -258,7 +348,7 @@ export function RequestLog() {
                       {details.has(r.id) && (
                         <tr className="child-row">
                           <td colSpan={12}>
-                            <RequestDetails r={r} />
+                            <RequestDetails r={r} routed={r === p && calls.length > 0} onConversation={setConversation} />
                           </td>
                         </tr>
                       )}

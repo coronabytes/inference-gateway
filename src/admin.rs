@@ -72,13 +72,17 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/keys/{id}", axum::routing::put(update_key).delete(delete_key))
         .route("/keys/{id}/reset-spend", post(reset_spend))
         .route("/keys/{id}/regenerate", post(regenerate_key))
+        .route("/keys/{id}/bodies", get(key_bodies).delete(delete_key_bodies))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/options", get(project_options))
         .route("/projects/{id}", axum::routing::put(update_project).delete(delete_project))
         .route("/projects/{id}/reset-spend", post(reset_project_spend))
+        .route("/projects/{id}/bodies", get(project_bodies).delete(delete_project_bodies))
         .route("/metrics", get(metrics))
         .route("/logs", get(logs))
         .route("/logs/labels", get(log_labels))
+        .route("/logs/tools", get(log_tools))
+        .route("/logs/{id}/bodies", get(log_bodies))
         .route("/audit", get(audit_log))
         .route("/usage/keys", get(key_usage))
         .route("/cluster", get(cluster))
@@ -2303,9 +2307,23 @@ pub(crate) struct LogQuery {
     /// With `range=custom`: first and last day, inclusive (UTC).
     from: Option<chrono::NaiveDate>,
     to: Option<chrono::NaiveDate>,
+    /// Just the requests whose prompts and responses are stored (prompt logging).
+    bodies: Option<bool>,
+    /// Just the requests whose stored prompt (after guardrails) or response contains these words:
+    /// `"a phrase"`, `or`, `-word` and `prefix:*` work as in Postgres' `websearch_to_tsquery`.
+    q: Option<String>,
+    /// Just the requests whose stored response called this tool (`web_search` for web searches).
+    tool: Option<String>,
+    /// Just the logged turns of one conversation, as `GET /logs/{id}/bodies` gives it.
+    conversation: Option<String>,
 }
 
-async fn logs(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<LogQuery>) -> R<Json<Vec<db::LogRow>>> {
+async fn logs(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Extension(actor): Extension<Actor>,
+    Query(q): Query<LogQuery>,
+) -> R<Json<Vec<db::LogRow>>> {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     let model = q.model.as_deref().map(str::trim).filter(|m| !m.is_empty());
     let (since, until) = log_window(q.range.as_deref(), q.from, q.to, Utc::now())?;
@@ -2314,20 +2332,169 @@ async fn logs(State(state): State<AppState>, Extension(access): Extension<Access
     if q.project_id.is_some_and(|p| !access.sees(Some(p))) {
         return Err(AdminError(StatusCode::FORBIDDEN, "not your project".into()));
     }
+    let text = q.q.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    if text.is_some_and(|t| t.chars().count() > 200) {
+        return Err(AdminError::bad_request("q can be at most 200 characters"));
+    }
+    let tool = q.tool.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let conversation = match q.conversation.as_deref().filter(|c| !c.is_empty()) {
+        Some(c) => Some(hex::decode(c).map_err(|_| AdminError::bad_request("conversation must be hex"))?),
+        None => None,
+    };
     // The picked project's requests, within what the caller may see.
     let picked = q.project_id.map(|p| [p]);
-    Ok(Json(db::recent_logs(
-        &state.db,
+    let filter = db::LogFilter {
         limit,
         model,
-        q.key_id,
-        q.deleted_keys.unwrap_or(false),
-        errors,
+        key_id: q.key_id,
+        deleted_keys: q.deleted_keys.unwrap_or(false),
+        errors_only: errors,
         since,
         until,
-        picked.as_ref().map(|p| &p[..]).or(access.projects()),
-        labels.as_ref(),
-    ).await?))
+        projects: picked.as_ref().map(|p| &p[..]).or(access.projects()),
+        labels: labels.as_ref(),
+        bodies: q.bodies.unwrap_or(false),
+        text,
+        tool,
+        conversation: conversation.as_deref(),
+        body_days: state.settings.get().prompt_log_retention_days,
+    };
+    let rows = db::recent_logs(&state.db, &filter).await?;
+    // Searching logged prompts tells what they contain, so it is audited like reading them.
+    if text.is_some() || tool.is_some() {
+        let details = json!({ "q": text, "tool": tool, "project_id": q.project_id, "matches": rows.len() });
+        audit::Event::new("request_log", "search_bodies").details(details).record(&state, &actor).await;
+    }
+    Ok(Json(rows))
+}
+
+/// What the latest logged responses' tools are sampled from.
+const TOOL_SAMPLE: i64 = 1000;
+
+/// `GET /logs/tools`: the tools the latest logged responses called, most used first, for the
+/// request log's tool filter.
+async fn log_tools(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<db::ToolUse>>> {
+    Ok(Json(db::recent_tools(&state.db, TOOL_SAMPLE, access.projects()).await?))
+}
+
+/// A logged request's bodies (see `capture`).
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct BodiesView {
+    /// The request as the client sent it.
+    #[schema(value_type = Option<Object>)]
+    request: Option<Value>,
+    /// The request as the model got it, when guardrails changed it.
+    #[schema(value_type = Option<Object>)]
+    screened_request: Option<Value>,
+    /// What each guardrail was given, found (matched text included), did and answered.
+    #[schema(value_type = Option<Vec<Object>>)]
+    guardrails: Option<Value>,
+    /// The response as the client got it; a stream put back together into one document.
+    #[schema(value_type = Option<Object>)]
+    response: Option<Value>,
+    /// Sizes as sent and received, before placeholders and cuts.
+    request_bytes: i32,
+    response_bytes: i32,
+    /// `stored` or `truncated`.
+    status: Option<String>,
+    /// The logged turn before this one in its conversation, and the one after, where the caller
+    /// may see them.
+    previous: Option<Uuid>,
+    next: Option<Uuid>,
+    /// The conversation, for the request log's `conversation` filter.
+    conversation: Option<String>,
+}
+
+/// `GET /logs/{id}/bodies`: a logged request's prompt and response. Every read is audited. An
+/// entry the caller may not see looks like one without bodies.
+async fn log_bodies(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+) -> R<Json<BodiesView>> {
+    let row = db::log_bodies(&state.db, id).await?.filter(|r| access.sees(r.project_id)).ok_or_else(AdminError::not_found)?;
+    let (previous, next) = db::turn_links(&state.db, &row, access.projects()).await?;
+    let details = json!({ "project_id": row.project_id, "key_id": row.key_id });
+    audit::Event::new("request_log", "read_bodies").on(id, &row.model_name).details(details).record(&state, &actor).await;
+    Ok(Json(BodiesView {
+        request: row.request,
+        screened_request: row.screened_request,
+        guardrails: row.guardrails,
+        response: row.response,
+        request_bytes: row.request_bytes,
+        response_bytes: row.response_bytes,
+        status: row.status,
+        previous,
+        next,
+        conversation: row.conversation.map(hex::encode),
+    }))
+}
+
+/// How many prompts and responses are stored for a key or project.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct StoredBodies {
+    stored: i64,
+}
+
+/// How many were deleted.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct DeletedBodies {
+    deleted: u64,
+}
+
+/// `GET /keys/{id}/bodies`: how many of the key's prompts and responses are stored.
+async fn key_bodies(State(state): State<AppState>, Extension(access): Extension<Access>, Path(id): Path<Uuid>) -> R<Json<StoredBodies>> {
+    let k = db::get_key(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
+    check_sees_key(&access, &k)?;
+    Ok(Json(StoredBodies { stored: db::count_bodies(&state.db, db::BodiesOf::Key(id)).await? }))
+}
+
+/// `DELETE /keys/{id}/bodies`: deletes the key's stored prompts and responses now, rather than
+/// at the end of their retention.
+async fn delete_key_bodies(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+) -> R<Json<DeletedBodies>> {
+    let k = db::get_key(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
+    check_sees_key(&access, &k)?;
+    let deleted = remove_bodies(&state, db::BodiesOf::Key(id)).await?;
+    audit::Event::new("key", "delete_bodies").on(id, &k.name).details(json!({ "deleted": deleted })).record(&state, &actor).await;
+    Ok(Json(DeletedBodies { deleted }))
+}
+
+/// `GET /projects/{id}/bodies`: how many prompts and responses of requests made in the project
+/// are stored.
+async fn project_bodies(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<StoredBodies>> {
+    db::get_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
+    Ok(Json(StoredBodies { stored: db::count_bodies(&state.db, db::BodiesOf::Project(id)).await? }))
+}
+
+/// `DELETE /projects/{id}/bodies`: deletes the stored prompts and responses of every request made
+/// in the project, also by keys that have left it since.
+async fn delete_project_bodies(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<Json<DeletedBodies>> {
+    let p = db::get_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
+    let deleted = remove_bodies(&state, db::BodiesOf::Project(id)).await?;
+    audit::Event::new("project", "delete_bodies").on(id, &p.name).details(json!({ "deleted": deleted })).record(&state, &actor).await;
+    Ok(Json(DeletedBodies { deleted }))
+}
+
+/// Deletes stored bodies in their own task, so a client that stops waiting does not cut it
+/// short, under a lock per key or project, so two clicks do not run it twice.
+async fn remove_bodies(state: &AppState, of: db::BodiesOf) -> R<u64> {
+    let id = match of {
+        db::BodiesOf::Key(id) | db::BodiesOf::Project(id) => id,
+    };
+    let lock = 0x626f_6469_6573_0000 ^ (id.as_u128() as i64 & 0xffff_ffff); // "bodies"
+    let state = state.clone();
+    let task = tokio::spawn(async move { db::with_lock(&state.db, lock, db::delete_bodies(&state.db, of)).await });
+    let done = task.await.map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, format!("deleting the bodies failed: {e}")))?;
+    match done? {
+        Some(deleted) => Ok(deleted?),
+        None => Err(AdminError::conflict("these bodies are already being deleted")),
+    }
 }
 
 /// Label suggestions are read from this many of the latest labelled requests...

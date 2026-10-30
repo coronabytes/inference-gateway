@@ -1,0 +1,324 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.parent_id = ANY($1) ORDER BY l.ts",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ts",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "ts"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "key_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "key_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "key_name?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "model_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "model_name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "deployment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "deployment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "api",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "api"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "stream",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "stream"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "status_code",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "status_code"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "latency_ms",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "latency_ms"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "ttft_ms",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "ttft_ms"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "input_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "input_tokens"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "output_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "output_tokens"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "cache_read_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "cache_read_tokens"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "cache_write_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "cache_write_tokens"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "cost_usd",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "cost_usd"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "parent_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "parent_id"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "labels",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "labels"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "guardrails",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "guardrails"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "guardrail_cost_usd",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "guardrail_cost_usd"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "searches",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "searches"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "search_cost_usd",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "search_cost_usd"
+          }
+        }
+      },
+      {
+        "ordinal": 25,
+        "name": "bodies?",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "806ff6f92a4ac1c8eb25b19baf87a45bbb5eb2d442df0a097e4e4c1c5ab63e7c"
+}

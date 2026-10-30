@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH d AS (DELETE FROM request_bodies WHERE id IN (SELECT id FROM request_bodies WHERE key_id = $1 LIMIT 5000) RETURNING id)\n                 UPDATE request_logs l SET bodies = 'deleted' FROM d WHERE l.id = d.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b0cb360a076191ec91d841282063fa4e0b5dc9ba528ad241b093893153077b2a"
+}

@@ -636,6 +636,36 @@ export interface ModelAlias {
 
 export type AliasInput = Pick<ModelAlias, "model_name" | "target_id" | "enabled">;
 
+/** What each guardrail of a logged request was given, found, did and answered. */
+export interface GuardrailStep {
+  guardrail: string;
+  provider: string;
+  action: "passed" | "flagged" | "masked" | "blocked" | "skipped" | "failed";
+  duration_ms?: number;
+  cost_usd?: number;
+  findings?: { policy: string; kind: string; action: string; matched?: string; confidence?: string }[];
+  /** The texts it rewrote, by JSON pointer into the request. */
+  changes?: { pointer: string; before: string; after: string }[];
+  /** Its blocking message. */
+  message?: string | null;
+  error?: string;
+  provider_response?: unknown;
+}
+
+/** A logged request's prompt and response (`/logs/{id}/bodies`). */
+export interface LogBodies {
+  request: unknown;
+  screened_request: unknown;
+  guardrails: GuardrailStep[] | null;
+  response: unknown;
+  request_bytes: number;
+  response_bytes: number;
+  status: "stored" | "truncated" | null;
+  previous: string | null;
+  next: string | null;
+  conversation: string | null;
+}
+
 export interface LogRow {
   id: string;
   ts: string;
@@ -668,6 +698,8 @@ export interface LogRow {
   searches: number;
   /** The searches' part of `cost_usd`. */
   search_cost_usd: number;
+  /** Prompt logging: whether its prompt and response were stored, and what became of them. */
+  bodies: "stored" | "truncated" | "expired" | "dropped" | "deleted" | null;
 }
 
 /** An audit log entry: who changed what through the admin API. */

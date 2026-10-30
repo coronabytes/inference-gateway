@@ -31,6 +31,7 @@ import {
   optNum,
   type ConfirmRequest,
 } from "../components/ui";
+import { offerDeleteStoredPrompts } from "../components/StoredPrompts";
 import { dateTime } from "../format";
 import { ProjectForm, Projects, setProjectEnabled } from "./Projects";
 import { Admins } from "./Settings";
@@ -420,9 +421,27 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
                   setEditing(null);
                   setConfirming({
                     title: "Delete virtual key",
-                    message: <>Delete <strong>{k.name}</strong>? Clients using this key stop working immediately, on every replica.</>,
-                    action: () => act(() => api(`/keys/${k.id}`, { method: "DELETE" })),
+                    message: (
+                      <>
+                        Delete <strong>{k.name}</strong>? Clients using this key stop working immediately, on every replica. Prompts and responses it
+                        logged are deleted too.
+                      </>
+                    ),
+                    action: () =>
+                      act(async () => {
+                        await api(`/keys/${k.id}/bodies`, { method: "DELETE" });
+                        await api(`/keys/${k.id}`, { method: "DELETE" });
+                      }),
                   });
+                }
+              : undefined
+          }
+          onDeleteStoredPrompts={
+            editing.mode === "edit"
+              ? () => {
+                  const k = editing.key;
+                  setEditing(null);
+                  offerDeleteStoredPrompts(`/keys/${k.id}`, k.name, setConfirming, { always: true, done: load }).catch((e) => setError((e as Error).message));
                 }
               : undefined
           }
@@ -435,6 +454,10 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
             }
             setEditing(null);
             await load();
+            // Logging just turned off: offer to delete what it stored.
+            if (editing.mode === "edit" && editing.key.prompt_logging && !input.prompt_logging) {
+              await offerDeleteStoredPrompts(`/keys/${editing.key.id}`, input.name, setConfirming, { done: load });
+            }
           }}
         />
       )}
@@ -442,6 +465,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
       {editingProject && (
         <ProjectForm
           initial={editingProject}
+          confirm={setConfirming}
           onClose={() => setEditingProject(null)}
           onSaved={async () => {
             setEditingProject(null);
@@ -473,6 +497,7 @@ function KeyForm({
   initial,
   onSave,
   onDelete,
+  onDeleteStoredPrompts,
   onClose,
 }: {
   /** Tags deployments carry; keys can only pick from these. */
@@ -490,6 +515,8 @@ function KeyForm({
   onSave: (k: KeyInput) => Promise<void>;
   /** Offered when editing: closes the dialog and asks for confirmation. */
   onDelete?: () => void;
+  /** Offered when editing: closes the dialog and offers to delete the key's stored prompts. */
+  onDeleteStoredPrompts?: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
@@ -573,6 +600,11 @@ function KeyForm({
           {onDelete && (
             <Button variant="danger" onClick={onDelete}>
               Delete
+            </Button>
+          )}
+          {onDeleteStoredPrompts && (
+            <Button variant="ghost" onClick={onDeleteStoredPrompts}>
+              Delete stored prompts
             </Button>
           )}
           <Button onClick={onClose}>Cancel</Button>

@@ -1,0 +1,196 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id, l.ts, l.project_id, l.key_id, l.model_name, l.bodies AS status, b.request, b.screened_request,\n                  b.guardrails, b.response, b.request_bytes, b.response_bytes, b.response_id, b.previous_response_id,\n                  b.conversation\n           FROM request_logs l JOIN request_bodies b ON b.id = l.id WHERE l.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ts",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "ts"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "key_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "key_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "model_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "model_name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "bodies"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "request",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "request"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "screened_request",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "screened_request"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "guardrails",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "guardrails"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "response",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "response"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "request_bytes",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "request_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "response_bytes",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "response_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "response_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "response_id"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "previous_response_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "previous_response_id"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "conversation",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "conversation"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "e0f24a336b65a36bab328454383544b940fc0fd92eea80662c681aad255bd3fb"
+}

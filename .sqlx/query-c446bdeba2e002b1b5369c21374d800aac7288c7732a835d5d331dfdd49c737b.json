@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.parent_id = ANY($1) ORDER BY l.ts",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.id = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -277,18 +277,25 @@
             "name": "search_cost_usd"
           }
         }
+      },
+      {
+        "ordinal": 25,
+        "name": "bodies?",
+        "type_info": "Text",
+        "origin": "Expression"
       }
     ],
     "parameters": {
       "Left": [
-        "UuidArray"
+        "UuidArray",
+        "Int4"
       ]
     },
     "nullable": [
       false,
       false,
       true,
-      false,
+      true,
       false,
       true,
       true,
@@ -309,8 +316,9 @@
       true,
       false,
       false,
-      false
+      false,
+      null
     ]
   },
-  "hash": "3c43f3fa14b18077fb9121ed8a1d17a0eac703af978b760076a37c1a259dc35d"
+  "hash": "c446bdeba2e002b1b5369c21374d800aac7288c7732a835d5d331dfdd49c737b"
 }
