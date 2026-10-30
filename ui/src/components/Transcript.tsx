@@ -10,7 +10,7 @@ type Part =
   | { kind: "reasoning"; text: string }
   | { kind: "tool_call"; name: string; args: string }
   | { kind: "tool_result"; text: string; error?: boolean }
-  | { kind: "search"; query: string; results: { url: string; title?: string }[] }
+  | { kind: "search"; query: string; results: { url: string; title?: string }[]; label?: string }
   | { kind: "json"; label: string; value: unknown };
 
 type Turn = { role: string; parts: Part[] };
@@ -96,7 +96,7 @@ function responseTurns(apiName: string, res: unknown): Turn[] | null {
       }
       const cites = Array.isArray(m.annotations) ? m.annotations.filter(isObj) : [];
       if (cites.length) {
-        ps.push({ kind: "search", query: "", results: cites.map((a) => (isObj(a.url_citation) ? a.url_citation : a)).map((u) => ({ url: String(u.url ?? ""), title: u.title as string | undefined })) });
+        ps.push({ kind: "search", label: "Cited", query: "", results: cites.map((a) => (isObj(a.url_citation) ? a.url_citation : a)).map((u) => ({ url: String(u.url ?? ""), title: u.title as string | undefined })) });
       }
       return { role: "assistant", parts: ps };
     });
@@ -117,6 +117,34 @@ function responseTurns(apiName: string, res: unknown): Turn[] | null {
     return [{ role: "assistant", parts: ps }];
   }
   return null;
+}
+
+/**
+ * What the provider ran itself and cited on a translated request, which the client's API had no
+ * place for (`x_gateway_not_sent`): web searches with their queries and results, and citations.
+ */
+function notSent(res: unknown): Part[] | null {
+  if (!isObj(res) || !isObj(res.x_gateway_not_sent)) return null;
+  const { server_tools, annotations } = res.x_gateway_not_sent as { server_tools?: unknown[]; annotations?: unknown[] };
+  const out: Part[] = [];
+  for (const b of (server_tools ?? []).filter(isObj)) {
+    const type = String(b.type ?? "");
+    const input = isObj(b.input) ? b.input : {};
+    const action = isObj(b.action) ? b.action : {};
+    const google = isObj(b.google) ? b.google : {};
+    if (type === "server_tool_use") out.push({ kind: "search", query: str(input.query ?? input), results: [] });
+    else if (type.endsWith("_tool_result") && Array.isArray(b.content)) {
+      out.push({ kind: "search", query: "", results: b.content.filter(isObj).map((r) => ({ url: String(r.url ?? ""), title: r.title as string | undefined })) });
+    } else if (type === "web_search_call") {
+      const sources = Array.isArray(action.sources) ? action.sources.filter(isObj) : [];
+      out.push({ kind: "search", query: str(action.query), results: sources.map((s) => ({ url: String(s.url ?? "") })) });
+    } else if (type === "google_search" && Array.isArray(google.web_search_queries)) {
+      out.push({ kind: "search", query: google.web_search_queries.map(String).join(" · "), results: [] });
+    } else out.push({ kind: "json", label: type || "server tool", value: b });
+  }
+  const cites = (annotations ?? []).filter(isObj).map((a) => (isObj(a.url_citation) ? a.url_citation : a));
+  if (cites.length) out.push({ kind: "search", label: "Cited", query: "", results: cites.map((c) => ({ url: String(c.url ?? ""), title: c.title as string | undefined })) });
+  return out;
 }
 
 function PartView({ p }: { p: Part }) {
@@ -147,7 +175,7 @@ function PartView({ p }: { p: Part }) {
     case "search":
       return (
         <div className="transcript-tool">
-          <span className="muted small">Web search</span> {p.query && <span className="mono">{p.query}</span>}
+          <span className="muted small">{p.label ?? "Web search"}</span> {p.query && <span className="mono">{p.query}</span>}
           <ul className="transcript-sources">
             {p.results.map((r, i) => (
               <li key={i} className="small">
@@ -304,6 +332,13 @@ export function Bodies({ id, api: apiName, onConversation }: { id: string; api: 
           <pre className="raw">{JSON.stringify(data.response, null, 2)}</pre>
         ) : (
           <Document turns={responseTurns(apiName, data.response)} value={data.response} />
+        )}
+        {!raw && notSent(data.response) && (
+          <div className="bodies-not-sent">
+            <h4>From the provider, not sent to the client</h4>
+            <p className="muted small">The provider searched the web or cited sources; translated to the client's API, the answer had no place for these.</p>
+            <Document turns={[{ role: "provider", parts: notSent(data.response)! }]} value={null} />
+          </div>
         )}
         {isObj(data.response) && data.response.x_gateway_incomplete === true && (
           <p className="muted small">The response stopped before it was complete: the client went away or the upstream failed.</p>

@@ -629,6 +629,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .bodies { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; max-width: 980px; }
 .bodies h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
 .bodies-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bodies-not-sent { margin-top: 10px; padding: 8px 10px; border: 1px dashed var(--border); border-radius: 6px; }
 .transcript { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .transcript-turn { display: grid; grid-template-columns: 110px 1fr; gap: 10px; }
 .transcript-role { font-size: 12px; color: var(--text-secondary); padding-top: 2px; overflow-wrap: anywhere; }

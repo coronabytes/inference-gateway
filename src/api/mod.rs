@@ -429,11 +429,11 @@ pub(crate) async fn run_model(
                 Inbound::Responses => responses::render_response(&r, &response_id, &model),
                 Inbound::Chat => chat::render_response(&r, &format!("chatcmpl-{}", crate::util::random_hex(12)), &model),
             };
+            if let Some(c) = tracker.log() {
+                c.response(Logged::Json(logged_response(v.clone(), &r)));
+            }
             if let Some(sink) = turn_sink {
                 sink.finish(r.content);
-            }
-            if let Some(c) = tracker.log() {
-                c.response(Logged::Json(v.clone()));
             }
             Json(v).into_response()
         }
@@ -466,10 +466,13 @@ pub(crate) async fn run_model(
             // A logged stream is stored as the same response would be without streaming.
             let render: Option<Render> = tracker.logging().then(|| -> Render {
                 let model = model.clone();
-                Box::new(move |r: &ChatResponse| match inbound {
-                    Inbound::Messages => anthropic::render_response(r, &id, &model),
-                    Inbound::Responses => responses::render_response(r, &id, &model),
-                    Inbound::Chat => chat::render_response(r, &id, &model),
+                Box::new(move |r: &ChatResponse| {
+                    let v = match inbound {
+                        Inbound::Messages => anthropic::render_response(r, &id, &model),
+                        Inbound::Responses => responses::render_response(r, &id, &model),
+                        Inbound::Chat => chat::render_response(r, &id, &model),
+                    };
+                    logged_response(v, r)
                 })
             });
             sse_response(Body::from_stream(encode_stream(first, rest, enc, tracker, turn_sink, render)))
@@ -684,6 +687,18 @@ async fn translate(state: &AppState, d: &Arc<Deployment>, ir: &ChatRequest, stre
 
 /// Renders a finished translated response as its API returns it without streaming.
 type Render = Box<dyn Fn(&ChatResponse) -> Value + Send>;
+
+/// A translated response as logged: what the client got, and under `x_gateway_not_sent` what
+/// the provider ran itself and cited (web searches, their results, citations), which the
+/// translation has no place for in the client's API.
+fn logged_response(mut v: Value, r: &ChatResponse) -> Value {
+    if (!r.server_tools.is_empty() || !r.annotations.is_empty())
+        && let Some(o) = v.as_object_mut()
+    {
+        o.insert("x_gateway_not_sent".into(), json!({ "server_tools": r.server_tools, "annotations": r.annotations }));
+    }
+    v
+}
 
 fn encode_stream(
     first: StreamEvent,
@@ -1258,6 +1273,37 @@ mod tests {
         // A project that forbids it overrides the key.
         snap.projects.insert(Uuid::from_u128(1), Arc::new(project(false)));
         assert!(!web_search_allowed(&snap, &key(p, true)));
+    }
+
+    /// What the provider ran and cited on a translated path is never sent to the client, and is
+    /// logged beside the response.
+    #[test]
+    fn provider_side_results_are_logged_not_sent() {
+        let search = StreamEvent::ServerTool { block: json!({ "type": "web_search_call", "action": { "query": "q" } }) };
+        let cite = StreamEvent::Annotation { annotation: json!({ "type": "url_citation", "url": "https://example.com" }) };
+        let encoders: Vec<Box<dyn StreamEncoder>> = vec![
+            Box::new(anthropic::AnthropicEncoder::new("msg_1".into(), "m".into())),
+            Box::new(responses::ResponsesEncoder::new("resp_1".into(), "m".into())),
+            Box::new(chat::ChatEncoder::new("chatcmpl-1".into(), "m".into(), true)),
+        ];
+        for mut enc in encoders {
+            enc.start();
+            assert!(enc.event(&search).is_empty() && enc.event(&cite).is_empty());
+        }
+        let r = ChatResponse {
+            content: vec![Part::Text { text: "Hi".into(), cache: false }],
+            server_tools: vec![json!({ "type": "web_search_call" })],
+            annotations: vec![json!({ "type": "url_citation" })],
+            ..Default::default()
+        };
+        let client = chat::render_response(&r, "chatcmpl-1", "m");
+        assert!(client.get("x_gateway_not_sent").is_none());
+        let logged = logged_response(client, &r);
+        assert_eq!(logged["x_gateway_not_sent"]["server_tools"], json!([{ "type": "web_search_call" }]));
+        assert_eq!(logged["choices"][0]["message"]["content"], "Hi");
+        // Without any, the logged response is what the client got.
+        let plain = ChatResponse { content: r.content.clone(), ..Default::default() };
+        assert!(logged_response(chat::render_response(&plain, "c", "m"), &plain).get("x_gateway_not_sent").is_none());
     }
 
     #[test]

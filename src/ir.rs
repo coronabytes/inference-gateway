@@ -308,6 +308,12 @@ pub enum StreamEvent {
     ReasoningDelta { index: usize, text: String },
     SignatureDelta { index: usize, signature: String },
     BlockStop { index: usize },
+    /// A tool the provider ran itself, its call or its result (a web search and what it found),
+    /// in the provider's own shape. On translated paths the client's API has no place for it, so
+    /// encoders send nothing; logged requests keep it (see `capture`).
+    ServerTool { block: Value },
+    /// A citation the provider attached to the answer, in its own shape. Like `ServerTool`.
+    Annotation { annotation: Value },
     Finish { stop_reason: StopReason, usage: Usage },
 }
 
@@ -326,12 +332,18 @@ pub struct ChatResponse {
     pub content: Vec<Part>,
     pub stop_reason: StopReason,
     pub usage: Usage,
+    /// What the provider ran itself and cited (see `StreamEvent::ServerTool`): never rendered for
+    /// the client, only logged.
+    pub server_tools: Vec<Value>,
+    pub annotations: Vec<Value>,
 }
 
 /// Collects stream events into a [`ChatResponse`].
 #[derive(Default)]
 pub struct Aggregator {
     blocks: Vec<Option<Part>>,
+    server_tools: Vec<Value>,
+    annotations: Vec<Value>,
     pub stop_reason: StopReason,
     pub usage: Usage,
     pub finished: bool,
@@ -373,6 +385,8 @@ impl Aggregator {
                 }
             }
             StreamEvent::BlockStop { .. } => {}
+            StreamEvent::ServerTool { block } => self.server_tools.push(block.clone()),
+            StreamEvent::Annotation { annotation } => self.annotations.push(annotation.clone()),
             StreamEvent::Finish { stop_reason, usage } => {
                 self.stop_reason = *stop_reason;
                 self.usage = *usage;
@@ -393,7 +407,7 @@ impl Aggregator {
                 p => p,
             })
             .collect();
-        ChatResponse { content, stop_reason: self.stop_reason, usage: self.usage }
+        ChatResponse { content, stop_reason: self.stop_reason, usage: self.usage, server_tools: self.server_tools, annotations: self.annotations }
     }
 }
 

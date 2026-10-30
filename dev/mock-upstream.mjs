@@ -5,7 +5,8 @@
 //   node dev/mock-upstream.mjs            # listens on :9999
 //
 // Model names control behaviour: anything containing "fail" returns 503 (to exercise
-// failover/cooldown); requests with tools get a tool call back.
+// failover/cooldown); requests with tools get a tool call back. A streamed Messages request
+// with the web search tool gets a search, its results and a cited answer.
 import http from "node:http";
 
 const PORT = Number(process.env.PORT ?? 9999);
@@ -55,8 +56,12 @@ function chat(body, res) {
 }
 
 function anthropic(body, res) {
-  const toolCall = body.tools?.length && !JSON.stringify(body.messages).includes("tool_result");
+  // Anthropic's own web search tool: answered with a search, its results and a cited answer.
+  const search = body.tools?.find((t) => String(t.type ?? "").startsWith("web_search"));
+  const clientTools = body.tools?.filter((t) => t !== search) ?? [];
+  const toolCall = clientTools.length && !JSON.stringify(body.messages).includes("tool_result");
   const usage = { input_tokens: 11, output_tokens: 6, cache_read_input_tokens: 3, cache_creation_input_tokens: 0 };
+  if (search && body.stream && !toolCall) return anthropicSearch(body, res, usage);
   if (!body.stream) {
     const content = toolCall
       ? [{ type: "tool_use", id: "toolu_mock1", name: body.tools[0].name, input: { q: "x" } }]
@@ -74,6 +79,26 @@ function anthropic(body, res) {
   }
   sse(res, "content_block_stop", { type: "content_block_stop", index: 0 });
   sse(res, "message_delta", { type: "message_delta", delta: { stop_reason: toolCall ? "tool_use" : "end_turn" }, usage: { output_tokens: 6 } });
+  sse(res, "message_stop", { type: "message_stop" });
+  res.end();
+}
+
+function anthropicSearch(body, res, usage) {
+  const result = { type: "web_search_result", url: "https://example.com/weather", title: "Mock weather", page_age: "1 hour", encrypted_content: "bW9jaw==".repeat(20) };
+  const block = (index, content_block, deltas = []) => {
+    sse(res, "content_block_start", { type: "content_block_start", index, content_block });
+    for (const delta of deltas) sse(res, "content_block_delta", { type: "content_block_delta", index, delta });
+    sse(res, "content_block_stop", { type: "content_block_stop", index });
+  };
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  sse(res, "message_start", { type: "message_start", message: { id: "msg_mock_search", type: "message", role: "assistant", model: body.model, content: [], usage: { ...usage, output_tokens: 1 } } });
+  block(0, { type: "server_tool_use", id: "srvtoolu_mock1", name: "web_search", input: {} }, [{ type: "input_json_delta", partial_json: `{"query":${JSON.stringify(lastUserText(body))}}` }]);
+  block(1, { type: "web_search_tool_result", tool_use_id: "srvtoolu_mock1", content: [result] });
+  block(2, { type: "text", text: "" }, [
+    { type: "text_delta", text: "According to the mock, it is sunny." },
+    { type: "citations_delta", citation: { type: "web_search_result_location", url: result.url, title: result.title, cited_text: "Sunny all day." } },
+  ]);
+  sse(res, "message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 9, server_tool_use: { web_search_requests: 1 } } });
   sse(res, "message_stop", { type: "message_stop" });
   res.end();
 }

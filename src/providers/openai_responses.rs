@@ -244,6 +244,19 @@ impl SseHandler for ResponsesHandler {
             }
             "response.output_item.done" => {
                 let item = &v["item"];
+                // What the IR has no place for: the provider's own tool calls (web search) whole,
+                // and the citations on its text.
+                match item.get("type").and_then(Value::as_str).unwrap_or_default() {
+                    "message" => {
+                        for part in item["content"].as_array().into_iter().flatten() {
+                            for a in part["annotations"].as_array().into_iter().flatten() {
+                                evs.push(StreamEvent::Annotation { annotation: a.clone() });
+                            }
+                        }
+                    }
+                    "function_call" | "reasoning" | "" => {}
+                    _ => evs.push(StreamEvent::ServerTool { block: item.clone() }),
+                }
                 if let Some(&i) = self.items.get(&oi) {
                     if item.get("type").and_then(Value::as_str) == Some("function_call")
                         && !self.tool_args_seen.get(&oi).copied().unwrap_or(false)
@@ -291,6 +304,33 @@ mod tests {
         ir::Location,
         model::{ApiStyle, ProviderKind},
     };
+
+    /// The web searches a Responses upstream ran, and the citations on its text, reach the aggregate
+    /// beside the answer.
+    #[test]
+    fn server_tools_and_citations_are_passed_on_beside_the_answer() {
+        use crate::providers::Decoder;
+        let search = json!({ "type": "web_search_call", "id": "ws_1", "status": "completed", "action": { "type": "search", "query": "rome weather" } });
+        let message = json!({ "type": "message", "content": [{ "type": "output_text", "text": "Sunny.",
+            "annotations": [{ "type": "url_citation", "url": "https://example.com" }] }] });
+        let events = [
+            json!({ "type": "response.output_item.done", "output_index": 0, "item": search }),
+            json!({ "type": "response.output_text.delta", "output_index": 1, "content_index": 0, "delta": "Sunny." }),
+            json!({ "type": "response.output_item.done", "output_index": 1, "item": message }),
+            json!({ "type": "response.completed", "response": { "output": [search, message], "usage": { "input_tokens": 5, "output_tokens": 2 } } }),
+        ];
+        let sse: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+        let mut dec = crate::providers::Sse::new(ResponsesHandler::default());
+        let mut out = Vec::new();
+        dec.feed(sse.as_bytes(), &mut out);
+        let mut agg = crate::ir::Aggregator::default();
+        out.iter().for_each(|e| agg.push(e.as_ref().unwrap()));
+        let r = agg.finish();
+        assert_eq!(r.content.len(), 1);
+        assert_eq!(r.server_tools, [search]);
+        assert_eq!(r.annotations, [json!({ "type": "url_citation", "url": "https://example.com" })]);
+        assert_eq!(r.usage.search_units, 1);
+    }
 
     #[test]
     fn web_search_becomes_the_tool_and_its_calls_are_counted() {

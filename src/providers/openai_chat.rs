@@ -187,6 +187,8 @@ pub struct ChatHandler {
     usage: Usage,
     /// The most any delta reported (see `web_searches`): the usage chunk carries none.
     searches: u64,
+    /// Gemini's search grounding as last passed on, so a repeat is not passed on again.
+    google: Option<Value>,
     done: bool,
 }
 
@@ -273,6 +275,15 @@ impl SseHandler for ChatHandler {
         if let Some(choice) = v.get("choices").and_then(|c| c.get(0)) {
             let delta = &choice["delta"];
             self.searches = self.searches.max(web_searches(delta));
+            // What the IR has no place for: citations (OpenAI's search models) and Gemini's search
+            // queries and sources (see `StreamEvent::ServerTool`).
+            for a in delta["annotations"].as_array().into_iter().flatten() {
+                evs.push(StreamEvent::Annotation { annotation: a.clone() });
+            }
+            if let Some(g) = delta.pointer("/extra_properties/google").filter(|g| self.google.as_ref() != Some(*g)) {
+                self.google = Some(g.clone());
+                evs.push(StreamEvent::ServerTool { block: json!({ "type": "google_search", "google": g }) });
+            }
             let reasoning = delta.get("reasoning_content").or_else(|| delta.get("reasoning")).and_then(Value::as_str);
             if let Some(r) = reasoning {
                 self.reasoning_delta(&mut evs, r);
@@ -350,6 +361,29 @@ impl SseHandler for ChatHandler {
 mod tests {
     use super::*;
     use crate::providers::Decoder;
+
+    /// Citations and Gemini's search grounding reach the aggregate beside the answer, the
+    /// grounding once however often Gemini repeats it.
+    #[test]
+    fn citations_and_search_grounding_are_passed_on_beside_the_answer() {
+        let google = json!({ "web_search_queries": ["rome weather"] });
+        let events = [
+            json!({ "choices": [{ "index": 0, "delta": { "content": "Sunny.", "extra_properties": { "google": google } } }] }),
+            json!({ "choices": [{ "index": 0, "delta": { "content": "", "extra_properties": { "google": google },
+                "annotations": [{ "type": "url_citation", "url_citation": { "url": "https://example.com" } }] }, "finish_reason": "stop" }] }),
+        ];
+        let mut sse: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+        sse.push_str("data: [DONE]\n\n");
+        let mut dec = Sse::new(ChatHandler::default());
+        let mut out = Vec::new();
+        dec.feed(sse.as_bytes(), &mut out);
+        let mut agg = crate::ir::Aggregator::default();
+        out.iter().for_each(|e| agg.push(e.as_ref().unwrap()));
+        let r = agg.finish();
+        assert!(matches!(&r.content[..], [Part::Text { text, .. }] if text == "Sunny."));
+        assert_eq!(r.server_tools, [json!({ "type": "google_search", "google": google })]);
+        assert_eq!(r.annotations.len(), 1);
+    }
 
     #[test]
     fn decodes_text_and_tool_calls() {

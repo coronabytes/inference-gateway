@@ -269,6 +269,8 @@ impl StreamEncoder for AnthropicEncoder {
             StreamEvent::BlockStop { index } => {
                 vec![sse_event("content_block_stop", &json!({ "type": "content_block_stop", "index": index }))]
             }
+            // The provider's own tools and citations: logged, never sent (see `StreamEvent::ServerTool`).
+            StreamEvent::ServerTool { .. } | StreamEvent::Annotation { .. } => vec![],
             StreamEvent::Finish { stop_reason, usage } => vec![
                 sse_event(
                     "message_delta",

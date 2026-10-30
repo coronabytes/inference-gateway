@@ -21,7 +21,7 @@ For debugging, the gateway can store the full prompts and responses of chosen ke
 - **What is stored**, in Postgres (`request_bodies`), for each logged request:
   - the request as the client sent it, and as the model got it when a guardrail masked it;
   - what each guardrail found and did, **including the text it matched**, and its provider's answer; a prompt a guardrail blocked is stored too;
-  - the response as the client got it, a stream put back together into one document, with tool calls, reasoning and the provider's web searches where the API returns them. Guardrails do not screen responses, so they can hold personal data the model produced.
+  - the response as the client got it, a stream put back together into one document, with tool calls and reasoning. When the gateway translates between APIs, the provider's web searches, their results and its citations, which the client's API has no place for, are kept beside it (`x_gateway_not_sent`); the client still does not get them. Guardrails do not screen responses, so they can hold personal data the model produced.
 - **What is not stored:** images, files, audio, embedding vectors and encrypted provider data (replaced by their type and size), and text beyond the size limit (`prompt_log_max_kb`).
 - **Not encrypted.** Unlike provider secrets and conversation history, logged bodies are plain JSON: anyone with access to the database or its backups can read them. Exclude them from backups with `pg_dump --exclude-table-data=request_bodies` if they must not be kept there.
 - **Kept briefly.** `prompt_log_retention_days` (7 by default, at most 60, and never longer than the request log).

@@ -497,7 +497,7 @@ fn collect_tools(v: &Value, out: &mut Vec<String>) {
             let name = o.get("name").and_then(Value::as_str);
             match ty {
                 "tool_use" | "server_tool_use" | "function_call" | "custom_tool_call" | "mcp_call" => out.extend(name.map(str::to_string)),
-                "web_search_call" => out.push("web_search".into()),
+                "web_search_call" | "google_search" => out.push("web_search".into()),
                 // Chat Completions: {"type": "function", "function": {"name": …}}
                 "function" => out.extend(o.get("function").and_then(|f| f.get("name")).and_then(Value::as_str).map(str::to_string)),
                 _ => {}
