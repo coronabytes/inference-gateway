@@ -52,6 +52,10 @@ pub struct Settings {
     /// The OpenAPI document at `/admin/openapi.json` and the API reference at `/admin/docs/`, for
     /// signed-in people and admin and project keys.
     pub api_docs: bool,
+    /// LiteLLM's price catalog is imported on a schedule (see `prices`). Off, only on demand.
+    pub price_import: bool,
+    /// Hours between scheduled imports of the price catalog.
+    pub price_import_hours: u32,
 }
 
 impl Default for Settings {
@@ -71,6 +75,8 @@ impl Default for Settings {
             body_timeout_secs: 120,
             max_connections: 10_000,
             api_docs: true,
+            price_import: true,
+            price_import_hours: 6,
         }
     }
 }
@@ -100,7 +106,8 @@ impl Settings {
         within("max_body_mb", self.max_body_mb, 1, 1024)?;
         within("header_timeout_secs", self.header_timeout_secs, 1, 600)?;
         within("body_timeout_secs", self.body_timeout_secs, 1, 3600)?;
-        within("max_connections", self.max_connections.into(), 1, 1_000_000)
+        within("max_connections", self.max_connections.into(), 1, 1_000_000)?;
+        within("price_import_hours", self.price_import_hours.into(), 1, 720)
     }
 
     /// Retention saved before `RETENTION_DAYS` applied (anything from 1 to 3650 days) is moved
@@ -120,6 +127,11 @@ impl Settings {
 
     pub fn reload_interval(&self) -> Duration {
         Duration::from_secs(self.reload_secs.max(5))
+    }
+
+    /// Time between scheduled price catalog imports, if they are on.
+    pub fn price_import_interval(&self) -> Option<Duration> {
+        self.price_import.then(|| Duration::from_secs(u64::from(self.price_import_hours.max(1)) * 3600))
     }
 
     pub fn response_ttl(&self) -> Duration {
@@ -217,6 +229,14 @@ mod tests {
         let old = Settings { request_log_retention_days: 3650, audit_log_retention_days: 1, ..Settings::default() }.fit_retention();
         assert_eq!((old.request_log_retention_days, old.audit_log_retention_days), (1080, 7));
         assert_eq!(Settings { request_log_retention_days: 0, ..Settings::default() }.fit_retention().request_log_retention_days, 0);
+    }
+
+    #[test]
+    fn price_import_is_every_6_hours_or_off() {
+        assert_eq!(Settings::default().price_import_interval(), Some(Duration::from_secs(6 * 3600)));
+        assert_eq!(Settings { price_import: false, ..Settings::default() }.price_import_interval(), None);
+        let s = Settings { price_import_hours: 0, ..Settings::default() };
+        assert_eq!(s.check().unwrap_err(), "price_import_hours must be between 1 and 720");
     }
 
     #[test]

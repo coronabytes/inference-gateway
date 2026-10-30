@@ -159,6 +159,7 @@ async fn run() -> Result<(), String> {
     tokio::spawn(sync::run_periodic_reload(state.clone()));
     tokio::spawn(sync::run_heartbeat(state.clone()));
     tokio::spawn(sync::run_maintenance(state.clone()));
+    tokio::spawn(prices::run_scheduled_import(state.clone()));
 
     let mut inference = Router::new()
         .route("/v1/messages", post(api::messages))

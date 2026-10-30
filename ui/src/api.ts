@@ -663,7 +663,7 @@ export interface LogRow {
 export interface AuditEntry {
   id: string;
   ts: string;
-  actor_kind: "master_key" | "virtual_key" | "session" | "dev";
+  actor_kind: "master_key" | "virtual_key" | "session" | "dev" | "system";
   actor_id: string | null;
   actor_name: string | null;
   action: string;
@@ -723,6 +723,8 @@ export interface GatewaySettings {
   body_timeout_secs: number;
   max_connections: number;
   api_docs: boolean;
+  price_import: boolean;
+  price_import_hours: number;
 }
 
 export interface GatewaySettingsView {
@@ -752,6 +754,8 @@ export interface PriceSearch {
   providers: string[];
   modes: string[];
   last_import: PriceImport | null;
+  /** When the scheduled import is due; null while it is off. */
+  next_import: string | null;
   source: string;
 }
 

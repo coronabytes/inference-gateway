@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::{PgExecutor, PgPool, migrate::Migrator, postgres::PgPoolOptions, types::Json};
+use sqlx::{Connection, PgExecutor, PgPool, migrate::Migrator, postgres::PgPoolOptions, types::Json};
 use uuid::Uuid;
 
 use crate::{
@@ -1360,7 +1360,8 @@ pub async fn recent_labels(pool: &PgPool, limit: i64, projects: Option<&[Uuid]>)
 pub struct AuditEntry {
     pub id: Uuid,
     pub ts: DateTime<Utc>,
-    /// `master_key`, `virtual_key`, `session` (a signed-in admin) or `dev` (Dev Login).
+    /// `master_key`, `virtual_key`, `session` (a signed-in admin), `dev` (Dev Login) or `system`
+    /// (the gateway's scheduled work).
     pub actor_kind: String,
     /// The admin user or virtual key.
     pub actor_id: Option<Uuid>,
@@ -1635,6 +1636,22 @@ pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32) -> sq
     .await;
     let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", LOCK_ID).fetch_one(&mut *conn).await;
     result
+}
+
+/// Runs `f` while holding the advisory lock `id`, or returns `None` if another replica holds it.
+/// The lock is taken on a connection of its own that is closed afterwards, so it is released
+/// even when `f` is cancelled (an admin request whose client went away) or panics.
+pub async fn with_lock<T>(pool: &PgPool, id: i64, f: impl Future<Output = T>) -> sqlx::Result<Option<T>> {
+    let mut conn = pool.acquire().await?.detach();
+    let locked = sqlx::query_scalar!(r#"SELECT pg_try_advisory_lock($1) AS "locked!""#, id)
+        .fetch_one(&mut conn)
+        .await?;
+    if !locked {
+        return Ok(None);
+    }
+    let out = f.await;
+    let _ = conn.close().await;
+    Ok(Some(out))
 }
 
 pub async fn ping(pool: &PgPool) -> bool {

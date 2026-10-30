@@ -1366,11 +1366,13 @@ mod paths {
 
     /// Import prices
     ///
-    /// Replaces the catalog with LiteLLM's current price list.
+    /// Replaces the catalog with LiteLLM's current price list. The gateway also does this on its
+    /// own, as often as the `price_import_hours` setting says, unless `price_import` is off.
     #[utoipa::path(post, path = "/admin/api/prices/import", tag = "Price catalog",
         responses(
             (status = 200, description = "What changed.", body = db::PriceImport),
             (status = 400, description = "The download failed.", body = AdminError),
+            (status = 409, description = "An import is running already.", body = AdminError),
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn import_prices() {}

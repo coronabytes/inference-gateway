@@ -11,7 +11,7 @@ use crate::{db, state::AppState};
 /// Who made an admin API call. `require_admin` puts it in the request's extensions.
 #[derive(Clone, Debug)]
 pub struct Actor {
-    /// `master_key`, `virtual_key`, `session` or `dev`.
+    /// `master_key`, `virtual_key`, `session`, `dev` or `system`.
     pub kind: &'static str,
     /// The admin user or the virtual key.
     pub id: Option<Uuid>,
@@ -33,6 +33,11 @@ impl Actor {
 
     pub fn dev() -> Self {
         Self { kind: "dev", id: None, name: Some("Local development".into()) }
+    }
+
+    /// The gateway itself, for scheduled work.
+    pub fn system() -> Self {
+        Self { kind: "system", id: None, name: Some("Gateway".into()) }
     }
 }
 
