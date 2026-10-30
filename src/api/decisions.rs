@@ -71,7 +71,7 @@ pub async fn decisions(
 /// runs to completion, and is accounted, even if the client stops waiting.
 pub async fn serve(state: &AppState, key: Arc<VirtualKey>, labels: Labels, headers: &HeaderMap, body: Bytes, route: Route) -> Response {
     let (state, headers) = (state.clone(), headers.clone());
-    super::to_completion(async move { run(&state, key, &labels, &headers, &body, route).await })
+    super::to_completion(async move { run(&state, key, &labels, &headers, body, route).await })
         .await
         .unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
 }
@@ -112,10 +112,10 @@ async fn run(
     key: Arc<VirtualKey>,
     labels: &Labels,
     headers: &HeaderMap,
-    body: &[u8],
+    body: Bytes,
     route: Route,
 ) -> Result<Response, GatewayError> {
-    let raw: Value = serde_json::from_slice(body).map_err(|e| GatewayError::invalid(format!("invalid JSON body: {e}")))?;
+    let raw: Value = serde_json::from_slice(&body).map_err(|e| GatewayError::invalid(format!("invalid JSON body: {e}")))?;
     if !raw.is_object() {
         return Err(GatewayError::invalid("request body must be a JSON object"));
     }
@@ -151,6 +151,9 @@ async fn run(
 
     let mut tracker = Tracker::new(state, Some(&key), labels, &model, route.name(), false);
     tracker.estimate_input(body.len());
+    if let Some(c) = tracker.log() {
+        c.request(crate::capture::Body::Bytes(body));
+    }
     if let Err(e) = crate::auth::check_key_limits(state, &key).await {
         tracker.fail(&e);
         return Err(e);
@@ -164,6 +167,9 @@ async fn run(
         Route::SystemOne => upstream,
         Route::Decisions => render_decisions(&prepared.order, &upstream, &model),
     };
+    if let Some(c) = tracker.log() {
+        c.response(crate::capture::Body::Json(body.clone()));
+    }
     let mut resp = Json(body).into_response();
     resp.headers_mut().insert("x-request-id", request_id);
     Ok(resp)
@@ -212,9 +218,15 @@ pub async fn choose_route(state: &AppState, router: &AutoRouter, transcript: Str
     let mut questions = Map::new();
     questions.insert(ROUTE_QUESTION.into(), json!({ "type": "choice", "instructions": instructions, "criteria": criteria }));
     let p = Prepared { state: transcript.into(), questions, assets: Map::new(), order: Vec::new(), needs_images: false };
+    if let Some(c) = tracker.log() {
+        c.request(crate::capture::Body::Json(json!({ "model": model, "state": p.state, "questions": p.questions })));
+    }
     let (p, no_headers) = (&p, &HeaderMap::new());
     let resp = super::with_failover(state, &candidates, model, &mut tracker, |d| async move { call(state, &d, p, no_headers).await }).await?;
     tracker.set_usage(usage(&resp));
+    if let Some(c) = tracker.log() {
+        c.response(crate::capture::Body::Json(resp.clone()));
+    }
     let answer = &resp["answers"][ROUTE_QUESTION];
     let picked = answer["choice"].as_str().filter(|c| router.route(c).is_some());
     match picked {

@@ -753,30 +753,34 @@ export interface MenuItem {
   title?: string;
   /** Destructive, such as Delete: shown in red. */
   danger?: boolean;
+  /** A choice among the menu's items: set on every item, true on the one in effect, which is ticked. */
+  checked?: boolean;
 }
 
 /**
  * A button that opens a menu of actions. The menu is on its own layer (`Floating`), placed under the
- * button and aligned to its right edge, so a table or card around it cannot clip it; scrolling or
- * resizing closes it, as do a click elsewhere and Escape. `className` styles the button, e.g.
- * "icon-btn" for an icon in a row's commands column.
+ * button and aligned to its right edge (`align="left"`: its left edge), so a table or card around
+ * it cannot clip it; scrolling or resizing closes it, as do a click elsewhere and Escape.
+ * `className` styles the button, e.g. "icon-btn" for an icon in a row's commands column.
  */
 export function MenuButton({
   items,
   label,
   className,
+  align = "right",
   children,
 }: {
   items: MenuItem[];
   /** Accessible name of the button, and of the menu. */
   label: string;
   className?: string;
+  align?: "left" | "right";
   children: ReactNode;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
-  const [at, setAt] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
+  const [at, setAt] = useState<{ top?: number; bottom?: number; right?: number; left?: number } | null>(null);
   const menuId = useId();
 
   const close = (refocus = false) => {
@@ -812,10 +816,10 @@ export function MenuButton({
     const r = toggle.current?.getBoundingClientRect();
     if (!r) return;
     // `right` of a fixed element counts from the page's edge, inside any scrollbar.
-    const right = document.documentElement.clientWidth - r.right;
+    const side = align === "left" ? { left: r.left } : { right: document.documentElement.clientWidth - r.right };
     // Above the button when there is no room for a few items below it, as at the bottom of a page.
     const room = window.innerHeight - r.bottom;
-    setAt(room < 40 * items.length + 24 && r.top > room ? { bottom: window.innerHeight - r.top + 6, right } : { top: r.bottom + 6, right });
+    setAt(room < 40 * items.length + 24 && r.top > room ? { bottom: window.innerHeight - r.top + 6, ...side } : { top: r.bottom + 6, ...side });
   };
 
   return (
@@ -835,12 +839,20 @@ export function MenuButton({
       </button>
       {at && (
         <Floating>
-          <div className="select-popup menu-popup" ref={menu} id={menuId} role="menu" aria-label={label} style={{ top: at.top ?? "auto", bottom: at.bottom, right: at.right }}>
+          <div
+            className="select-popup menu-popup"
+            ref={menu}
+            id={menuId}
+            role="menu"
+            aria-label={label}
+            style={{ top: at.top ?? "auto", bottom: at.bottom, right: at.right ?? "auto", left: at.left ?? "auto" }}
+          >
             {items.map((item) => (
               <button
                 key={item.label}
                 type="button"
-                role="menuitem"
+                role={item.checked === undefined ? "menuitem" : "menuitemradio"}
+                aria-checked={item.checked}
                 className={item.danger ? "danger" : undefined}
                 disabled={item.disabled}
                 title={item.title}
@@ -849,6 +861,11 @@ export function MenuButton({
                   item.onClick();
                 }}
               >
+                {item.checked !== undefined && (
+                  <span className="menu-check" aria-hidden="true">
+                    {item.checked ? "✓" : ""}
+                  </span>
+                )}
                 {item.label}
               </button>
             ))}

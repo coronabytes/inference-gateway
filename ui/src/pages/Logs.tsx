@@ -1,9 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api, type AuditEntry, type LogRow } from "../api";
-import { Button, Select, Tabs, TextInput, TimeRange, Toggle, useHashTab, useTimeRange } from "../components/controls";
+import { Button, MultiSelect, Select, Tabs, TextInput, TimeRange, useHashTab, useTimeRange } from "../components/controls";
+import { Bodies } from "../components/Transcript";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
 import { LabelFilter } from "../components/LabelInput";
-import { Badge, ChildArrowIcon, ErrorBanner } from "../components/ui";
+import { Badge, ChildArrowIcon, ErrorBanner, SidePanel } from "../components/ui";
 import { compact, dateTime, ms, relative, usd } from "../format";
 import { labelQuery, withLabel, type Labels } from "../labels";
 
@@ -28,6 +29,20 @@ function readableError(error: string): string {
   }
 }
 
+/** The tools a logged request's response called; clicking one filters the log by it. */
+function ToolList({ tools, onPick }: { tools: string[] | null; onPick: (tool: string) => void }) {
+  if (!tools?.length) return <span className="muted">–</span>;
+  return (
+    <span className="tags">
+      {tools.map((t) => (
+        <button key={t} type="button" className="tag label-tag" title={`${t}: show only requests that called this tool`} onClick={() => onPick(t)}>
+          {t}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 /** A request's labels; clicking one filters the log by it. */
 function LabelList({ labels, onPick }: { labels: LogRow["labels"]; onPick: (key: string, value: string) => void }) {
   const entries = Object.entries(labels ?? {});
@@ -43,8 +58,18 @@ function LabelList({ labels, onPick }: { labels: LogRow["labels"]; onPick: (key:
   );
 }
 
-/** What the table leaves out: the whole error, ids, the token breakdown. */
-function RequestDetails({ r }: { r: LogRow }) {
+/** What a logged entry's `bodies` says, for its details. */
+const BODIES_STATUS: Record<NonNullable<LogRow["bodies"]>, string> = {
+  stored: "stored",
+  truncated: "stored, long texts cut to the size limit",
+  expired: "expired: removed after their retention",
+  dropped: "not kept: the gateway's buffer was full, or the database refused them",
+  deleted: "deleted on request",
+};
+
+/** What the table leaves out: the whole error, ids, the token breakdown, the logged bodies. */
+function RequestDetails({ r, routed }: { r: LogRow; routed: boolean }) {
+  const readable = r.bodies === "stored" || r.bodies === "truncated";
   return (
     <>
       {r.error && <pre className="raw wrap">{readableError(r.error)}</pre>}
@@ -59,8 +84,26 @@ function RequestDetails({ r }: { r: LogRow }) {
             <td className="mono">{r.id}</td>
           </tr>
           <tr>
+            <th>API</th>
+            <td>
+              {r.api}
+              {r.stream && <span className="muted"> · streamed</span>}
+            </td>
+          </tr>
+          <tr>
             <th>Deployment</th>
-            <td className="mono">{r.deployment_id ?? "–"}</td>
+            <td>
+              {r.deployment_id == null ? (
+                "–"
+              ) : r.upstream_model == null ? (
+                <span className="muted">deleted</span>
+              ) : (
+                <>
+                  <span className="mono">{r.upstream_model}</span> on {r.provider ?? "–"} with <span className="mono">{r.credential_name ?? "–"}</span>
+                </>
+              )}
+              {r.deployment_id && <div className="mono muted small">{r.deployment_id}</div>}
+            </td>
           </tr>
           <tr>
             <th>Tokens</th>
@@ -100,11 +143,24 @@ function RequestDetails({ r }: { r: LogRow }) {
               </td>
             </tr>
           )}
+          {r.bodies && (
+            <tr>
+              <th>Prompt and response</th>
+              <td>
+                {BODIES_STATUS[r.bodies]}
+                {routed && " · the routed call beneath it in the log has the response"}
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
+      {readable && <Bodies key={r.id} id={r.id} api={r.api} />}
     </>
   );
 }
+
+/** What the guardrails did, as the request log's Show filter offers it. */
+const GUARDRAIL_ACTIONS = ["blocked", "masked", "flagged"];
 
 /** The request log, a tab of the Cluster page. */
 const TABS = ["requests", "audit"] as const;
@@ -133,13 +189,18 @@ export function RequestLog() {
   const time = useTimeRange(RANGES, "1h");
   // The KeyFilter's choice.
   const [keyId, setKeyId] = useState("");
-  const [model, setModel] = useState("");
   const [labels, setLabels] = useState<Labels>({});
   const labelFilter = labelQuery(labels);
-  const [errorsOnly, setErrorsOnly] = useState(false);
+  // Which entries to show: errors, those with stored prompts, and what the guardrails did.
+  const [show, setShow] = useState<string[]>([]);
+  // Prompt logging: a search of the stored prompts (sent on Enter), or a tool their responses called.
+  const [contentDraft, setContentDraft] = useState("");
+  const [content, setContent] = useState("");
+  const [tool, setTool] = useState("");
+  const [tools, setTools] = useState<{ name: string; requests: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
-  // Entries whose details are shown beneath them.
-  const [details, setDetails] = useState<Set<string>>(new Set());
+  // The entry whose details the side panel shows; kept while the log refreshes around it.
+  const [selected, setSelected] = useState<LogRow | null>(null);
 
   // A routed request's calls (decision, routed call) are shown beneath the router's entry.
   const { top, children } = useMemo(() => {
@@ -157,16 +218,27 @@ export function RequestLog() {
     const q = new URLSearchParams(time.query);
     q.set("limit", "200");
     setKeyFilter(q, keyId);
-    if (model.trim()) q.set("model", model.trim());
     if (labelFilter) q.set("labels", labelFilter);
-    if (errorsOnly) q.set("errors", "true");
+    if (show.includes("errors")) q.set("errors", "true");
+    if (show.includes("prompts")) q.set("bodies", "true");
+    const guardrail = show.filter((s) => GUARDRAIL_ACTIONS.includes(s));
+    if (guardrail.length) q.set("guardrail", guardrail.join(","));
+    if (content) q.set("q", content);
+    if (tool) q.set("tool", tool);
     try {
       setRows(await api<LogRow[]>(`/logs?${q}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [time.query, keyId, model, labelFilter, errorsOnly]);
+  }, [time.query, keyId, labelFilter, show, content, tool]);
+
+  // Tools offered by the tool filter: those of the latest logged responses.
+  useEffect(() => {
+    api<{ name: string; requests: number }[]>("/logs/tools")
+      .then(setTools)
+      .catch(() => setTools([]));
+  }, []);
 
   const pickLabel = (key: string, value: string) => setLabels((l) => withLabel(l, key, value));
 
@@ -181,11 +253,47 @@ export function RequestLog() {
       <div className="filters">
         <TimeRange {...time.props} />
         <KeyFilter value={keyId} onChange={setKeyId} />
-        <TextInput caption="Model" type="search" placeholder="filter" value={model} onChange={(e) => setModel(e.target.value)} />
         <LabelFilter value={labels} onChange={setLabels} />
-        <Toggle checked={errorsOnly} onChange={setErrorsOnly}>
-          Errors only
-        </Toggle>
+        <MultiSelect
+          caption="Show"
+          hint="Errors, requests whose prompt and response are stored, and what the guardrails did. The guardrail outcomes show requests with any of them; together with errors or stored prompts, only those that are both."
+          values={show}
+          onChange={setShow}
+          searchable={false}
+          options={[
+            { value: "errors", label: "Errors" },
+            { value: "prompts", label: "With prompts" },
+            { value: "blocked", label: "Blocked by a guardrail" },
+            { value: "masked", label: "Masked by a guardrail" },
+            { value: "flagged", label: "Flagged by a guardrail" },
+          ]}
+        />
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setContent(contentDraft.trim());
+          }}
+        >
+          <TextInput
+            caption="Content"
+            type="search"
+            placeholder="search, Enter"
+            hint='Searches the prompts of logged requests as they were sent (before any guardrail masked them) and their responses. Whole words; "a phrase", or, -word and prefix:* work.'
+            value={contentDraft}
+            onChange={(e) => {
+              setContentDraft(e.target.value);
+              if (!e.target.value) setContent("");
+            }}
+          />
+        </form>
+        {tools.length > 0 && (
+          <Select
+            caption="Tool called"
+            value={tool}
+            onChange={setTool}
+            options={[{ value: "", label: "Any" }, ...tools.map((t) => ({ value: t.name, label: t.name, note: `${t.requests}` }))]}
+          />
+        )}
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">
@@ -197,13 +305,13 @@ export function RequestLog() {
               <th>Model</th>
               <th>Key</th>
               <th>Labels</th>
-              <th>API</th>
+              <th>Tools</th>
               <th>Provider</th>
               <th className="num">Latency</th>
               <th className="num">TTFT</th>
               <th className="num">In / out</th>
+              <th aria-label="Guardrails and prompt logging" />
               <th className="num">Cost</th>
-              <th aria-label="Details" />
             </tr>
           </thead>
           <tbody>
@@ -213,7 +321,15 @@ export function RequestLog() {
                 <Fragment key={p.id}>
                   {[p, ...calls].map((r) => (
                     <Fragment key={r.id}>
-                      <tr className={r === p ? undefined : "child-row"}>
+                      <tr
+                        className={["clickable", r === p ? "" : "child-row", selected?.id === r.id ? "selected" : ""].join(" ").trim()}
+                        tabIndex={0}
+                        aria-selected={selected?.id === r.id}
+                        // Clicking a row shows its details; a second click hides them. Its own
+                        // buttons (a label to filter by) keep their action.
+                        onClick={(e) => (e.target as HTMLElement).closest("button, a") || setSelected((s) => (s?.id === r.id ? null : r))}
+                        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && e.target === e.currentTarget && (e.preventDefault(), setSelected((s) => (s?.id === r.id ? null : r)))}
+                      >
                         <td className="when" title={dateTime(r.ts)}>
                           {r === p ? relative(r.ts) : <ChildArrowIcon />}
                         </td>
@@ -232,8 +348,7 @@ export function RequestLog() {
                           {r === p && <LabelList labels={r.labels} onPick={pickLabel} />}
                         </td>
                         <td>
-                          {r.api}
-                          {r.stream && <span className="muted small"> stream</span>}
+                          <ToolList tools={r.tool_calls} onPick={setTool} />
                         </td>
                         <td>{r.provider ?? "–"}</td>
                         <td className="num">{ms(r.latency_ms)}</td>
@@ -241,27 +356,21 @@ export function RequestLog() {
                         <td className="num">
                           {compact(r.input_tokens + r.cache_read_tokens + r.cache_write_tokens)} / {compact(r.output_tokens)}
                         </td>
-                        <td className="num">
+                        {/* Marks in a column of their own, so they line up whatever the cost's width. */}
+                        <td className="marks">
                           {r.guardrails && r.guardrails.action !== "passed" && (
                             <span className={`guardrail-mark ${r.guardrails.action}`} title={`Guardrails ${r.guardrails.action} the prompt; see details`}>
                               {r.guardrails.action}
                             </span>
                           )}
-                          {usd(r.cost_usd)}
+                          {(r.bodies === "stored" || r.bodies === "truncated") && (
+                            <span className="guardrail-mark logged" title="Its prompt and response are stored; see details">
+                              logged
+                            </span>
+                          )}
                         </td>
-                        <td className="num">
-                          <Button variant="ghost" className="details-btn" onClick={() => setDetails(flip(r.id))} aria-expanded={details.has(r.id)}>
-                            {details.has(r.id) ? "Hide details" : "Details"}
-                          </Button>
-                        </td>
+                        <td className="num">{usd(r.cost_usd)}</td>
                       </tr>
-                      {details.has(r.id) && (
-                        <tr className="child-row">
-                          <td colSpan={12}>
-                            <RequestDetails r={r} />
-                          </td>
-                        </tr>
-                      )}
                     </Fragment>
                   ))}
                 </Fragment>
@@ -275,6 +384,11 @@ export function RequestLog() {
           </tbody>
         </table>
       </div>
+      {selected && (
+        <SidePanel title={`${selected.model_name} · ${dateTime(selected.ts)}`} onClose={() => setSelected(null)}>
+          <RequestDetails r={selected} routed={children.has(selected.id)} />
+        </SidePanel>
+      )}
     </>
   );
 }

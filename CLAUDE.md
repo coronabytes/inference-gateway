@@ -1,5 +1,11 @@
 # Inference Gateway
 
+## Plans
+
+Write implementation plans as Markdown files in `docs/plans/` (for example
+`docs/plans/prompt-logging.md`). The folder is in `.gitignore`: plans stay local and are never
+committed.
+
 ## Admin API and console data
 
 Filter on the server. When a page has a filter (time range, key, model, labels), send it as a query

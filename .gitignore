@@ -4,3 +4,5 @@
 # Fetched by ui/scripts/fetch-scalar.mjs.
 /ui/public/docs/scalar.js
 .env
+# Implementation plans (see CLAUDE.md): kept locally, not committed.
+/docs/plans/

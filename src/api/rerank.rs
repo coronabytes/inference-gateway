@@ -110,7 +110,7 @@ fn parse(raw: &Value) -> Result<RerankRequest, GatewayError> {
     Ok(RerankRequest { model: model.to_string(), query, documents, top_n, return_documents, max_tokens_per_doc })
 }
 
-async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &[u8]) -> Result<Response, GatewayError> {
+async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &Bytes) -> Result<Response, GatewayError> {
     let raw: Value = serde_json::from_slice(body).map_err(|e| GatewayError::invalid(format!("invalid JSON body: {e}")))?;
     let req = parse(&raw)?;
     if !key.allows_model(&req.model) {
@@ -119,6 +119,9 @@ async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &[u8
     let candidates = super::usable_deployments(state, &key, &req.model, Mode::Rerank)?;
 
     let mut tracker = Tracker::new(state, Some(&key), labels, &req.model, "rerank", false);
+    if let Some(c) = tracker.log() {
+        c.request(crate::capture::Body::Bytes(body.clone()));
+    }
     if let Err(e) = crate::auth::check_key_limits(state, &key).await {
         tracker.fail(&e);
         return Err(e);
@@ -128,6 +131,9 @@ async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &[u8
         super::with_failover(state, &candidates, &req.model, &mut tracker, |d| async move { call(state, &d, req).await }).await?;
     tracker.set_usage(usage);
     let body = response(&tracker.id.to_string(), req, ranked, &usage);
+    if let Some(c) = tracker.log() {
+        c.response(crate::capture::Body::Json(body.clone()));
+    }
     let mut resp = Json(body).into_response();
     resp.headers_mut().insert("x-request-id", HeaderValue::from_str(&tracker.id.to_string()).expect("uuid header"));
     Ok(resp)

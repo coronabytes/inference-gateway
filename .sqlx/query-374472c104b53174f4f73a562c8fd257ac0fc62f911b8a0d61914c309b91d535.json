@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t AS \"name!\", count(*) AS \"requests!\"\n           FROM (SELECT b.tool_calls FROM request_bodies b JOIN request_logs l ON l.id = b.id\n                 WHERE cardinality(b.tool_calls) > 0 AND ($2::uuid[] IS NULL OR l.project_id = ANY($2))\n                 ORDER BY b.ts DESC LIMIT $1) s, unnest(s.tool_calls) t\n           GROUP BY t ORDER BY 2 DESC, 1 LIMIT 100",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "requests!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "374472c104b53174f4f73a562c8fd257ac0fc62f911b8a0d61914c309b91d535"
+}

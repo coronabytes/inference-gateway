@@ -1,11 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { adminFetch, api, GUARDRAILS_HEADER, type Mode, type NamedItem, type PlaygroundOptions, type ReasoningEffort } from "../api";
-import { Banner, Button, FileButton, MultiSelect, Select, SplitButton, TextArea } from "../components/controls";
+import { Banner, Button, FileButton, MenuButton, MultiSelect, SplitButton, TextArea } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { LabelEditor } from "../components/LabelInput";
 import { SearchSelect } from "../components/SearchSelect";
-import { AttachIcon, ErrorBanner, GlobeIcon } from "../components/ui";
-import { effortOptions } from "../efforts";
+import { AttachIcon, EffortIcon, ErrorBanner, GlobeIcon } from "../components/ui";
+import { EFFORTS } from "../efforts";
 import { bytes, compact, ms } from "../format";
 import { labelHeaders, type Labels } from "../labels";
 import { MODES } from "./Models";
@@ -616,17 +616,6 @@ export function Playground() {
             options={APIS.map((a) => ({ value: a.id, label: a.label }))}
           />
         )}
-        {efforts && (
-          <Select
-            caption="Effort"
-            label="Reasoning effort"
-            hint="Reasoning effort sent with each request, in the chosen API's own fields. Default leaves it to the model. Levels the model does not take, by its price catalog entry, cannot be chosen."
-            value={effort}
-            onChange={(v) => setEffort(v as ReasoningEffort | "")}
-            searchable={false}
-            options={effortOptions(efforts, "Default")}
-          />
-        )}
         {/* Only chat requests are screened. */}
         {mode === "chat" && guardrails.length > 0 && (
           <MultiSelect
@@ -800,6 +789,27 @@ export function Playground() {
               >
                 <GlobeIcon />
               </Button>
+              {/* Sent with each request in the chosen API's own fields; Default leaves it to the model.
+                  Levels the model does not take, by its price catalog entry, cannot be chosen. */}
+              {efforts && (
+                <MenuButton
+                  className={`icon-btn composer-attach${effort ? " lit" : ""}`}
+                  label={`Reasoning effort: ${effort || "default"}`}
+                  align="left"
+                  items={[
+                    { label: "Default effort", checked: !effort, onClick: () => setEffort("") },
+                    ...EFFORTS.map((e) => ({
+                      label: `${e} effort`,
+                      checked: effort === e,
+                      disabled: !efforts.includes(e),
+                      title: efforts.includes(e) ? undefined : "This model does not take it",
+                      onClick: () => setEffort(e),
+                    })),
+                  ]}
+                >
+                  <EffortIcon />
+                </MenuButton>
+              )}
               <textarea
                 ref={composer}
                 rows={1}

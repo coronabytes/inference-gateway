@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO virtual_keys (id, name, key_hash, key_prefix, allowed_models, allowed_tags, rpm_limit, tpm_limit,\n             max_budget_usd, budget_period, spend_usd, enabled, expires_at, metadata, scope, project_id, guardrail_ids, web_search,\n             prompt_logging, created_at, updated_at)\n         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,$18,now(),now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Text",
+        "TextArray",
+        "TextArray",
+        "Int4",
+        "Int4",
+        "Float8",
+        "Text",
+        "Bool",
+        "Timestamptz",
+        "Jsonb",
+        "Text",
+        "Uuid",
+        "UuidArray",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4aa0531036ba0da1b8feb22d554de744e89c1de29dfd115d6bf3813c297a5eeb"
+}

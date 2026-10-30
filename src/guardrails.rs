@@ -299,7 +299,8 @@ pub struct Finding {
     pub kind: String,
     /// What the policy did with it: `BLOCKED`, `ANONYMIZED` or `NONE` (detected only).
     pub action: String,
-    /// The text that matched, where the provider reports it. Never stored.
+    /// The text that matched, where the provider reports it. Never in the request log; only the
+    /// bodies of logged requests keep it (see `capture`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matched: Option<String>,
     /// The filter's confidence (`LOW` to `HIGH`) or the grounding score.
@@ -331,6 +332,9 @@ pub struct Verdict {
     pub findings: Vec<Finding>,
     pub usage: GuardrailUsage,
     pub cost_usd: f64,
+    /// The provider's answer as it came, for logged requests (see `api::guard::screen_prompt`).
+    #[serde(skip)]
+    pub raw: Option<Value>,
 }
 
 /// A guardrail with what it needs to be called: its credential's settings and secrets.
@@ -650,7 +654,7 @@ fn parse_model_armor(answers: &[Value], texts: &[String], cfg: &GuardrailConfig,
     // About four characters to a token, as Google counts for billing.
     let chars: usize = texts.iter().map(|t| t.chars().count()).sum();
     let usage = GuardrailUsage { tokens: chars.div_ceil(4) as u64, ..Default::default() };
-    Ok(Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage })
+    Ok(Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(Value::Array(answers.to_vec())) })
 }
 
 /// Reads a moderation response: a category found in any text blocks when the guardrail blocks on
@@ -690,7 +694,7 @@ fn parse_mistral(v: &Value, cfg: &GuardrailConfig, prices: &GuardrailPrices) -> 
     };
     let outputs = if blocked.is_empty() { vec![] } else { vec![format!("The request was blocked by moderation ({}).", blocked.join(", "))] };
     let usage = GuardrailUsage { tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0), ..Default::default() };
-    Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage }
+    Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(v.clone()) }
 }
 
 /// Reads an `ApplyGuardrail` response.
@@ -749,7 +753,7 @@ fn parse_bedrock(v: &Value, prices: &GuardrailPrices) -> Verdict {
         tokens: 0,
     };
     let outputs = v["outputs"].as_array().into_iter().flatten().filter_map(|o| s(o, "text")).collect();
-    Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage }
+    Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(v.clone()) }
 }
 
 #[cfg(test)]

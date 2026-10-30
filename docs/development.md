@@ -24,7 +24,7 @@ node dev/mock-upstream.mjs                       # fake OpenAI/Anthropic provide
 docker compose --profile replicas up -d --build  # two more gateway replicas on :8081 and :8082
 ```
 
-- The **mock provider** runs on loopback, which the gateway refuses unless allowed: `.env.example` already sets `GATEWAY_UPSTREAM_ALLOWED_NETWORKS=127.0.0.0/8,::1`.
+- The **mock provider** runs on loopback, which the gateway refuses unless allowed: `.env.example` already sets `GATEWAY_UPSTREAM_ALLOWED_NETWORKS=127.0.0.0/8,::1`. It is also a Bedrock guardrail: a Bedrock credential with `http://127.0.0.1:9999` as its endpoint (any API key) and a guardrail on it mask e-mail addresses and the name "Ada Lovelace", flag "lottery" and "casino", and block "ignore previous instructions".
 - The **replicas** share Postgres and Valkey with the gateway you run locally, so you can watch configuration changes, rate limits and budgets propagate between instances.
 
 ## Tests

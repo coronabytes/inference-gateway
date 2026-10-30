@@ -3,7 +3,7 @@
 ## In the console
 
 - **Metrics:** requests, errors, tokens, average and p95 latency, time to first token and cost, by model, deployment, key, project or [label](api.md#labels). This month by default, or the last hour, 24 hours, 7 days or any date range. Computed from the request log, so they cover all replicas and go back as far as the log is kept.
-- **Logs → Request log:** every request with its key, labels, model, deployment, status, tokens, latency, cost and what guardrails did. Prompts and responses are never stored.
+- **Logs → Request log:** every request with its key, labels, model, deployment, status, tokens, latency, cost and what guardrails did. Prompts and responses are not stored, except for keys with [prompt logging](security.md#prompt-logging) turned on, for debugging.
 - **Logs → Audit log:** who created, changed or deleted credentials, guardrails, deployments, routers and keys (with the changed fields, never secrets), regenerated a key or reset its spend, imported configuration or prices, changed single sign-on or settings, and signed in or out.
 - **Cluster → Instances:** every running replica, the health of Postgres and Valkey, and what each replica read from its environment.
 - **Models → Playground:** chat, embed, rerank or ask decision questions with any model, as any key, with guardrails and labels of your choice. It goes through the same limits, budgets and logging as real traffic. **Show curl** gives the request as a curl command.

@@ -28,7 +28,7 @@ On **Models → Guardrails → New guardrail**:
 - **Blocked:** the request is refused with `400` and the guardrail's message, with `code: content_filter` in the OpenAI APIs, before any model is called.
 - **Flagged** and **passed** requests go on unchanged, with `x-gateway-guardrail` set accordingly.
 - A guardrail that cannot be reached refuses the request (`503`) rather than letting it through unscreened.
-- The request log shows what the guardrails did, the kinds of things found (`pii:NAME`, `content:PROMPT_ATTACK`, never the matched text) and their cost.
+- The request log shows what the guardrails did, the kinds of things found (`pii:NAME`, `content:PROMPT_ATTACK`, never the matched text) and their cost. For keys with [prompt logging](security.md#prompt-logging) on, the stored bodies also keep each guardrail's findings with the matched text, the texts it changed, and its provider's answer.
 
 A guardrail sends the prompt's text to its provider: for Bedrock in the guardrail's region, for Model Armor in the template's location, for Mistral in the credential's.
 

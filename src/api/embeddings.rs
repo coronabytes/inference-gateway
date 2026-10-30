@@ -38,7 +38,7 @@ pub async fn serve(state: &AppState, key: Arc<VirtualKey>, labels: Labels, body:
     super::to_completion(async move { run(&state, key, &labels, &body).await }).await
 }
 
-async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &[u8]) -> Result<Response, GatewayError> {
+async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &Bytes) -> Result<Response, GatewayError> {
     let raw: Value = serde_json::from_slice(body).map_err(|e| GatewayError::invalid(format!("invalid JSON body: {e}")))?;
     if !raw.is_object() {
         return Err(GatewayError::invalid("request body must be a JSON object"));
@@ -59,6 +59,9 @@ async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &[u8
 
     let mut tracker = Tracker::new(state, Some(&key), labels, &model, "embeddings", false);
     tracker.estimate_input(body.len());
+    if let Some(c) = tracker.log() {
+        c.request(crate::capture::Body::Bytes(body.clone()));
+    }
     if let Err(e) = crate::auth::check_key_limits(state, &key).await {
         tracker.fail(&e);
         return Err(e);
@@ -67,6 +70,9 @@ async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &[u8
     let (bytes, usage) =
         super::with_failover(state, &candidates, &model, &mut tracker, |d| async move { call(state, &d, raw).await }).await?;
     tracker.set_usage(usage);
+    if let Some(c) = tracker.log() {
+        c.response(crate::capture::Body::Bytes(bytes.clone()));
+    }
     let request_id = HeaderValue::from_str(&tracker.id.to_string()).expect("uuid header");
     let mut resp = ([(header::CONTENT_TYPE, "application/json")], bytes).into_response();
     resp.headers_mut().insert("x-request-id", request_id);

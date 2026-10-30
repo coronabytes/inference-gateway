@@ -107,16 +107,17 @@ pub async fn run_maintenance(state: AppState) {
         tick.tick().await;
         let settings = state.settings.get();
         let (request_days, audit_days) = (settings.request_log_retention_days, settings.audit_log_retention_days);
-        if request_days == 0 && audit_days == 0 {
-            continue;
-        }
-        match crate::db::prune_logs(&state.db, request_days, audit_days).await {
-            Ok((requests, audit)) => {
+        // Logged bodies are always pruned, so this runs whatever the other two retentions are.
+        match crate::db::prune_logs(&state.db, request_days, audit_days, settings.prompt_log_retention_days).await {
+            Ok((requests, audit, bodies)) => {
                 if requests > 0 {
                     tracing::info!(deleted = requests, "pruned old request logs");
                 }
                 if audit > 0 {
                     tracing::info!(deleted = audit, "pruned old audit log entries");
+                }
+                if bodies > 0 {
+                    tracing::info!(deleted = bodies, "pruned old logged prompts and responses");
                 }
             }
             Err(e) => tracing::warn!(error = %e, "log pruning failed"),

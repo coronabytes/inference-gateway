@@ -11,9 +11,11 @@ use uuid::Uuid;
 
 use crate::{
     accounting::RequestRecord,
+    capture::Stored,
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailRow},
     model::{
-        AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow, Route,
+        AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
+        PromptLogging, Route,
         RouterRow, VirtualKey,
     },
 };
@@ -822,7 +824,8 @@ pub async fn rename_model_metadata(pool: &PgPool, old: &str, new: &str) -> sqlx:
 pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option<&[Uuid]>) -> sqlx::Result<Vec<(ProjectRow, i64)>> {
     let rows = sqlx::query!(
         r#"SELECT p.id, p.name, p.description, p.enabled, p.max_budget_usd, p.budget_period, p.spend_reset_at,
-                  p.guardrail_ids, p.web_search, p.created_at, p.updated_at, count(k.id) AS "keys!"
+                  p.guardrail_ids, p.web_search, p.prompt_logging AS "prompt_logging: PromptLogging", p.created_at, p.updated_at,
+                  count(k.id) AS "keys!"
            FROM projects p LEFT JOIN virtual_keys k ON k.project_id = p.id
            WHERE ($1::text IS NULL OR strpos(lower(p.name || ' ' || coalesce(p.description, '')), $1) > 0)
              AND ($2::uuid[] IS NULL OR p.id = ANY($2))
@@ -845,6 +848,7 @@ pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option
                 spend_reset_at: r.spend_reset_at,
                 guardrail_ids: r.guardrail_ids,
                 web_search: r.web_search,
+                prompt_logging: r.prompt_logging,
                 created_at: r.created_at,
                 updated_at: r.updated_at,
             };
@@ -856,8 +860,9 @@ pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option
 pub async fn get_project(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<ProjectRow>> {
     sqlx::query_as!(
         ProjectRow,
-        "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search, created_at, updated_at
-         FROM projects WHERE id = $1",
+        r#"SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search,
+                  prompt_logging AS "prompt_logging: PromptLogging", created_at, updated_at
+           FROM projects WHERE id = $1"#,
         id
     )
     .fetch_optional(pool)
@@ -868,11 +873,12 @@ pub async fn get_project(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Project
 /// through `reset_project_spend`.
 pub async fn upsert_project(pool: &PgPool, p: &ProjectRow) -> sqlx::Result<()> {
     sqlx::query!(
-        "INSERT INTO projects (id, name, description, enabled, max_budget_usd, budget_period, guardrail_ids, web_search, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+        "INSERT INTO projects (id, name, description, enabled, max_budget_usd, budget_period, guardrail_ids, web_search, prompt_logging,
+             created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
          ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, enabled = EXCLUDED.enabled,
              max_budget_usd = EXCLUDED.max_budget_usd, budget_period = EXCLUDED.budget_period, guardrail_ids = EXCLUDED.guardrail_ids,
-             web_search = EXCLUDED.web_search, updated_at = now()",
+             web_search = EXCLUDED.web_search, prompt_logging = EXCLUDED.prompt_logging, updated_at = now()",
         p.id,
         p.name,
         p.description,
@@ -881,6 +887,7 @@ pub async fn upsert_project(pool: &PgPool, p: &ProjectRow) -> sqlx::Result<()> {
         p.budget_period,
         &p.guardrail_ids,
         p.web_search,
+        p.prompt_logging.as_str(),
         p.created_at,
     )
     .execute(pool)
@@ -896,7 +903,8 @@ pub async fn reset_project_spend(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> 
 pub async fn list_project_rows(pool: &PgPool) -> sqlx::Result<Vec<ProjectRow>> {
     sqlx::query_as!(
         ProjectRow,
-        "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search, created_at, updated_at FROM projects"
+        r#"SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search,
+                  prompt_logging AS "prompt_logging: PromptLogging", created_at, updated_at FROM projects"#
     )
     .fetch_all(pool)
     .await
@@ -921,7 +929,7 @@ pub async fn list_keys(pool: &PgPool) -> sqlx::Result<Vec<VirtualKey>> {
         r#"SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS "scope: KeyScope", k.project_id,
                   coalesce(p.enabled, true) AS "project_active!", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,
                   k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,
-                  k.guardrail_ids, k.web_search, k.created_at, k.updated_at
+                  k.guardrail_ids, k.web_search, k.prompt_logging, k.created_at, k.updated_at
            FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id ORDER BY k.created_at DESC"#
     )
     .fetch_all(pool)
@@ -930,20 +938,24 @@ pub async fn list_keys(pool: &PgPool) -> sqlx::Result<Vec<VirtualKey>> {
 
 /// The keys the console's key list shows, newest first. `search` (lower case) is part of the
 /// name or of the shown prefix (`sk-gw-c9d0…bb2d`), or a whole key, which starts and ends like
-/// its prefix. `visible` limits a user to their projects' keys that fit a project.
+/// its prefix. `visible` limits a user to their projects' keys that fit a project. `logging` keeps
+/// the keys whose prompts are logged (as `api::prompt_logged` decides), where `gateway_allows` is
+/// the gateway's policy for keys outside projects.
 pub async fn search_keys(
     pool: &PgPool,
     search: Option<&str>,
     tags: &AnyOf<String>,
     projects: &AnyOf<Uuid>,
     visible: Option<&[Uuid]>,
+    logging: bool,
+    gateway_allows: bool,
 ) -> sqlx::Result<Vec<VirtualKey>> {
     sqlx::query_as!(
         VirtualKey,
         r#"SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS "scope: KeyScope", k.project_id,
                   coalesce(p.enabled, true) AS "project_active!", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,
                   k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,
-                  k.guardrail_ids, k.web_search, k.created_at, k.updated_at
+                  k.guardrail_ids, k.web_search, k.prompt_logging, k.created_at, k.updated_at
            FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id
            WHERE ($1::text IS NULL OR strpos(lower(k.name), $1) > 0 OR strpos(lower(k.key_prefix), $1) > 0
                   OR (split_part(k.key_prefix, '…', 2) <> ''
@@ -952,6 +964,8 @@ pub async fn search_keys(
              AND ($2::text[] IS NULL OR k.allowed_tags && $2 OR ($3 AND cardinality(k.allowed_tags) = 0))
              AND ($4::uuid[] IS NULL OR k.project_id = ANY($4) OR ($5 AND k.project_id IS NULL))
              AND ($6::uuid[] IS NULL OR (k.project_id = ANY($6) AND k.scope IN ('inference', 'project')))
+             AND (NOT $7 OR p.prompt_logging = 'force'
+                  OR (k.prompt_logging AND (p.prompt_logging = 'allow' OR (k.project_id IS NULL AND $8))))
            ORDER BY k.created_at DESC"#,
         search,
         tags.any.as_deref(),
@@ -959,6 +973,8 @@ pub async fn search_keys(
         projects.any.as_deref(),
         projects.none,
         visible,
+        logging,
+        gateway_allows,
     )
     .fetch_all(pool)
     .await
@@ -1019,7 +1035,7 @@ pub async fn get_key(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<VirtualKey>
         r#"SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS "scope: KeyScope", k.project_id,
                   coalesce(p.enabled, true) AS "project_active!", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,
                   k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,
-                  k.guardrail_ids, k.web_search, k.created_at, k.updated_at
+                  k.guardrail_ids, k.web_search, k.prompt_logging, k.created_at, k.updated_at
            FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id WHERE k.id = $1"#,
         id
     )
@@ -1031,8 +1047,8 @@ pub async fn insert_key(pool: &PgPool, k: &VirtualKey) -> sqlx::Result<()> {
     sqlx::query!(
         "INSERT INTO virtual_keys (id, name, key_hash, key_prefix, allowed_models, allowed_tags, rpm_limit, tpm_limit,
              max_budget_usd, budget_period, spend_usd, enabled, expires_at, metadata, scope, project_id, guardrail_ids, web_search,
-             created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,now(),now())",
+             prompt_logging, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,$18,now(),now())",
         k.id,
         k.name,
         k.key_hash,
@@ -1050,6 +1066,7 @@ pub async fn insert_key(pool: &PgPool, k: &VirtualKey) -> sqlx::Result<()> {
         k.project_id,
         &k.guardrail_ids,
         k.web_search,
+        k.prompt_logging,
     )
     .execute(pool)
     .await?;
@@ -1060,7 +1077,7 @@ pub async fn update_key(db: impl PgExecutor<'_>, k: &VirtualKey) -> sqlx::Result
     sqlx::query!(
         "UPDATE virtual_keys SET name = $2, allowed_models = $3, allowed_tags = $4, rpm_limit = $5, tpm_limit = $6,
              max_budget_usd = $7, budget_period = $8, enabled = $9, expires_at = $10, metadata = $11, scope = $12,
-             project_id = $13, guardrail_ids = $14, web_search = $15, updated_at = now()
+             project_id = $13, guardrail_ids = $14, web_search = $15, prompt_logging = $16, updated_at = now()
          WHERE id = $1",
         k.id,
         k.name,
@@ -1077,6 +1094,7 @@ pub async fn update_key(db: impl PgExecutor<'_>, k: &VirtualKey) -> sqlx::Result
         k.project_id,
         &k.guardrail_ids,
         k.web_search,
+        k.prompt_logging,
     )
     .execute(db)
     .await?;
@@ -1138,6 +1156,7 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
     let mut guardrail_costs = Vec::with_capacity(batch.len());
     let mut searches = Vec::with_capacity(batch.len());
     let mut search_costs = Vec::with_capacity(batch.len());
+    let mut bodies = Vec::with_capacity(batch.len());
     for r in batch {
         ids.push(r.id);
         ts.push(r.ts);
@@ -1164,6 +1183,7 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         guardrail_costs.push(r.guardrail_cost_usd);
         searches.push(r.usage.search_units as i64);
         search_costs.push(r.search_cost_usd);
+        bodies.push(r.bodies_status.map(str::to_string));
     }
 
     let mut tx = pool.begin().await?;
@@ -1173,11 +1193,11 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         "INSERT INTO request_logs (id, ts, key_id, model_name, deployment_id, provider, api, stream,
              status_code, latency_ms, ttft_ms, input_tokens, output_tokens, cache_read_tokens,
              cache_write_tokens, cost_usd, attempts, error, parent_id, project_id, labels, guardrails, guardrail_cost_usd,
-             searches, search_cost_usd)
+             searches, search_cost_usd, bodies)
          SELECT * FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::text[], $5::uuid[],
              $6::text[], $7::text[], $8::bool[], $9::int[], $10::int[], $11::int[], $12::bigint[],
              $13::bigint[], $14::bigint[], $15::bigint[], $16::float8[], $17::int[], $18::text[], $19::uuid[],
-             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[])",
+             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[], $26::text[])",
         &ids,
         &ts,
         &key_ids as _,
@@ -1203,6 +1223,7 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         &guardrail_costs,
         &searches,
         &search_costs,
+        &bodies as _,
     )
     .execute(&mut *tx)
     .await?;
@@ -1231,6 +1252,71 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
     tx.commit().await
 }
 
+/// Stores the bodies of logged requests, once their entries are written. Each row's tool names
+/// travel joined by U+001F (UNNEST cannot take an array of arrays).
+pub async fn write_body_batch(pool: &PgPool, rows: Vec<(Uuid, DateTime<Utc>, Option<Uuid>, Stored)>) -> sqlx::Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let n = rows.len();
+    let (mut ids, mut ts, mut keys) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut requests, mut screened, mut guardrails, mut responses) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut request_bytes, mut response_bytes) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut tools, mut texts) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut response_ids, mut previous_ids, mut conversations) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    for (id, at, key, s) in rows {
+        ids.push(id);
+        ts.push(at);
+        keys.push(key);
+        requests.push(s.request);
+        screened.push(s.screened);
+        guardrails.push(s.guardrails);
+        responses.push(s.response);
+        request_bytes.push(s.request_bytes.min(i32::MAX as usize) as i32);
+        response_bytes.push(s.response_bytes.min(i32::MAX as usize) as i32);
+        tools.push(s.tools.join("\u{1f}"));
+        texts.push(s.text);
+        response_ids.push(s.response_id);
+        previous_ids.push(s.previous_response_id);
+        conversations.push(s.conversation.map(|c| c.to_vec()));
+    }
+    sqlx::query!(
+        r#"INSERT INTO request_bodies (id, ts, key_id, request, screened_request, guardrails, response, request_bytes,
+               response_bytes, tool_calls, search, response_id, previous_response_id, conversation)
+           SELECT b.id, b.ts, b.key_id, b.request, b.screened, b.guardrails, b.response, b.request_bytes, b.response_bytes,
+                  CASE WHEN b.tools = '' THEN '{}'::text[] ELSE string_to_array(b.tools, chr(31)) END,
+                  to_tsvector('simple', b.text), b.response_id, b.previous_response_id, b.conversation
+           FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::jsonb[], $5::jsonb[], $6::jsonb[], $7::jsonb[],
+                       $8::int[], $9::int[], $10::text[], $11::text[], $12::text[], $13::text[], $14::bytea[])
+                AS b(id, ts, key_id, request, screened, guardrails, response, request_bytes, response_bytes, tools, text,
+                     response_id, previous_response_id, conversation)
+           ON CONFLICT (id) DO NOTHING"#,
+        &ids,
+        &ts,
+        &keys as _,
+        &requests as _,
+        &screened as _,
+        &guardrails as _,
+        &responses as _,
+        &request_bytes,
+        &response_bytes,
+        &tools,
+        &texts,
+        &response_ids as _,
+        &previous_ids as _,
+        &conversations as _,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Marks the entries whose bodies could not be stored.
+pub async fn mark_bodies_dropped(pool: &PgPool, ids: &[Uuid]) -> sqlx::Result<()> {
+    sqlx::query!("UPDATE request_logs SET bodies = 'dropped' WHERE id = ANY($1)", ids).execute(pool).await?;
+    Ok(())
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogRow {
     pub id: Uuid,
@@ -1240,6 +1326,12 @@ pub struct LogRow {
     pub model_name: String,
     pub deployment_id: Option<Uuid>,
     pub provider: Option<String>,
+    /// The deployment's provider model and the credential it calls with, as configured now;
+    /// none once the deployment is deleted.
+    pub upstream_model: Option<String>,
+    pub credential_name: Option<String>,
+    /// The tools its response called, where its bodies are logged (see `capture`).
+    pub tool_calls: Option<Vec<String>>,
     pub api: String,
     pub stream: bool,
     pub status_code: i32,
@@ -1266,29 +1358,60 @@ pub struct LogRow {
     pub searches: i64,
     /// The searches' part of `cost_usd`.
     pub search_cost_usd: f64,
+    /// Whether its bodies were logged: `stored`, `truncated` (cut to the size limit), `expired`
+    /// (past their retention), `dropped` (could not be kept) or `deleted`; none when not logged.
+    pub bodies: Option<String>,
 }
 
-/// `labels` (a JSON object) keeps the entries that have all of these labels. `deleted_keys` keeps
-/// those of keys that no longer exist: the log keeps their id.
-pub async fn recent_logs(
-    pool: &PgPool,
-    limit: i64,
-    model: Option<&str>,
-    key_id: Option<Uuid>,
-    deleted_keys: bool,
-    errors_only: bool,
-    since: Option<DateTime<Utc>>,
-    until: Option<DateTime<Utc>>,
-    projects: Option<&[Uuid]>,
-    labels: Option<&serde_json::Value>,
-) -> sqlx::Result<Vec<LogRow>> {
+/// What the request log is filtered by (see `recent_logs`).
+#[derive(Default)]
+pub struct LogFilter<'a> {
+    pub limit: i64,
+    /// Part of the model name, ignoring case.
+    pub model: Option<&'a str>,
+    pub key_id: Option<Uuid>,
+    /// The entries of keys that no longer exist: the log keeps their id.
+    pub deleted_keys: bool,
+    pub errors_only: bool,
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+    pub projects: Option<&'a [Uuid]>,
+    /// A JSON object: entries with all of these labels.
+    pub labels: Option<&'a serde_json::Value>,
+    /// Entries whose bodies are stored (prompt logging).
+    pub bodies: bool,
+    /// Full-text search of the stored bodies (`websearch_to_tsquery` syntax).
+    pub text: Option<&'a str>,
+    /// Entries whose response called this tool.
+    pub tool: Option<&'a str>,
+    /// Entries the guardrails did any of these to (`passed`, `flagged`, `masked`, `blocked`).
+    pub guardrail: Option<&'a [String]>,
+    /// Days logged bodies are kept: older entries report theirs as expired.
+    pub body_days: u32,
+}
+
+impl LogFilter<'_> {
+    /// Whether the filter looks inside stored bodies.
+    pub fn by_content(&self) -> bool {
+        self.bodies || self.text.is_some() || self.tool.is_some()
+    }
+}
+
+/// The request log, newest first, with the calls routed requests made. Filtered by content, it
+/// also returns the router entries of matching calls, so they can be shown together.
+pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<LogRow>> {
     let mut rows = sqlx::query_as!(
         LogRow,
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
+                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
+                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
+                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)
+                       THEN 'expired' ELSE l.bodies END AS "bodies?"
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
+                LEFT JOIN request_bodies b ON b.id = l.id
            WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)
              AND ($3::uuid IS NULL OR l.key_id = $3)
              AND (NOT $4 OR l.status_code >= 400)
@@ -1297,36 +1420,216 @@ pub async fn recent_logs(
              AND ($7::uuid[] IS NULL OR l.project_id = ANY($7))
              AND ($8::jsonb IS NULL OR l.labels @> $8)
              AND (NOT $9 OR (l.key_id IS NOT NULL AND k.id IS NULL))
+             AND (NOT $10 OR b.id IS NOT NULL)
+             AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))
+             AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text])
+             AND ($14::text[] IS NULL OR l.guardrails->>'action' = ANY($14))
            ORDER BY l.ts DESC LIMIT $1"#,
-        limit,
-        model,
-        key_id,
-        errors_only,
-        since,
-        until,
-        projects,
-        labels,
-        deleted_keys,
+        f.limit,
+        f.model,
+        f.key_id,
+        f.errors_only,
+        f.since,
+        f.until,
+        f.projects,
+        f.labels,
+        f.deleted_keys,
+        f.bodies,
+        f.text,
+        f.tool,
+        f.body_days as i32,
+        f.guardrail,
     )
     .fetch_all(pool)
     .await?;
-    // Router entries come with the calls they made, so the log can show them together.
     let mut seen: std::collections::HashSet<Uuid> = rows.iter().map(|r| r.id).collect();
+    if f.by_content() {
+        let parents: Vec<Uuid> = rows.iter().filter_map(|r| r.parent_id).filter(|p| !seen.contains(p)).collect();
+        let found = logs_by_id(pool, &parents, f.body_days).await?;
+        rows.extend(found.into_iter().filter(|r| seen.insert(r.id)));
+    }
+    // Router entries come with the calls they made, so the log can show them together.
     let parents: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
     let children = sqlx::query_as!(
         LogRow,
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
+                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
+                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
+                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
+                       THEN 'expired' ELSE l.bodies END AS "bodies?"
            FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
            WHERE l.parent_id = ANY($1) ORDER BY l.ts"#,
         &parents,
+        f.body_days as i32,
     )
     .fetch_all(pool)
     .await?;
     rows.extend(children.into_iter().filter(|c| seen.insert(c.id)));
     Ok(rows)
+}
+
+async fn logs_by_id(pool: &PgPool, ids: &[Uuid], body_days: u32) -> sqlx::Result<Vec<LogRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    sqlx::query_as!(
+        LogRow,
+        // No join: on an empty table Postgres plans one with request_logs as the inner side, and
+        // sqlx then takes its columns for nullable, unlike on a table with rows.
+        r#"SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS "key_name?", l.model_name,
+                  l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
+                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
+                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
+                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
+                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
+                       THEN 'expired' ELSE l.bodies END AS "bodies?"
+           FROM request_logs l
+           WHERE l.id = ANY($1)"#,
+        ids,
+        body_days as i32,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// One entry's stored bodies, with what decides who may read them.
+pub struct BodiesRow {
+    pub id: Uuid,
+    pub ts: DateTime<Utc>,
+    pub project_id: Option<Uuid>,
+    pub key_id: Option<Uuid>,
+    pub status: Option<String>,
+    pub request: Option<serde_json::Value>,
+    pub screened_request: Option<serde_json::Value>,
+    pub guardrails: Option<serde_json::Value>,
+    pub response: Option<serde_json::Value>,
+    pub request_bytes: i32,
+    pub response_bytes: i32,
+    pub response_id: Option<String>,
+    pub previous_response_id: Option<String>,
+    pub conversation: Option<Vec<u8>>,
+}
+
+pub async fn log_bodies(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<BodiesRow>> {
+    sqlx::query_as!(
+        BodiesRow,
+        r#"SELECT l.id, l.ts, l.project_id, l.key_id, l.bodies AS status, b.request, b.screened_request,
+                  b.guardrails, b.response, b.request_bytes, b.response_bytes, b.response_id, b.previous_response_id,
+                  b.conversation
+           FROM request_logs l JOIN request_bodies b ON b.id = l.id WHERE l.id = $1"#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// The logged turns before and after `row` in its conversation, of the same key and in
+/// `projects`: by Responses id where the turns chain that way, otherwise by the conversation's
+/// opening (see `affinity::Affinity::fingerprint`).
+pub async fn turn_links(pool: &PgPool, row: &BodiesRow, projects: Option<&[Uuid]>) -> sqlx::Result<(Option<Uuid>, Option<Uuid>)> {
+    let r = sqlx::query!(
+        r#"SELECT
+             (SELECT p.id FROM request_bodies p JOIN request_logs pl ON pl.id = p.id
+              WHERE p.key_id = $1 AND p.id <> $2 AND ($6::uuid[] IS NULL OR pl.project_id = ANY($6))
+                AND CASE WHEN $3::text IS NOT NULL THEN p.response_id = $3
+                         ELSE $4::bytea IS NOT NULL AND p.conversation = $4 AND p.ts < $5 END
+              ORDER BY p.ts DESC LIMIT 1) AS previous,
+             (SELECT n.id FROM request_bodies n JOIN request_logs nl ON nl.id = n.id
+              WHERE n.key_id = $1 AND n.id <> $2 AND ($6::uuid[] IS NULL OR nl.project_id = ANY($6))
+                AND (($7::text IS NOT NULL AND n.previous_response_id = $7)
+                     OR ($4::bytea IS NOT NULL AND n.conversation = $4 AND n.ts > $5))
+              ORDER BY n.ts LIMIT 1) AS next"#,
+        row.key_id,
+        row.id,
+        row.previous_response_id,
+        row.conversation,
+        row.ts,
+        projects,
+        row.response_id,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok((r.previous, r.next))
+}
+
+/// A tool the latest logged responses called, with how many of them did (`recent_tools`).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ToolUse {
+    pub name: String,
+    pub requests: i64,
+}
+
+/// The tools the latest `limit` logged responses in `projects` called, most used first.
+pub async fn recent_tools(pool: &PgPool, limit: i64, projects: Option<&[Uuid]>) -> sqlx::Result<Vec<ToolUse>> {
+    sqlx::query_as!(
+        ToolUse,
+        r#"SELECT t AS "name!", count(*) AS "requests!"
+           FROM (SELECT b.tool_calls FROM request_bodies b JOIN request_logs l ON l.id = b.id
+                 WHERE cardinality(b.tool_calls) > 0 AND ($2::uuid[] IS NULL OR l.project_id = ANY($2))
+                 ORDER BY b.ts DESC LIMIT $1) s, unnest(s.tool_calls) t
+           GROUP BY t ORDER BY 2 DESC, 1 LIMIT 100"#,
+        limit,
+        projects,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Whose stored bodies to count or delete: a key's, or those of the requests made in a project.
+#[derive(Clone, Copy)]
+pub enum BodiesOf {
+    Key(Uuid),
+    Project(Uuid),
+}
+
+pub async fn count_bodies(pool: &PgPool, of: BodiesOf) -> sqlx::Result<i64> {
+    match of {
+        BodiesOf::Key(id) => sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM request_bodies WHERE key_id = $1"#, id).fetch_one(pool).await,
+        BodiesOf::Project(id) => {
+            sqlx::query_scalar!(
+                r#"SELECT count(*) AS "n!" FROM request_bodies b JOIN request_logs l ON l.id = b.id WHERE l.project_id = $1"#,
+                id
+            )
+            .fetch_one(pool)
+            .await
+        }
+    }
+}
+
+/// Deletes the stored bodies of a key or project, in chunks, and marks their entries as
+/// `deleted`. Returns how many were deleted.
+pub async fn delete_bodies(pool: &PgPool, of: BodiesOf) -> sqlx::Result<u64> {
+    let mut deleted = 0;
+    loop {
+        let n = match of {
+            BodiesOf::Key(id) => sqlx::query!(
+                "WITH d AS (DELETE FROM request_bodies WHERE id IN (SELECT id FROM request_bodies WHERE key_id = $1 LIMIT 5000) RETURNING id)
+                 UPDATE request_logs l SET bodies = 'deleted' FROM d WHERE l.id = d.id",
+                id
+            )
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            BodiesOf::Project(id) => sqlx::query!(
+                "WITH d AS (DELETE FROM request_bodies WHERE id IN (
+                     SELECT b.id FROM request_bodies b JOIN request_logs l ON l.id = b.id WHERE l.project_id = $1 LIMIT 5000)
+                     RETURNING id)
+                 UPDATE request_logs l SET bodies = 'deleted' FROM d WHERE l.id = d.id",
+                id
+            )
+            .execute(pool)
+            .await?
+            .rows_affected(),
+        };
+        deleted += n;
+        if n < 5000 {
+            return Ok(deleted);
+        }
+    }
 }
 
 /// A label value of the latest labelled requests, with how many of them carry it (`recent_labels`).
@@ -1676,17 +1979,17 @@ pub async fn key_usage_since(pool: &PgPool, since: DateTime<Utc>, projects: Opti
     .await
 }
 
-/// Retention cleanup of the request log and the audit log, each by its own number of days (0
-/// keeps that log forever). Returns how many entries each lost. Guarded by an advisory lock so
-/// only one replica runs it at a time.
-pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32) -> sqlx::Result<(u64, u64)> {
+/// Retention cleanup of the request log, the audit log and logged bodies, each by its own number
+/// of days (0 keeps that log forever; bodies always go). Returns how many entries each lost.
+/// Guarded by an advisory lock so only one replica runs it at a time.
+pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32, body_days: u32) -> sqlx::Result<(u64, u64, u64)> {
     const LOCK_ID: i64 = 0x6777_6c6f_6773; // "gwlogs"
     let mut conn = pool.acquire().await?;
     let locked = sqlx::query_scalar!(r#"SELECT pg_try_advisory_lock($1) AS "locked!""#, LOCK_ID)
         .fetch_one(&mut *conn)
         .await?;
     if !locked {
-        return Ok((0, 0));
+        return Ok((0, 0, 0));
     }
     let result = async {
         let requests = match request_days {
@@ -1707,7 +2010,23 @@ pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32) -> sq
                     .rows_affected()
             }
         };
-        Ok::<_, sqlx::Error>((requests, audit))
+        // In chunks: bodies are large, and a long delete would hold locks and write a burst of WAL.
+        let mut bodies = 0;
+        loop {
+            let n = sqlx::query!(
+                "DELETE FROM request_bodies WHERE id IN (
+                     SELECT id FROM request_bodies WHERE ts < now() - make_interval(days => $1) LIMIT 5000)",
+                body_days as i32
+            )
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+            bodies += n;
+            if n < 5000 {
+                break;
+            }
+        }
+        Ok::<_, sqlx::Error>((requests, audit, bodies))
     }
     .await;
     let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", LOCK_ID).fetch_one(&mut *conn).await;

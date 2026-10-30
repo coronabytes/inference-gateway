@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS \"scope: KeyScope\", k.project_id,\n                  coalesce(p.enabled, true) AS \"project_active!\", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,\n                  k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,\n                  k.guardrail_ids, k.web_search, k.created_at, k.updated_at\n           FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id ORDER BY k.created_at DESC",
+  "query": "SELECT k.id, k.name, k.key_hash, k.key_prefix, k.scope AS \"scope: KeyScope\", k.project_id,\n                  coalesce(p.enabled, true) AS \"project_active!\", k.allowed_models, k.allowed_tags, k.rpm_limit, k.tpm_limit,\n                  k.max_budget_usd, k.budget_period, k.spend_usd, k.spend_reset_at, k.enabled, k.expires_at, k.metadata,\n                  k.guardrail_ids, k.web_search, k.prompt_logging, k.created_at, k.updated_at\n           FROM virtual_keys k LEFT JOIN projects p ON p.id = k.project_id\n           WHERE ($1::text IS NULL OR strpos(lower(k.name), $1) > 0 OR strpos(lower(k.key_prefix), $1) > 0\n                  OR (split_part(k.key_prefix, '…', 2) <> ''\n                      AND starts_with($1, lower(split_part(k.key_prefix, '…', 1)))\n                      AND right($1, char_length(split_part(k.key_prefix, '…', 2))) = lower(split_part(k.key_prefix, '…', 2))))\n             AND ($2::text[] IS NULL OR k.allowed_tags && $2 OR ($3 AND cardinality(k.allowed_tags) = 0))\n             AND ($4::uuid[] IS NULL OR k.project_id = ANY($4) OR ($5 AND k.project_id IS NULL))\n             AND ($6::uuid[] IS NULL OR (k.project_id = ANY($6) AND k.scope IN ('inference', 'project')))\n             AND (NOT $7 OR p.prompt_logging = 'force'\n                  OR (k.prompt_logging AND (p.prompt_logging = 'allow' OR (k.project_id IS NULL AND $8))))\n           ORDER BY k.created_at DESC",
   "describe": {
     "columns": [
       {
@@ -220,6 +220,17 @@
       },
       {
         "ordinal": 20,
+        "name": "prompt_logging",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "prompt_logging"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -230,7 +241,7 @@
         }
       },
       {
-        "ordinal": 21,
+        "ordinal": 22,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -242,7 +253,16 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text",
+        "TextArray",
+        "Bool",
+        "UuidArray",
+        "Bool",
+        "UuidArray",
+        "Bool",
+        "Bool"
+      ]
     },
     "nullable": [
       false,
@@ -266,8 +286,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "37dfab91879c17be682c3a6f1f180b8e36b9b01cc8a780d6f233eb72514000a6"
+  "hash": "49895f4cd264a8cb867ed74903e639e939e9add6944c76560aba214334321231"
 }

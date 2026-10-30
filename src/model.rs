@@ -615,6 +615,7 @@ mod tests {
             metadata: serde_json::json!({}),
             guardrail_ids: Vec::new(),
             web_search: true,
+            prompt_logging: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -792,8 +793,35 @@ pub struct ProjectRow {
     /// Whether its keys' requests may have the model search the web. False forbids it for every
     /// key in the project, whatever the key's own says.
     pub web_search: bool,
+    /// Whether its keys' prompts and responses are logged, for debugging: never, where a key
+    /// opts in, or always (see `api::prompt_logged`).
+    pub prompt_logging: PromptLogging,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// A project's (or, for keys outside projects, the gateway's) prompt logging policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+pub enum PromptLogging {
+    /// No key's requests are logged, whatever the key says.
+    #[default]
+    Deny,
+    /// The keys that opt in are logged.
+    Allow,
+    /// Every key's requests are logged, whatever the key says. Projects only.
+    Force,
+}
+
+impl PromptLogging {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PromptLogging::Deny => "deny",
+            PromptLogging::Allow => "allow",
+            PromptLogging::Force => "force",
+        }
+    }
 }
 
 /// Someone who signed in to the admin UI with OIDC (or the Dev Login user).
@@ -1020,6 +1048,9 @@ pub struct VirtualKey {
     /// Whether its requests may have the model search the web (billed per search). Its project
     /// may forbid it anyway: see `api::web_search_allowed`.
     pub web_search: bool,
+    /// Whether its prompts and responses are logged, where its project allows it. A project that
+    /// denies or forces logging decides instead: see `api::prompt_logged`.
+    pub prompt_logging: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

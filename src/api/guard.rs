@@ -112,11 +112,15 @@ fn prompt_texts(inbound: Inbound, raw: &Value) -> Vec<String> {
 /// the text as the ones before it left it. A guardrail that blocks refuses the request with its
 /// message; one that cannot be reached refuses it too, as the text would otherwise pass unscreened.
 /// Either way the charge for the guardrails that ran comes along, for the request log.
+///
+/// With `trace` (a logged request, see `capture`), the charge also says what each guardrail was
+/// given, found (matched text included), did and answered, and which texts it changed.
 pub(crate) async fn screen_prompt(
     state: &AppState,
     inbound: Inbound,
     raw: &mut Value,
     guards: &[Arc<Active>],
+    trace: bool,
 ) -> Result<(GuardrailCharge, Screened), (GuardrailCharge, GatewayError)> {
     let pointers = prompt_texts(inbound, raw);
     let mut texts: Vec<String> = pointers.iter().map(|p| raw.pointer(p).and_then(Value::as_str).unwrap_or_default().to_string()).collect();
@@ -125,36 +129,66 @@ pub(crate) async fn screen_prompt(
     let mut action = Action::Passed;
     let mut findings = BTreeSet::new();
     let mut applied = Vec::new();
-    let charge = |applied: &Vec<String>, action: Action, findings: &BTreeSet<String>, cost: f64| GuardrailCharge {
+    let mut steps: Vec<Value> = Vec::new();
+    let charge = |applied: &Vec<String>, action: Action, findings: &BTreeSet<String>, cost: f64, steps: Vec<Value>| GuardrailCharge {
         cost_usd: cost,
         summary: Some(json!({ "applied": applied, "action": action, "findings": findings })),
+        trace: trace.then_some(steps),
     };
     for g in guards {
         applied.push(g.row.name.clone());
+        let step = |action: &str| json!({ "guardrail": g.row.name, "guardrail_id": g.row.id, "provider": g.row.provider, "action": action });
         if texts.iter().all(|t| t.trim().is_empty()) {
+            steps.push(step("skipped"));
             continue;
         }
+        let started = std::time::Instant::now();
         let v = match guardrails::check(state, &g.callable(), Source::Input, &texts).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(guardrail = %g.row.name, error = %e.message, "guardrail failed; refusing the request");
+                let mut s = step("failed");
+                s["duration_ms"] = (started.elapsed().as_millis() as u64).into();
+                s["error"] = e.message.clone().into();
+                steps.push(s);
                 let e = GatewayError::unavailable(format!("guardrail '{}' could not screen the request: {}", g.row.name, e.message));
-                return Err((charge(&applied, action, &findings, cost), e));
+                return Err((charge(&applied, action, &findings, cost, steps), e));
             }
         };
         cost += v.cost_usd;
         action = action.max(v.action);
         findings.extend(v.findings.iter().map(|f| format!("{}:{}", f.policy, f.kind)));
+        if trace {
+            let mut s = step(v.action.as_str());
+            s["duration_ms"] = (started.elapsed().as_millis() as u64).into();
+            s["findings"] = serde_json::to_value(&v.findings).unwrap_or_default();
+            s["usage"] = serde_json::to_value(v.usage).unwrap_or_default();
+            s["cost_usd"] = v.cost_usd.into();
+            if v.action == Action::Blocked {
+                s["message"] = v.outputs.first().cloned().into();
+            }
+            if v.action == Action::Masked && v.outputs.len() == texts.len() {
+                let changes: Vec<Value> = pointers
+                    .iter()
+                    .zip(texts.iter().zip(&v.outputs))
+                    .filter(|(_, (before, after))| before != after)
+                    .map(|(p, (before, after))| json!({ "pointer": p, "before": before, "after": after }))
+                    .collect();
+                s["changes"] = changes.into();
+            }
+            s["provider_response"] = v.raw.clone().unwrap_or_default();
+            steps.push(s);
+        }
         match v.action {
             Action::Blocked => {
                 let message = v.outputs.first().cloned().unwrap_or_else(|| "The request was blocked.".into());
                 let e = GatewayError::content_filter(format!("{message} (blocked by guardrail '{}')", g.row.name));
-                return Err((charge(&applied, action, &findings, cost), e));
+                return Err((charge(&applied, action, &findings, cost, steps), e));
             }
             Action::Masked if v.outputs.len() == texts.len() => texts = v.outputs,
             Action::Masked => {
                 let e = GatewayError::unavailable(format!("guardrail '{}' answered with {} texts for {}", g.row.name, v.outputs.len(), texts.len()));
-                return Err((charge(&applied, action, &findings, cost), e));
+                return Err((charge(&applied, action, &findings, cost, steps), e));
             }
             Action::Passed | Action::Flagged => {}
         }
@@ -167,7 +201,7 @@ pub(crate) async fn screen_prompt(
         }
     }
     let masked_prompt = texts.last().filter(|t| action == Action::Masked && Some(*t) != last_sent.as_ref()).cloned();
-    Ok((charge(&applied, action, &findings, cost), Screened { action, masked_prompt }))
+    Ok((charge(&applied, action, &findings, cost, steps), Screened { action, masked_prompt }))
 }
 
 #[cfg(test)]

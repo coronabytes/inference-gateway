@@ -5,6 +5,7 @@
 //! their record.
 
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -16,6 +17,7 @@ use uuid::Uuid;
 
 use crate::{
     cache::Outcome,
+    capture::Capture,
     error::GatewayError,
     ir::Usage,
     labels::Labels,
@@ -55,6 +57,30 @@ pub struct RequestRecord {
     pub guardrail_cost_usd: f64,
     /// The searches' part of `cost_usd` (`usage.search_units` of them).
     pub search_cost_usd: f64,
+    /// The request's and response's bodies, where its key's prompts are logged (see `capture`).
+    pub bodies: Logged,
+    /// What became of them, for the entry's `bodies` column: set by the writer.
+    pub bodies_status: Option<&'static str>,
+}
+
+/// A logged request's bodies on their way to the writer. They are never copied: a clone of a
+/// record has none, and they print as their size only, so prompts never reach a log line.
+#[derive(Default)]
+pub struct Logged(pub Option<Box<Capture>>);
+
+impl Clone for Logged {
+    fn clone(&self) -> Self {
+        Self(None)
+    }
+}
+
+impl std::fmt::Debug for Logged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(c) => write!(f, "Logged({} bytes)", c.held()),
+            None => f.write_str("Logged(none)"),
+        }
+    }
 }
 
 /// What screening a request with guardrails cost and found, for its entry in the request log.
@@ -63,6 +89,9 @@ pub struct GuardrailCharge {
     pub cost_usd: f64,
     /// `{"applied": [names], "action": "masked", "findings": ["pii:NAME"]}`; never matched text.
     pub summary: Option<serde_json::Value>,
+    /// What each guardrail found, did and answered, matched text included: only collected for
+    /// logged requests, whose bodies keep it (see `api::guard::screen_prompt`).
+    pub trace: Option<Vec<serde_json::Value>>,
 }
 
 pub struct Tracker {
@@ -96,6 +125,8 @@ pub struct Tracker {
     /// The upstream stream ran to its end (rather than the client going away first).
     stream_ended: bool,
     guardrails: GuardrailCharge,
+    /// Where the key's prompts are logged: what this call's entry keeps of its bodies.
+    capture: Option<Box<Capture>>,
 }
 
 /// Rough tokens for a number of bytes of text, for when a provider reports no usage. About four
@@ -109,6 +140,9 @@ impl Tracker {
         let mut t = Self::with_parent(state, key.map(|k| k.id), key.map(|k| k.name.clone()), model, api, stream, None);
         t.project_id = key.and_then(|k| k.project_id);
         t.labels = labels.clone();
+        if key.is_some_and(|k| logs_prompts(state, k)) {
+            t.capture = Some(Box::new(Capture::new(api, state.bodies.clone())));
+        }
         t
     }
 
@@ -146,12 +180,26 @@ impl Tracker {
             output_bytes: 0,
             stream_ended: false,
             guardrails: GuardrailCharge::default(),
+            capture: None,
         }
     }
 
     /// The guardrails this request went through; their cost is added to the request's.
-    pub fn guardrails(&mut self, charge: GuardrailCharge) {
+    pub fn guardrails(&mut self, mut charge: GuardrailCharge) {
+        if let (Some(trace), Some(c)) = (charge.trace.take(), self.capture.as_mut()) {
+            c.guardrails(trace);
+        }
         self.guardrails = charge;
+    }
+
+    /// Whether this call's bodies are logged.
+    pub fn logging(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    /// Where this call's bodies go, when they are logged.
+    pub fn log(&mut self) -> Option<&mut Capture> {
+        self.capture.as_deref_mut()
     }
 
     /// What to charge for input if the upstream reports no usage: the request body's size.
@@ -176,6 +224,9 @@ impl Tracker {
         t.project_id = parent.project_id;
         t.labels = parent.labels.clone();
         t.parent = Some((parent.clone(), decides_status));
+        if parent.logging {
+            t.capture = Some(Box::new(Capture::new(api, state.bodies.clone())));
+        }
         t
     }
 
@@ -287,6 +338,8 @@ impl Drop for Tracker {
             guardrails: guardrails.summary,
             guardrail_cost_usd: guardrails.cost_usd,
             search_cost_usd: self.deployment.as_ref().map_or(0.0, |d| d.pricing.search_cost(&self.usage)),
+            bodies: Logged(self.capture.take()),
+            bodies_status: None,
         };
         telemetry::end_call(&self.cx, &rec, self.deployment.as_ref().map(|d| d.upstream_model.as_str()));
         if let Some((parent, decides_status)) = self.parent.take() {
@@ -308,6 +361,7 @@ struct RollupState {
     status: Option<u16>,
     error: Option<String>,
     ttft_ms: Option<u64>,
+    capture: Option<Box<Capture>>,
 }
 
 /// The entry of a routed request: the router's model name, with the usage and cost of its calls
@@ -327,11 +381,16 @@ pub struct Rollup {
     stream: bool,
     /// The router's trace span, parent of its calls' spans.
     cx: Context,
+    /// The key's prompts are logged: the router's entry keeps the request and what the guardrails
+    /// did, its calls their own bodies.
+    logging: bool,
     state: Mutex<RollupState>,
 }
 
 impl Rollup {
     pub fn new(state: &AppState, key: Option<&VirtualKey>, labels: &Labels, model: &str, api: &'static str, stream: bool) -> Arc<Self> {
+        let logging = key.is_some_and(|k| logs_prompts(state, k));
+        let rollup = RollupState { capture: logging.then(|| Box::new(Capture::new(api, state.bodies.clone()))), ..Default::default() };
         Arc::new(Self {
             tx: state.records.clone(),
             id: Uuid::now_v7(),
@@ -345,14 +404,31 @@ impl Rollup {
             api,
             stream,
             cx: telemetry::start_call(api, model, None),
-            state: Mutex::default(),
+            logging,
+            state: Mutex::new(rollup),
         })
     }
 
     /// The guardrails the routed request went through, before its decision; their cost is added
     /// to the request's.
-    pub fn guardrails(&self, charge: GuardrailCharge) {
-        self.state.lock().expect("rollup lock").guardrails = charge;
+    pub fn guardrails(&self, mut charge: GuardrailCharge) {
+        let mut s = self.state.lock().expect("rollup lock");
+        if let (Some(trace), Some(c)) = (charge.trace.take(), s.capture.as_mut()) {
+            c.guardrails(trace);
+        }
+        s.guardrails = charge;
+    }
+
+    /// Whether the routed request's bodies are logged.
+    pub fn logging(&self) -> bool {
+        self.logging
+    }
+
+    /// Records in the router's own bodies: the request as the client sent it and as screened.
+    pub fn log(&self, f: impl FnOnce(&mut Capture)) {
+        if let Some(c) = self.state.lock().expect("rollup lock").capture.as_mut() {
+            f(c);
+        }
     }
 
     /// The request failed before or outside its calls (validation, key limits).
@@ -404,6 +480,8 @@ impl Drop for Rollup {
             guardrails: s.guardrails.summary,
             guardrail_cost_usd: s.guardrails.cost_usd,
             search_cost_usd: s.search_cost_usd,
+            bodies: Logged(s.capture),
+            bodies_status: None,
         };
         telemetry::end_call(&self.cx, &rec, None);
         if self.tx.try_send(rec).is_err() {
@@ -426,7 +504,8 @@ pub async fn run_writer(
             rec = rx.recv() => {
                 let Some(rec) = rec else { break };
                 accept(&state, rec, &mut batch);
-                if batch.len() >= 500 {
+                let body_bytes: usize = batch.iter().filter_map(|r| r.bodies.0.as_ref()).map(|c| c.held()).sum();
+                if batch.len() >= 500 || body_bytes >= BATCH_BODY_BYTES {
                     flush(&state, &mut batch).await;
                 }
             }
@@ -465,18 +544,67 @@ fn accept(state: &AppState, rec: RequestRecord, batch: &mut Vec<RequestRecord>) 
     batch.push(rec);
 }
 
+/// Body bytes a batch holds before it is written ahead of the tick, so one insert stays small.
+const BATCH_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+/// Whether `key`'s prompts and responses are logged (see `api::prompt_logged`).
+fn logs_prompts(state: &AppState, key: &VirtualKey) -> bool {
+    crate::api::prompt_logged(&state.registry.snapshot(), &state.settings.get(), key)
+}
+
 async fn flush(state: &AppState, batch: &mut Vec<RequestRecord>) {
     if batch.is_empty() {
         return;
     }
+    // Logged bodies are trimmed and indexed off the async workers, then written after their
+    // entries: a failure to store them never costs an entry or its spend.
+    let captured: Vec<_> = batch.iter_mut().filter_map(|r| r.bodies.0.take().map(|c| (r.id, r.ts, r.key_id, c))).collect();
+    let mut stored = Vec::new();
+    if !captured.is_empty() {
+        let max_bytes = state.settings.get().prompt_log_max_kb as usize * 1024;
+        let finished = tokio::task::spawn_blocking(move || {
+            captured
+                .into_iter()
+                .map(|(id, ts, key, c)| (id, ts, key, (!c.is_dropped()).then(|| c.finish(max_bytes))))
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %e, "trimming logged bodies failed");
+            Vec::new()
+        });
+        let status: HashMap<Uuid, &'static str> = finished
+            .iter()
+            .map(|(id, _, _, s)| (*id, s.as_ref().map_or("dropped", |s| if s.truncated { "truncated" } else { "stored" })))
+            .collect();
+        for r in batch.iter_mut() {
+            if let Some(s) = status.get(&r.id) {
+                r.bodies_status = Some(s);
+            }
+        }
+        stored = finished.into_iter().filter_map(|(id, ts, key, s)| s.map(|s| (id, ts, key, s))).collect();
+    }
     if let Err(e) = crate::db::write_request_batch(&state.db, batch).await {
         tracing::error!(error = %e, n = batch.len(), "failed to persist request logs");
-        // Keep a bounded backlog so a short database outage does not lose spend.
+        // Keep a bounded backlog so a short database outage does not lose spend. Its bodies are
+        // not kept: an outage must not hold prompts in memory.
+        for r in batch.iter_mut().filter(|r| matches!(r.bodies_status, Some("stored" | "truncated"))) {
+            r.bodies_status = Some("dropped");
+        }
         if batch.len() < 20_000 {
             return;
         }
     }
     batch.clear();
+    let ids: Vec<Uuid> = stored.iter().map(|(id, ..)| *id).collect();
+    if !stored.is_empty()
+        && let Err(e) = crate::db::write_body_batch(&state.db, stored).await
+    {
+        tracing::error!(error = %e, n = ids.len(), "failed to persist logged bodies");
+        if let Err(e) = crate::db::mark_bodies_dropped(&state.db, &ids).await {
+            tracing::warn!(error = %e, "could not mark the logged bodies as dropped");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -529,6 +657,59 @@ mod tests {
     fn record(t: Tracker, rx: &mut mpsc::Receiver<RequestRecord>) -> RequestRecord {
         drop(t);
         rx.try_recv().expect("a record")
+    }
+
+    /// A key outside projects that opted in to prompt logging.
+    fn logging_key(opted_in: bool) -> VirtualKey {
+        VirtualKey {
+            id: Uuid::nil(),
+            name: "k".into(),
+            key_hash: vec![],
+            key_prefix: "gw-".into(),
+            scope: crate::model::KeyScope::Inference,
+            project_id: None,
+            project_active: true,
+            allowed_models: vec![],
+            allowed_tags: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            max_budget_usd: None,
+            budget_period: None,
+            spend_usd: 0.0,
+            spend_reset_at: None,
+            enabled: true,
+            expires_at: None,
+            metadata: serde_json::json!({}),
+            guardrail_ids: vec![],
+            web_search: true,
+            prompt_logging: opted_in,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn logged_keys_carry_their_bodies_and_never_print_them() {
+        let state = crate::state::test_state();
+        let allow = crate::settings::Settings { prompt_logging: crate::model::PromptLogging::Allow, ..(*state.settings.get()).clone() };
+        state.settings.set(allow);
+        for opted_in in [true, false] {
+            let (tx, mut rx) = mpsc::channel(4);
+            let mut t = Tracker::new(&state, Some(&logging_key(opted_in)), &Labels::default(), "m", "chat", false);
+            t.tx = tx;
+            assert_eq!(t.logging(), opted_in);
+            if let Some(c) = t.log() {
+                c.request(crate::capture::Body::Bytes(bytes::Bytes::from_static(b"{\"secret\":\"hunter2\"}")));
+            }
+            let r = record(t, &mut rx);
+            assert_eq!(r.bodies.0.is_some(), opted_in);
+            let printed = format!("{r:?}");
+            assert!(!printed.contains("hunter2"), "{printed}");
+            // Copies of a record (for the cache and telemetry) never carry its bodies.
+            assert!(r.clone().bodies.0.is_none());
+        }
+        // Once the record is gone, its bodies no longer count against the replica's buffer.
+        assert_eq!(state.bodies.used(), 0);
     }
 
     #[tokio::test]

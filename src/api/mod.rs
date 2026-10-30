@@ -28,12 +28,13 @@ use uuid::Uuid;
 use crate::{
     accounting::{Rollup, Tracker},
     affinity::Affinity,
+    capture::{Body as Logged, ChatStream, MessagesStream, Reassembler, ResponsesStream},
     auth::ClientKey,
     labels::{ClientLabels, Labels},
     conversations::{self, History, Previous, Turn},
     error::{Dialect, ErrorKind, GatewayError},
     ir::{Aggregator, ChatRequest, ChatResponse, Message, Part, Role, StreamEvent, Usage},
-    model::{ApiStyle, AutoRouter, Deployment, Mode, ProviderKind, VirtualKey},
+    model::{ApiStyle, AutoRouter, Deployment, Mode, PromptLogging, ProviderKind, VirtualKey},
     providers::{self, ByteStream, EventStream, Op},
     registry::Snapshot,
     sse::SseParser,
@@ -126,7 +127,7 @@ pub async fn chat_completions(
 /// playground, which picks the key by id instead of by secret.
 pub async fn serve(state: &AppState, key: Arc<VirtualKey>, labels: Labels, headers: &HeaderMap, body: Bytes, inbound: Inbound) -> Response {
     let (state, headers) = (state.clone(), headers.clone());
-    let result = to_completion(async move { run(&state, key, &labels, &headers, &body, inbound).await }).await;
+    let result = to_completion(async move { run(&state, key, &labels, &headers, body, inbound).await }).await;
     match result {
         Ok(r) => r,
         Err(e) => e.into_response_for(inbound.dialect()),
@@ -159,10 +160,10 @@ async fn run(
     key: Arc<VirtualKey>,
     labels: &Labels,
     headers: &HeaderMap,
-    body: &[u8],
+    body: Bytes,
     inbound: Inbound,
 ) -> Result<Response, GatewayError> {
-    let raw: Value = serde_json::from_slice(body).map_err(|e| GatewayError::invalid(format!("invalid JSON body: {e}")))?;
+    let raw: Value = serde_json::from_slice(&body).map_err(|e| GatewayError::invalid(format!("invalid JSON body: {e}")))?;
     if !raw.is_object() {
         return Err(GatewayError::invalid("request body must be a JSON object"));
     }
@@ -187,9 +188,9 @@ async fn run(
             if !key.allows_model(model) || !key.allows_router(&router) {
                 return Err(GatewayError::forbidden(format!("this key is not allowed to use model '{model}'")));
             }
-            routing::route(state, key, labels, headers, raw, body.len(), inbound, router, &guards).await
+            routing::route(state, key, labels, headers, raw, &body, inbound, router, &guards).await
         }
-        None => run_model(state, key, labels, headers, raw, body.len(), inbound, None, &guards).await,
+        None => run_model(state, key, labels, headers, raw, &body, inbound, None, &guards).await,
     }
 }
 
@@ -212,15 +213,15 @@ pub(crate) fn guardrail_header(resp: &mut Response, screened: Option<&guard::Scr
 
 /// Serve a request on a model's deployments. `parent` is set for the routed call of an auto
 /// router, whose request already passed the key's limits and `guards`, and whose labels it
-/// carries. `body_len` is the request's size, for estimating its input tokens should the upstream
-/// report none.
+/// carries. `body` is the request as the client sent it: its size estimates the input tokens
+/// should the upstream report none, and a logged request keeps it.
 pub(crate) async fn run_model(
     state: &AppState,
     key: Arc<VirtualKey>,
     labels: &Labels,
     headers: &HeaderMap,
     mut raw: Value,
-    body_len: usize,
+    body: &Bytes,
     inbound: Inbound,
     parent: Option<Arc<Rollup>>,
     guards: &[Arc<crate::guardrails::Active>],
@@ -236,7 +237,12 @@ pub(crate) async fn run_model(
         Some(p) => Tracker::child(state, p, true, &model, inbound.name(), stream),
         None => Tracker::new(state, Some(&key), labels, &model, inbound.name(), stream),
     };
-    tracker.estimate_input(body_len);
+    tracker.estimate_input(body.len());
+    // A routed call logs the request as routed (its model and effort set); the router's entry
+    // keeps it as the client sent it.
+    if let Some(c) = tracker.log() {
+        c.request(if parent.is_some() { Logged::Json(raw.clone()) } else { Logged::Bytes(body.clone()) });
+    }
     // Before the conversation lookup, so a key over its limits cannot make the gateway read
     // stored conversations either.
     if parent.is_none()
@@ -248,9 +254,14 @@ pub(crate) async fn run_model(
     // After the limits, so a key over them pays for no guardrail call either.
     let mut guarded = None;
     if !guards.is_empty() {
-        match guard::screen_prompt(state, inbound, &mut raw, guards).await {
+        match guard::screen_prompt(state, inbound, &mut raw, guards, tracker.logging()).await {
             Ok((charge, screened)) => {
                 tracker.guardrails(charge);
+                if screened.action == crate::guardrails::Action::Masked
+                    && let Some(c) = tracker.log()
+                {
+                    c.screened(raw.clone());
+                }
                 guarded = Some(screened);
             }
             Err((charge, e)) => {
@@ -259,6 +270,13 @@ pub(crate) async fn run_model(
                 return Err(e);
             }
         }
+    }
+
+    if parent.is_none()
+        && tracker.logging()
+    {
+        let conversation = Affinity::fingerprint(state, &raw, inbound);
+        tracker.log().expect("logging").conversation(conversation);
     }
 
     // Responses API conversation state. Like OpenAI, `store` defaults to true.
@@ -411,6 +429,9 @@ pub(crate) async fn run_model(
                 Inbound::Responses => responses::render_response(&r, &response_id, &model),
                 Inbound::Chat => chat::render_response(&r, &format!("chatcmpl-{}", crate::util::random_hex(12)), &model),
             };
+            if let Some(c) = tracker.log() {
+                c.response(Logged::Json(logged_response(v.clone(), &r)));
+            }
             if let Some(sink) = turn_sink {
                 sink.finish(r.content);
             }
@@ -418,6 +439,9 @@ pub(crate) async fn run_model(
         }
         Outcome::PassFull(bytes, usage) => {
             tracker.set_usage(usage);
+            if let Some(c) = tracker.log() {
+                c.response(Logged::Bytes(bytes.clone()));
+            }
             if let Some(pin) = pin_sink
                 && let Some(id) = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| v["id"].as_str().map(str::to_string))
             {
@@ -426,15 +450,32 @@ pub(crate) async fn run_model(
             ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
         }
         Outcome::Stream { first, rest } => {
+            let id = match inbound {
+                Inbound::Messages => crate::util::prefixed_id("msg"),
+                Inbound::Responses => response_id.clone(),
+                Inbound::Chat => format!("chatcmpl-{}", crate::util::random_hex(12)),
+            };
             let enc: Box<dyn StreamEncoder> = match inbound {
-                Inbound::Messages => Box::new(anthropic::AnthropicEncoder::new(crate::util::prefixed_id("msg"), model.clone())),
-                Inbound::Responses => Box::new(responses::ResponsesEncoder::new(response_id.clone(), model.clone())),
+                Inbound::Messages => Box::new(anthropic::AnthropicEncoder::new(id.clone(), model.clone())),
+                Inbound::Responses => Box::new(responses::ResponsesEncoder::new(id.clone(), model.clone())),
                 Inbound::Chat => {
                     let include_usage = raw.pointer("/stream_options/include_usage").and_then(Value::as_bool).unwrap_or(false);
-                    Box::new(chat::ChatEncoder::new(format!("chatcmpl-{}", crate::util::random_hex(12)), model.clone(), include_usage))
+                    Box::new(chat::ChatEncoder::new(id.clone(), model.clone(), include_usage))
                 }
             };
-            sse_response(Body::from_stream(encode_stream(first, rest, enc, tracker, turn_sink)))
+            // A logged stream is stored as the same response would be without streaming.
+            let render: Option<Render> = tracker.logging().then(|| -> Render {
+                let model = model.clone();
+                Box::new(move |r: &ChatResponse| {
+                    let v = match inbound {
+                        Inbound::Messages => anthropic::render_response(r, &id, &model),
+                        Inbound::Responses => responses::render_response(r, &id, &model),
+                        Inbound::Chat => chat::render_response(r, &id, &model),
+                    };
+                    logged_response(v, r)
+                })
+            });
+            sse_response(Body::from_stream(encode_stream(first, rest, enc, tracker, turn_sink, render)))
         }
         Outcome::PassStream(bytes) => sse_response(Body::from_stream(sniff_stream(bytes, inbound, tracker, pin_sink))),
     };
@@ -486,6 +527,22 @@ pub(crate) fn key_can_use(snap: &Snapshot, key: &VirtualKey, model: &str) -> boo
 /// Whether `key` may have the model search the web: neither the key nor its project forbids it.
 pub(crate) fn web_search_allowed(snap: &Snapshot, key: &VirtualKey) -> bool {
     key.web_search && key.project_id.and_then(|p| snap.projects.get(&p)).is_none_or(|p| p.web_search)
+}
+
+/// Whether `key`'s prompts and responses are logged, for debugging. Its project's policy decides
+/// (the gateway's, `settings.prompt_logging`, for keys outside projects): `force` logs every key,
+/// `deny` none, `allow` those that opt in. A key whose project the registry does not know is not
+/// logged.
+pub(crate) fn prompt_logged(snap: &Snapshot, settings: &crate::settings::Settings, key: &VirtualKey) -> bool {
+    let policy = match key.project_id {
+        Some(p) => snap.projects.get(&p).map_or(PromptLogging::Deny, |p| p.prompt_logging),
+        None => settings.prompt_logging,
+    };
+    match policy {
+        PromptLogging::Force => true,
+        PromptLogging::Deny => false,
+        PromptLogging::Allow => key.prompt_logging,
+    }
 }
 
 /// Whether a request body asks for the provider's web search, in any API's field: Chat
@@ -628,26 +685,55 @@ async fn translate(state: &AppState, d: &Arc<Deployment>, ir: &ChatRequest, stre
     }
 }
 
+/// Renders a finished translated response as its API returns it without streaming.
+type Render = Box<dyn Fn(&ChatResponse) -> Value + Send>;
+
+/// A translated response as logged: what the client got, and under `x_gateway_not_sent` what
+/// the provider ran itself and cited (web searches, their results, citations), which the
+/// translation has no place for in the client's API.
+fn logged_response(mut v: Value, r: &ChatResponse) -> Value {
+    if (!r.server_tools.is_empty() || !r.annotations.is_empty())
+        && let Some(o) = v.as_object_mut()
+    {
+        o.insert("x_gateway_not_sent".into(), json!({ "server_tools": r.server_tools, "annotations": r.annotations }));
+    }
+    v
+}
+
 fn encode_stream(
     first: StreamEvent,
     rest: EventStream,
     enc: Box<dyn StreamEncoder>,
     tracker: Tracker,
     sink: Option<TurnSink>,
+    render: Option<Render>,
 ) -> impl futures::Stream<Item = Result<Bytes, Infallible>> + Send {
     struct St {
         first: Option<StreamEvent>,
         rest: EventStream,
         enc: Box<dyn StreamEncoder>,
         tracker: Tracker,
-        /// Collects the output for `sink`; only present when the turn is stored.
+        /// Collects the output for `sink` and the log; only present when either needs it.
         agg: Option<Aggregator>,
         sink: Option<TurnSink>,
+        /// The request is logged: how to render its response.
+        render: Option<Render>,
         started: bool,
         done: bool,
     }
-    let agg = sink.as_ref().map(|_| Aggregator::default());
-    let st = St { first: Some(first), rest, enc, tracker, agg, sink, started: false, done: false };
+    impl Drop for St {
+        /// A stream cut short (an upstream error, a client that went away) logs what it had.
+        fn drop(&mut self) {
+            if let (Some(agg), Some(render)) = (self.agg.take(), self.render.as_ref())
+                && let Some(c) = self.tracker.log()
+            {
+                c.reassembled(render(&agg.finish()));
+                c.incomplete();
+            }
+        }
+    }
+    let agg = (sink.is_some() || render.is_some()).then(Aggregator::default);
+    let st = St { first: Some(first), rest, enc, tracker, agg, sink, render, started: false, done: false };
     futures::stream::unfold(st, |mut st| async move {
         if !st.started {
             st.started = true;
@@ -667,6 +753,12 @@ fn encode_stream(
                 }
                 if let StreamEvent::TextDelta { text, .. } | StreamEvent::ReasoningDelta { text, .. } | StreamEvent::ToolArgsDelta { json: text, .. } = &ev {
                     st.tracker.streamed(text.len());
+                    if st.render.is_some()
+                        && let Some(c) = st.tracker.log()
+                        && !c.hold(text.len())
+                    {
+                        st.render = None;
+                    }
                 }
                 if let Some(agg) = st.agg.as_mut() {
                     agg.push(&ev);
@@ -675,8 +767,14 @@ fn encode_stream(
                     st.tracker.set_usage(*usage);
                     st.done = true;
                     // Only completed streams are stored; a failed one cannot be continued.
-                    if let (Some(agg), Some(sink)) = (st.agg.take(), st.sink.take()) {
-                        sink.finish(agg.finish().content);
+                    if let Some(agg) = st.agg.take() {
+                        let r = agg.finish();
+                        if let (Some(render), Some(c)) = (st.render.take(), st.tracker.log()) {
+                            c.reassembled(render(&r));
+                        }
+                        if let Some(sink) = st.sink.take() {
+                            sink.finish(r.content);
+                        }
                     }
                 }
                 st.enc.event(&ev)
@@ -830,17 +928,43 @@ fn sniff_stream(
         inbound: Inbound,
         tracker: Tracker,
         pin: Option<PinSink>,
+        /// The request is logged: the response put back together as the stream passes.
+        whole: Option<Reassembler>,
         done: bool,
     }
-    let st = St { body, parser: SseParser::default(), inbound, tracker, pin, done: false };
+    impl Drop for St {
+        /// A stream cut short (an upstream error, a client that went away) logs what it had.
+        fn drop(&mut self) {
+            if let (Some(whole), Some(c)) = (self.whole.take(), self.tracker.log()) {
+                c.reassembled(whole.finish());
+                c.incomplete();
+            }
+        }
+    }
+    let whole = tracker.logging().then(|| match inbound {
+        Inbound::Chat => Reassembler::Chat(ChatStream::default()),
+        Inbound::Messages => Reassembler::Messages(MessagesStream::default()),
+        Inbound::Responses => Reassembler::Responses(ResponsesStream::default()),
+    });
+    let st = St { body, parser: SseParser::default(), inbound, tracker, pin, whole, done: false };
     futures::stream::unfold(st, |mut st| async move {
         if st.done {
             return None;
         }
         match st.body.next().await {
             Some(Ok(chunk)) => {
+                if st.whole.is_some()
+                    && let Some(c) = st.tracker.log()
+                    && !c.hold(chunk.len())
+                {
+                    st.whole = None;
+                }
                 for ev in st.parser.feed(&chunk) {
-                    inspect(&mut st.tracker, st.inbound, &ev.data, st.pin.as_ref());
+                    let Ok(v) = serde_json::from_str::<Value>(&ev.data) else { continue };
+                    inspect(&mut st.tracker, st.inbound, &v, st.pin.as_ref());
+                    if let Some(w) = st.whole.as_mut() {
+                        w.push(&v);
+                    }
                 }
                 Some((Ok(chunk), st))
             }
@@ -864,6 +988,9 @@ data: [DONE]
             }
             None => {
                 st.tracker.stream_ended();
+                if let (Some(whole), Some(c)) = (st.whole.take(), st.tracker.log()) {
+                    c.reassembled(whole.finish());
+                }
                 None
             }
         }
@@ -892,10 +1019,9 @@ fn content_bytes(inbound: Inbound, ty: &str, v: &Value) -> usize {
     }
 }
 
-fn inspect(tracker: &mut Tracker, inbound: Inbound, data: &str, pin: Option<&PinSink>) {
-    let Ok(v) = serde_json::from_str::<Value>(data) else { return };
+fn inspect(tracker: &mut Tracker, inbound: Inbound, v: &Value, pin: Option<&PinSink>) {
     let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
-    tracker.streamed(content_bytes(inbound, ty, &v));
+    tracker.streamed(content_bytes(inbound, ty, v));
     if inbound == Inbound::Chat {
         // Chat Completions chunks carry no event type.
         if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
@@ -1074,6 +1200,7 @@ mod tests {
             metadata: json!({}),
             guardrail_ids: vec![],
             web_search: true,
+            prompt_logging: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1107,6 +1234,7 @@ mod tests {
             spend_reset_at: None,
             guardrail_ids: vec![],
             web_search,
+            prompt_logging: PromptLogging::Deny,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1131,6 +1259,7 @@ mod tests {
             metadata: json!({}),
             guardrail_ids: vec![],
             web_search,
+            prompt_logging: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1144,6 +1273,101 @@ mod tests {
         // A project that forbids it overrides the key.
         snap.projects.insert(Uuid::from_u128(1), Arc::new(project(false)));
         assert!(!web_search_allowed(&snap, &key(p, true)));
+    }
+
+    /// What the provider ran and cited on a translated path is never sent to the client, and is
+    /// logged beside the response.
+    #[test]
+    fn provider_side_results_are_logged_not_sent() {
+        let search = StreamEvent::ServerTool { block: json!({ "type": "web_search_call", "action": { "query": "q" } }) };
+        let cite = StreamEvent::Annotation { annotation: json!({ "type": "url_citation", "url": "https://example.com" }) };
+        let encoders: Vec<Box<dyn StreamEncoder>> = vec![
+            Box::new(anthropic::AnthropicEncoder::new("msg_1".into(), "m".into())),
+            Box::new(responses::ResponsesEncoder::new("resp_1".into(), "m".into())),
+            Box::new(chat::ChatEncoder::new("chatcmpl-1".into(), "m".into(), true)),
+        ];
+        for mut enc in encoders {
+            enc.start();
+            assert!(enc.event(&search).is_empty() && enc.event(&cite).is_empty());
+        }
+        let r = ChatResponse {
+            content: vec![Part::Text { text: "Hi".into(), cache: false }],
+            server_tools: vec![json!({ "type": "web_search_call" })],
+            annotations: vec![json!({ "type": "url_citation" })],
+            ..Default::default()
+        };
+        let client = chat::render_response(&r, "chatcmpl-1", "m");
+        assert!(client.get("x_gateway_not_sent").is_none());
+        let logged = logged_response(client, &r);
+        assert_eq!(logged["x_gateway_not_sent"]["server_tools"], json!([{ "type": "web_search_call" }]));
+        assert_eq!(logged["choices"][0]["message"]["content"], "Hi");
+        // Without any, the logged response is what the client got.
+        let plain = ChatResponse { content: r.content.clone(), ..Default::default() };
+        assert!(logged_response(chat::render_response(&plain, "c", "m"), &plain).get("x_gateway_not_sent").is_none());
+    }
+
+    #[test]
+    fn prompt_logging_follows_the_project_then_the_key() {
+        use crate::settings::Settings;
+        let project = |prompt_logging| crate::model::ProjectRow {
+            id: Uuid::from_u128(1),
+            name: "p".into(),
+            description: None,
+            enabled: true,
+            max_budget_usd: None,
+            budget_period: None,
+            spend_reset_at: None,
+            guardrail_ids: vec![],
+            web_search: true,
+            prompt_logging,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let key = |project_id, prompt_logging| VirtualKey {
+            id: Uuid::nil(),
+            name: "k".into(),
+            key_hash: vec![],
+            key_prefix: "gw-".into(),
+            scope: crate::model::KeyScope::Inference,
+            project_id,
+            project_active: true,
+            allowed_models: vec![],
+            allowed_tags: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            max_budget_usd: None,
+            budget_period: None,
+            spend_usd: 0.0,
+            spend_reset_at: None,
+            enabled: true,
+            expires_at: None,
+            metadata: json!({}),
+            guardrail_ids: vec![],
+            web_search: true,
+            prompt_logging,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let deny = Settings::default();
+        let allow = Settings { prompt_logging: PromptLogging::Allow, ..Settings::default() };
+        let mut snap = Snapshot::default();
+        let p = Some(Uuid::from_u128(1));
+        // Outside projects, the gateway's policy: denied by default.
+        assert!(!prompt_logged(&snap, &deny, &key(None, true)));
+        assert!(prompt_logged(&snap, &allow, &key(None, true)));
+        assert!(!prompt_logged(&snap, &allow, &key(None, false)));
+        // A project the registry does not know logs nothing, whatever the gateway allows.
+        assert!(!prompt_logged(&snap, &allow, &key(p, true)));
+        for (policy, opted_in, opted_out) in
+            [(PromptLogging::Deny, false, false), (PromptLogging::Allow, true, false), (PromptLogging::Force, true, true)]
+        {
+            snap.projects.insert(Uuid::from_u128(1), Arc::new(project(policy)));
+            // The project decides, not the gateway's policy for keys outside projects.
+            for settings in [&deny, &allow] {
+                assert_eq!(prompt_logged(&snap, settings, &key(p, true)), opted_in, "{policy:?}, key opted in");
+                assert_eq!(prompt_logged(&snap, settings, &key(p, false)), opted_out, "{policy:?}, key not opted in");
+            }
+        }
     }
 
     #[test]

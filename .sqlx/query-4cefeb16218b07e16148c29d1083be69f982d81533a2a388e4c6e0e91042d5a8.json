@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n             (SELECT p.id FROM request_bodies p JOIN request_logs pl ON pl.id = p.id\n              WHERE p.key_id = $1 AND p.id <> $2 AND ($6::uuid[] IS NULL OR pl.project_id = ANY($6))\n                AND CASE WHEN $3::text IS NOT NULL THEN p.response_id = $3\n                         ELSE $4::bytea IS NOT NULL AND p.conversation = $4 AND p.ts < $5 END\n              ORDER BY p.ts DESC LIMIT 1) AS previous,\n             (SELECT n.id FROM request_bodies n JOIN request_logs nl ON nl.id = n.id\n              WHERE n.key_id = $1 AND n.id <> $2 AND ($6::uuid[] IS NULL OR nl.project_id = ANY($6))\n                AND (($7::text IS NOT NULL AND n.previous_response_id = $7)\n                     OR ($4::bytea IS NOT NULL AND n.conversation = $4 AND n.ts > $5))\n              ORDER BY n.ts LIMIT 1) AS next",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "previous",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "next",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Timestamptz",
+        "UuidArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "4cefeb16218b07e16148c29d1083be69f982d81533a2a388e4c6e0e91042d5a8"
+}

@@ -108,6 +108,33 @@ export function Modal({
   );
 }
 
+/**
+ * A panel along the right edge, over the page without a backdrop: the page keeps its size and
+ * stays usable, and picking another item swaps the panel's content. × or Escape closes it, unless
+ * a dialog is open over it. Its body scrolls under a fixed title.
+ */
+export function SidePanel({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && openDialogs.length === 0 && close.current();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  return createPortal(
+    <aside className="side-panel" aria-label={typeof title === "string" ? title : "Details"}>
+      <div className="side-panel-head">
+        <h2>{title}</h2>
+        <button className="ghost icon" onClick={onClose} aria-label="Close">
+          ×
+        </button>
+      </div>
+      <div className="side-panel-body">{children}</div>
+    </aside>,
+    document.body,
+  );
+}
+
 /** A pending confirmation: what to ask and what to run if the user agrees. */
 export interface ConfirmRequest {
   title: string;
@@ -239,6 +266,17 @@ export function GlobeIcon() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="9" />
       <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </svg>
+  );
+}
+
+/** Reasoning effort: a gauge. */
+export function EffortIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.5 18a9 9 0 1 1 15 0" />
+      <path d="M12 13.5 16 9" />
+      <circle cx="12" cy="14" r="1" />
     </svg>
   );
 }

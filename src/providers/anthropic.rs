@@ -260,6 +260,9 @@ pub struct AnthropicHandler {
     blocks: BlockTracker,
     /// upstream content index -> our index (None for block types we drop)
     map: HashMap<u64, Option<usize>>,
+    /// Calls of tools Anthropic runs itself (web search), by upstream index, with their input's
+    /// JSON as it streams: passed on whole once complete (see `StreamEvent::ServerTool`).
+    server: HashMap<u64, (Value, String)>,
     usage: Usage,
     stop: StopReason,
 }
@@ -283,6 +286,16 @@ impl AnthropicHandler {
                         name: cb["name"].as_str().unwrap_or_default().to_string(),
                     }),
                     Some("thinking") => Some(BlockKind::Reasoning),
+                    // Server tools (web search): their calls stream their input, their results
+                    // come whole.
+                    Some("server_tool_use" | "mcp_tool_use") => {
+                        self.server.insert(idx, (cb.clone(), String::new()));
+                        None
+                    }
+                    Some(t) if t.ends_with("_tool_result") && t != "tool_result" => {
+                        evs.push(StreamEvent::ServerTool { block: cb.clone() });
+                        None
+                    }
                     _ => None,
                 };
                 let mapped = kind.map(|k| self.blocks.start(&mut evs, k));
@@ -307,13 +320,24 @@ impl AnthropicHandler {
                         Some("signature_delta") => {
                             evs.push(StreamEvent::SignatureDelta { index: i, signature: s("signature") })
                         }
+                        Some("citations_delta") => evs.push(StreamEvent::Annotation { annotation: d["citation"].clone() }),
                         _ => {}
                     }
+                } else if let Some((_, json)) = self.server.get_mut(&idx)
+                    && let Some(s) = v.pointer("/delta/partial_json").and_then(Value::as_str)
+                {
+                    json.push_str(s);
                 }
             }
             "content_block_stop" => {
                 if let Some(Some(i)) = self.map.get(&idx).copied() {
                     self.blocks.stop(&mut evs, i);
+                }
+                if let Some((mut block, json)) = self.server.remove(&idx) {
+                    if let Ok(input) = serde_json::from_str::<Value>(&json) {
+                        block["input"] = input;
+                    }
+                    evs.push(StreamEvent::ServerTool { block });
                 }
             }
             "message_delta" => {
@@ -380,6 +404,42 @@ mod tests {
         assert_eq!(r.usage.input_tokens, 10);
         assert_eq!(r.usage.output_tokens, 7);
         assert!(matches!(&r.content[1], Part::ToolCall { arguments, .. } if arguments == "{\"a\":1}"));
+    }
+
+    /// Anthropic's own web search, its results and the answer's citations reach the aggregate
+    /// beside the answer, not in it.
+    #[test]
+    fn server_tools_and_citations_are_passed_on_beside_the_answer() {
+        let events = [
+            json!({ "type": "message_start", "message": { "usage": { "input_tokens": 10 } } }),
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": {} } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "input_json_delta", "partial_json": "{\"query\":" } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "input_json_delta", "partial_json": "\"rome weather\"}" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "web_search_tool_result", "tool_use_id": "srv_1",
+                "content": [{ "type": "web_search_result", "url": "https://example.com", "title": "Weather", "encrypted_content": "x" }] } }),
+            json!({ "type": "content_block_stop", "index": 1 }),
+            json!({ "type": "content_block_start", "index": 2, "content_block": { "type": "text", "text": "" } }),
+            json!({ "type": "content_block_delta", "index": 2, "delta": { "type": "text_delta", "text": "Sunny." } }),
+            json!({ "type": "content_block_delta", "index": 2, "delta": { "type": "citations_delta", "citation": { "type": "web_search_result_location", "url": "https://example.com" } } }),
+            json!({ "type": "content_block_stop", "index": 2 }),
+            json!({ "type": "message_delta", "delta": { "stop_reason": "end_turn" }, "usage": { "output_tokens": 3 } }),
+            json!({ "type": "message_stop" }),
+        ];
+        let sse: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+        let mut dec = Sse::new(AnthropicHandler::default());
+        let mut out = Vec::new();
+        dec.feed(sse.as_bytes(), &mut out);
+        let mut agg = crate::ir::Aggregator::default();
+        out.iter().for_each(|e| agg.push(e.as_ref().unwrap()));
+        let r = agg.finish();
+        // The answer is what it was without them: one text block.
+        assert_eq!(r.content.len(), 1);
+        assert!(matches!(&r.content[0], Part::Text { text, .. } if text == "Sunny."));
+        assert_eq!(r.server_tools.len(), 2);
+        assert_eq!(r.server_tools[0]["input"], json!({ "query": "rome weather" }));
+        assert_eq!(r.server_tools[1]["content"][0]["title"], "Weather");
+        assert_eq!(r.annotations, [json!({ "type": "web_search_result_location", "url": "https://example.com" })]);
     }
 
     #[test]

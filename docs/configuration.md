@@ -41,6 +41,7 @@ The gateway needs both Postgres and Valkey.
 | `GATEWAY_INSTANCE_ID` | `HOSTNAME`, else random | The replica's name on **Cluster → Instances** and in telemetry (`service.instance.id`). |
 | `GATEWAY_LOG` | `info` | Log filter, for example `info,inference_gateway=debug`. |
 | `GATEWAY_LOG_FORMAT` | text (`json` in the image) | `json` for structured logs. |
+| `PROMPT_LOG_BUFFER_MB` | `256` | Memory each replica may use for [logged prompts and responses](security.md#prompt-logging) not yet written to Postgres. It is not reserved: normally a few MB are in use, and it fills only while Postgres is slow or many large logged requests run at once. Then the bodies of further requests are skipped (their entry says `dropped`) and requests are served as usual. `0` turns prompt logging off on the replica. |
 
 ### OpenTelemetry
 
@@ -86,6 +87,9 @@ Changed in the console under **Cluster → Settings**, or with `GET`/`PUT /admin
 | Scheduled import | `price_import` | on | | Imports LiteLLM's model prices into the price catalog on a schedule, on one replica at a time (a Postgres advisory lock). Off, only the **Run Import** button on the Pricing tab does. |
 | Import every | `price_import_hours` | 6 h | 1–720 | Hours between scheduled imports, counted from the last import, scheduled or not. A failed import is retried after an hour. |
 | API reference | `api_docs` | on | | The OpenAPI document at `/admin/openapi.json` and the reference at `/admin/docs/`, for signed-in people and admin and project keys. |
+| Prompt logging, kept for | `prompt_log_retention_days` | 7 days | 1–60 | How long logged prompts and responses are kept, and no longer than the request log. Shortening it removes older ones within the hour. |
+| Prompt logging, largest body | `prompt_log_max_kb` | 256 KB | 16–4096 | The largest logged request or response. Over it, its longest texts are cut; images, files, embedding vectors and encrypted provider data are never stored. |
+| Prompt logging, keys outside projects | `prompt_logging` | `deny` | `deny`, `allow` | Whether the prompts and responses of keys outside projects (admin keys among them) are stored, for debugging: never, or for the keys that turn it on. Projects set their own, and can also force it for all their keys (see [Projects](access.md#projects)). |
 
 ## Commands
 

@@ -47,9 +47,11 @@ use utoipa::{
         paths::list_routers, paths::create_router, paths::update_router, paths::delete_router,
         paths::list_aliases, paths::create_alias, paths::update_alias, paths::delete_alias,
         paths::list_keys, paths::key_options, paths::create_key, paths::update_key, paths::delete_key, paths::reset_spend, paths::regenerate_key,
+        paths::key_bodies, paths::delete_key_bodies,
         paths::list_projects, paths::project_options, paths::create_project, paths::update_project, paths::delete_project, paths::reset_project_spend,
+        paths::project_bodies, paths::delete_project_bodies,
         paths::list_tags, paths::export_config, paths::import_config, paths::model_hub, paths::model_efforts, paths::set_model_metadata,
-        paths::status, paths::metrics, paths::logs, paths::log_labels, paths::audit_log, paths::key_usage, paths::cluster,
+        paths::status, paths::metrics, paths::logs, paths::log_labels, paths::log_tools, paths::log_bodies, paths::audit_log, paths::key_usage, paths::cluster,
         paths::get_settings, paths::put_settings,
         paths::playground, paths::playground_options,
         paths::search_prices, paths::match_price, paths::check_prices, paths::import_prices,
@@ -1261,6 +1263,70 @@ mod paths {
         responses((status = 200, description = "Label keys, by name.", body = Vec<admin::LabelKey>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn log_labels() {}
+
+    /// Tools in logged responses
+    ///
+    /// The tools the latest 1000 logged responses called, at most 100, most used first. The
+    /// console offers them in its tool filter.
+    #[utoipa::path(get, path = "/admin/api/logs/tools", tag = "Usage",
+        responses((status = 200, description = "Tools, most used first.", body = Vec<db::ToolUse>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn log_tools() {}
+
+    /// A logged request's prompt and response
+    ///
+    /// For keys with prompt logging on: the request as sent and as the model got it, what each
+    /// guardrail did, the response, and the turns before and after it.
+    #[utoipa::path(get, path = "/admin/api/logs/{id}/bodies", tag = "Usage",
+        params(("id" = Uuid, Path, description = "Request log entry id")),
+        responses(
+            (status = 200, description = "The stored bodies.", body = admin::BodiesView),
+            (status = 404, description = "No stored bodies, or not the caller's project.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn log_bodies() {}
+
+    /// Count a key's stored prompts
+    #[utoipa::path(get, path = "/admin/api/keys/{id}/bodies", tag = "Virtual keys",
+        params(("id" = Uuid, Path, description = "Key id")),
+        responses((status = 200, description = "How many are stored.", body = admin::StoredBodies), (status = 404, description = "No such key.", body = AdminError)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_bodies() {}
+
+    /// Delete a key's stored prompts
+    ///
+    /// Deletes the key's logged prompts and responses now, rather than at the end of their
+    /// retention. Their entries stay in the request log, marked `deleted`.
+    #[utoipa::path(delete, path = "/admin/api/keys/{id}/bodies", tag = "Virtual keys",
+        params(("id" = Uuid, Path, description = "Key id")),
+        responses(
+            (status = 200, description = "How many were deleted.", body = admin::DeletedBodies),
+            (status = 404, description = "No such key.", body = AdminError),
+            (status = 409, description = "Already being deleted.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn delete_key_bodies() {}
+
+    /// Count a project's stored prompts
+    #[utoipa::path(get, path = "/admin/api/projects/{id}/bodies", tag = "Virtual keys",
+        params(("id" = Uuid, Path, description = "Project id")),
+        responses((status = 200, description = "How many are stored.", body = admin::StoredBodies), (status = 404, description = "No such project.", body = AdminError)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn project_bodies() {}
+
+    /// Delete a project's stored prompts
+    ///
+    /// Deletes the logged prompts and responses of every request made in the project, also by
+    /// keys that have left it since.
+    #[utoipa::path(delete, path = "/admin/api/projects/{id}/bodies", tag = "Virtual keys",
+        params(("id" = Uuid, Path, description = "Project id")),
+        responses(
+            (status = 200, description = "How many were deleted.", body = admin::DeletedBodies),
+            (status = 404, description = "No such project.", body = AdminError),
+            (status = 409, description = "Already being deleted.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn delete_project_bodies() {}
 
     /// Audit log
     ///

@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type GatewaySettings as Settings, type GatewaySettingsView } from "../api";
-import { Banner, Button, TextInput, Toggle } from "../components/controls";
+import { Banner, Button, Segmented, TextInput, Toggle } from "../components/controls";
 import { ErrorBanner } from "../components/ui";
 import { dateTime, relative } from "../format";
 
 type NumberKey = { [K in keyof Settings]: Settings[K] extends number ? K : never }[keyof Settings];
 type ToggleKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
+type ChoiceKey = { [K in keyof Settings]: Settings[K] extends string ? K : never }[keyof Settings];
 type Item =
   | { key: NumberKey; caption: string; hint: string; valid?: (n: number) => boolean; rule?: string }
-  | { key: ToggleKey; caption: string; hint: string; toggle: true };
+  | { key: ToggleKey; caption: string; hint: string; toggle: true }
+  | { key: ChoiceKey; caption: string; hint: string; choices: { value: string; label: string }[] };
 
 /** Log retention: kept forever (0) or 7 to 1080 days, as the gateway requires. */
 const retention = { valid: (n: number) => n === 0 || (n >= 7 && n <= 1080), rule: "0 (kept forever) or 7 to 1080" };
@@ -94,6 +96,34 @@ const GROUPS: { title: string; items: Item[] }[] = [
     ],
   },
   {
+    title: "Prompt logging",
+    items: [
+      {
+        key: "prompt_logging",
+        caption: "Keys outside projects",
+        hint: "For debugging, not for production keys: whether the prompts and responses of keys outside projects (admin keys among them) are logged. Deny logs none; Allow logs the keys that opt in. Projects set their own, and can force it for their keys.",
+        choices: [
+          { value: "deny", label: "Deny" },
+          { value: "allow", label: "Allow" },
+        ],
+      },
+      {
+        key: "prompt_log_retention_days",
+        caption: "Kept for (days)",
+        hint: "How long logged prompts and responses are kept: 1 to 60 days, and no longer than the request log. Shortening it removes older ones within the hour.",
+        valid: (n: number) => n >= 1 && n <= 60,
+        rule: "1 to 60",
+      },
+      {
+        key: "prompt_log_max_kb",
+        caption: "Largest body (KB)",
+        hint: "The largest logged request or response, 16 to 4096 KB. Over it, the longest texts in it are cut; images and files are never stored.",
+        valid: (n: number) => n >= 16 && n <= 4096,
+        rule: "16 to 4096",
+      },
+    ],
+  },
+  {
     title: "API reference",
     items: [
       {
@@ -107,11 +137,18 @@ const GROUPS: { title: string; items: Item[] }[] = [
 ];
 
 const isToggle = (i: Item): i is Extract<Item, { toggle: true }> => "toggle" in i;
+const isChoice = (i: Item): i is Extract<Item, { choices: unknown }> => "choices" in i;
+const isNumber = (i: Item): i is Extract<Item, { key: NumberKey }> => !isToggle(i) && !isChoice(i);
+const NUMBER_KEYS = new Set<string>(GROUPS.flatMap((g) => g.items).filter(isNumber).map((i) => i.key));
 
 /** Numbers as typed, so a field can be emptied while editing. */
 type Draft = { [K in keyof Settings]: Settings[K] extends number ? string : Settings[K] };
 
 const toDraft = (s: Settings) => Object.fromEntries(Object.entries(s).map(([k, v]) => [k, typeof v === "number" ? String(v) : v])) as Draft;
+
+/** The default, as the hint says it. */
+const shown = (i: Item, v: Draft[keyof Draft]) =>
+  isToggle(i) ? (v ? "on" : "off") : isChoice(i) ? (i.choices.find((c) => c.value === v)?.label ?? String(v)) : String(v);
 
 /** Cluster → Settings: the gateway settings every replica applies, without a restart. */
 export function GatewaySettings() {
@@ -148,14 +185,16 @@ function SettingsForm({ view, onSaved }: { view: GatewaySettingsView; onSaved: (
   const defaults = toDraft(view.defaults);
   const same = (a: Draft, b: Draft) => (Object.keys(a) as (keyof Draft)[]).every((k) => String(a[k]).trim() === String(b[k]).trim());
   const dirty = !same(draft, saved);
-  const numbers = GROUPS.flatMap((g) => g.items).filter((i) => !isToggle(i));
+  const numbers = GROUPS.flatMap((g) => g.items).filter(isNumber);
   const invalid = numbers.filter((i) => !/^\d+$/.test(String(draft[i.key]).trim())).map((i) => i.caption);
   const outOfRange = numbers.filter((i) => !invalid.includes(i.caption) && i.valid && !i.valid(Number(String(draft[i.key]).trim())));
 
   const save = async () => {
     setBusy(true);
     try {
-      const settings = Object.fromEntries(Object.entries(draft).map(([k, v]) => [k, typeof v === "string" ? Number(v.trim()) : v])) as unknown as Settings;
+      const settings = Object.fromEntries(
+        Object.entries(draft).map(([k, v]) => [k, NUMBER_KEYS.has(k) && typeof v === "string" ? Number(v.trim()) : v]),
+      ) as unknown as Settings;
       onSaved(await api<GatewaySettingsView>("/settings", { method: "PUT", json: settings }));
       setError(null);
     } catch (e) {
@@ -179,7 +218,19 @@ function SettingsForm({ view, onSaved }: { view: GatewaySettingsView; onSaved: (
           <legend>{g.title}</legend>
           <div className="row">
             {g.items.map((i) => {
-              const hint = `${i.hint} Default: ${isToggle(i) ? (defaults[i.key] ? "on" : "off") : defaults[i.key]}.`;
+              const hint = `${i.hint} Default: ${shown(i, defaults[i.key])}.`;
+              if (isChoice(i)) {
+                return (
+                  <Segmented
+                    key={i.key}
+                    caption={i.caption}
+                    hint={hint}
+                    options={i.choices}
+                    value={String(draft[i.key])}
+                    onChange={(v) => setDraft({ ...draft, [i.key]: v } as Draft)}
+                  />
+                );
+              }
               return isToggle(i) ? (
                 <Toggle key={i.key} caption={i.caption} hint={hint} checked={draft[i.key]} onChange={(v: boolean) => setDraft({ ...draft, [i.key]: v })} />
               ) : (

@@ -10,6 +10,7 @@ Create a **virtual key** per app or team under **Access → Keys**. The secret i
 - **Models and tags:** which models the key may use (see [Tags](#tags)).
 - **Guardrails:** [guardrails](guardrails.md) every request of the key goes through.
 - **Web search:** whether requests may have the model [search the web](api.md), billed per search. Requests that ask for it while it is off get `403`.
+- **Prompt logging:** whether the key's prompts and responses are stored, for debugging, where its project allows it (below). Anyone who may edit the key turns it on and off; it stays as set until changed. Not for production keys. Keys whose requests are logged are marked **Logging** in the key list, which can be filtered to them.
 
 ### Scopes
 
@@ -30,6 +31,7 @@ Admin and inference + admin keys stay outside projects. A key in a project is an
 - A project can have its own **budget** per day, week or month for all its keys together, on top of each key's own budget. Once spent, the project's keys get `429` until it resets.
 - Guardrails set on a project apply to every key in it.
 - Turning **web search** off on a project forbids it for every key in it, whatever the key's own setting.
+- **Prompt logging** on a project is **Deny** (the default: no key's prompts are stored, whatever the key says), **Allow** (the keys that turn it on are logged) or **Force** (every key in the project is logged). Only admins change it. Keys outside projects follow the gateway's setting under Cluster → Settings, which is Deny or Allow, never Force.
 - Each request records the project its key was in, so when a key moves, what it spent stays with the old project. Deleting a project deletes its keys too.
 - [Users](single-sign-on.md#roles) see only the projects an admin adds them to.
 

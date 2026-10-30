@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search, created_at, updated_at\n         FROM projects WHERE id = $1",
+  "query": "SELECT id, name, description, enabled, max_budget_usd, budget_period, spend_reset_at, guardrail_ids, web_search,\n                  prompt_logging AS \"prompt_logging: PromptLogging\", created_at, updated_at FROM projects",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,17 @@
       },
       {
         "ordinal": 9,
+        "name": "prompt_logging: PromptLogging",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "prompt_logging"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -126,9 +137,7 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Uuid"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -141,8 +150,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "cf95ed53de57ebd44e985de21ca062662677670fc3bbdbba807878e97e081214"
+  "hash": "f688291a0e2fe4e4aec0a8368f2480dfc146520256771c27ae5157d7ef81d999"
 }

@@ -478,9 +478,16 @@ export interface VirtualKey {
   guardrail_ids: string[];
   /** Requests may have the model search the web, unless the key's project forbids it. */
   web_search: boolean;
+  /** Its prompts and responses are logged, for debugging, where its project allows it. */
+  prompt_logging: boolean;
+  /** Whether they are logged now: its own switch where the project allows it, always where the project forces it. */
+  prompt_logged: boolean;
   created_at: string;
   updated_at: string;
 }
+
+/** Whether a project's keys' prompts and responses are logged: never, those that opt in, or all. */
+export type PromptLogging = "deny" | "allow" | "force";
 
 /** A group of keys. While inactive, its keys are refused like disabled ones; it grants and limits nothing. */
 export interface Project {
@@ -501,6 +508,8 @@ export interface Project {
   guardrail_ids: string[];
   /** While false, no key in the project may have the model search the web, whatever its own setting. */
   web_search: boolean;
+  /** Whether its keys' prompts and responses are logged, for debugging. */
+  prompt_logging: PromptLogging;
   created_at: string;
   updated_at: string;
 }
@@ -513,6 +522,7 @@ export interface ProjectInput {
   budget_period: BudgetPeriod | null;
   guardrail_ids?: string[];
   web_search: boolean;
+  prompt_logging: PromptLogging;
 }
 
 export interface KeyInput {
@@ -530,6 +540,7 @@ export interface KeyInput {
   /** Admins only; omitted, the key keeps its guardrails. */
   guardrail_ids?: string[];
   web_search: boolean;
+  prompt_logging: boolean;
 }
 
 export interface Totals {
@@ -625,6 +636,35 @@ export interface ModelAlias {
 
 export type AliasInput = Pick<ModelAlias, "model_name" | "target_id" | "enabled">;
 
+/** What each guardrail of a logged request was given, found, did and answered. */
+export interface GuardrailStep {
+  guardrail: string;
+  provider: string;
+  action: "passed" | "flagged" | "masked" | "blocked" | "skipped" | "failed";
+  duration_ms?: number;
+  cost_usd?: number;
+  findings?: { policy: string; kind: string; action: string; matched?: string; confidence?: string }[];
+  /** The texts it rewrote, by JSON pointer into the request. */
+  changes?: { pointer: string; before: string; after: string }[];
+  /** Its blocking message. */
+  message?: string | null;
+  error?: string;
+  provider_response?: unknown;
+}
+
+/** A logged request's prompt and response (`/logs/{id}/bodies`). */
+export interface LogBodies {
+  request: unknown;
+  screened_request: unknown;
+  guardrails: GuardrailStep[] | null;
+  response: unknown;
+  request_bytes: number;
+  response_bytes: number;
+  status: "stored" | "truncated" | null;
+  previous: string | null;
+  next: string | null;
+}
+
 export interface LogRow {
   id: string;
   ts: string;
@@ -633,6 +673,11 @@ export interface LogRow {
   model_name: string;
   deployment_id: string | null;
   provider: string | null;
+  /** The deployment's provider model and credential, as configured now; null once it is deleted. */
+  upstream_model: string | null;
+  credential_name: string | null;
+  /** The tools its response called, where its prompt and response are logged. */
+  tool_calls: string[] | null;
   api: string;
   stream: boolean;
   status_code: number;
@@ -657,6 +702,8 @@ export interface LogRow {
   searches: number;
   /** The searches' part of `cost_usd`. */
   search_cost_usd: number;
+  /** Prompt logging: whether its prompt and response were stored, and what became of them. */
+  bodies: "stored" | "truncated" | "expired" | "dropped" | "deleted" | null;
 }
 
 /** An audit log entry: who changed what through the admin API. */
@@ -716,6 +763,10 @@ export interface GatewaySettings {
   reload_secs: number;
   request_log_retention_days: number;
   audit_log_retention_days: number;
+  /** Days logged prompts and responses are kept: 1 to 60, and no longer than the request log. */
+  prompt_log_retention_days: number;
+  /** Largest logged request or response, in KB; longer strings in it are cut. */
+  prompt_log_max_kb: number;
   response_ttl_minutes: number;
   conversation_quota_mb: number;
   max_body_mb: number;
@@ -725,6 +776,8 @@ export interface GatewaySettings {
   api_docs: boolean;
   price_import: boolean;
   price_import_hours: number;
+  /** Prompt logging for keys outside projects; projects set their own. Never `force`. */
+  prompt_logging: Exclude<PromptLogging, "force">;
 }
 
 export interface GatewaySettingsView {

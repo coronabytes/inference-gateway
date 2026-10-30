@@ -400,6 +400,8 @@ impl StreamEncoder for ResponsesEncoder {
                     it.signature.get_or_insert_with(String::new).push_str(signature);
                 }
             }
+            // The provider's own tools and citations: logged, never sent (see `StreamEvent::ServerTool`).
+            StreamEvent::ServerTool { .. } | StreamEvent::Annotation { .. } => {}
             StreamEvent::BlockStop { index } => {
                 let Some(it) = self.items.remove(index) else { return out };
                 let (id, oi) = (it.id.clone(), it.output_index);
