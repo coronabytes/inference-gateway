@@ -28,6 +28,7 @@ use crate::{
     crypto::SecretBox,
     db,
     error::{ErrorKind, GatewayError},
+    labels::Labels,
     mcp::McpAuth,
     state::AppState,
 };
@@ -55,7 +56,60 @@ pub struct OAuthConfig {
     /// secret), `client_secret_post`, or `none` (a public client).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_auth: Option<String>,
+    /// For `oauth_user`: the request labels that tell a key's sign-ins apart, `tenant` or `tenant`
+    /// and `user`. Empty: the key signs in once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sign_in_by: Vec<String>,
+    /// For `oauth_user`: how many days a sign-in is kept unused before it is deleted, 1 to 90;
+    /// `SIGN_IN_RETENTION_DAYS` when not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign_in_retention_days: Option<u32>,
 }
+
+/// How many days a sign-in is kept unused, when its upstream does not say.
+pub const SIGN_IN_RETENTION_DAYS: u32 = 7;
+/// The range an upstream may keep unused sign-ins for, in days.
+pub const SIGN_IN_RETENTION_RANGE: std::ops::RangeInclusive<u32> = 1..=90;
+
+/// The label keys `sign_in_by` may hold, in this order.
+pub const SIGN_IN_LABELS: [&str; 2] = ["tenant", "user"];
+
+/// Whether `by` is a `sign_in_by` the gateway takes: nothing, `tenant`, or `tenant` and `user`.
+pub fn valid_sign_in_by(by: &[String]) -> bool {
+    by.len() <= SIGN_IN_LABELS.len() && by.iter().zip(SIGN_IN_LABELS).all(|(a, b)| a == b)
+}
+
+/// Who calls an upstream: the key, and the request's labels.
+#[derive(Debug, Clone, Copy)]
+pub struct Who<'a> {
+    pub key: Uuid,
+    pub labels: &'a Labels,
+}
+
+/// Where a sign-in is kept: the key, and the labels the upstream tells the key's sign-ins apart by.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Slot {
+    pub key: Uuid,
+    /// `key=value` pairs sorted by key and joined with commas, such as `tenant=t1,user=u1`; empty
+    /// when the key signs in once.
+    pub labels: String,
+}
+
+impl Slot {
+    /// The whole key's sign-in.
+    pub fn key(key: Uuid) -> Self {
+        Slot { key, labels: String::new() }
+    }
+}
+
+/// The labels named in `by`, as a `Slot` keeps them; `Err` with the first one the request lacks.
+pub fn labels_for(by: &[String], labels: &Labels) -> Result<String, String> {
+    let mut by: Vec<&str> = by.iter().map(String::as_str).collect();
+    by.sort_unstable();
+    let pairs = by.iter().map(|k| labels.get(k).map(|v| format!("{k}={v}")).ok_or_else(|| k.to_string())).collect::<Result<Vec<_>, _>>()?;
+    Ok(pairs.join(","))
+}
+
 
 /// Which kind of upstream a token is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -108,16 +162,33 @@ pub enum UpstreamAuth {
 /// Why there is no token to call an upstream with.
 #[derive(Debug)]
 pub enum AuthError {
-    /// The key has not signed in to the upstream (or its sign-in expired).
-    NotConnected(String),
+    /// The caller has not signed in to the upstream (or its sign-in expired): the key, or the key
+    /// with `labels` where the upstream tells sign-ins apart by labels. `link` signs them in.
+    NotConnected { name: String, labels: String, link: Option<String> },
+    /// The upstream tells sign-ins apart by a label the request does not have.
+    MissingLabel { name: String, label: String },
     Failed(String),
 }
 
 impl AuthError {
+    /// Whether the caller has no sign-in for the upstream, rather than the sign-in failing.
+    pub fn not_signed_in(&self) -> bool {
+        matches!(self, AuthError::NotConnected { .. } | AuthError::MissingLabel { .. })
+    }
+
     pub fn message(&self) -> String {
         match self {
-            AuthError::NotConnected(name) => {
+            AuthError::NotConnected { name, labels, .. } if labels.is_empty() => {
                 format!("this key has not signed in to '{name}'; sign it in on the console's Access page (Connections)")
+            }
+            AuthError::NotConnected { name, labels, link: Some(link) } => {
+                format!("'{name}' needs a sign-in for {labels}: open {link} to sign in (the link works for 15 minutes)")
+            }
+            AuthError::NotConnected { name, labels, link: None } => {
+                format!("'{name}' needs a sign-in for {labels}; get a sign-in link from POST /v1/oauth/sign-ins")
+            }
+            AuthError::MissingLabel { name, label } => {
+                format!("'{name}' keeps a sign-in per {label}; send the request with the label {label} in {}", crate::labels::HEADER)
             }
             AuthError::Failed(e) => e.clone(),
         }
@@ -125,7 +196,8 @@ impl AuthError {
 
     pub fn into_gateway(self) -> GatewayError {
         match self {
-            AuthError::NotConnected(_) => GatewayError::forbidden(self.message()),
+            AuthError::NotConnected { .. } => GatewayError { code: Some("sign_in_required"), ..GatewayError::forbidden(self.message()) },
+            AuthError::MissingLabel { .. } => GatewayError::invalid(self.message()),
             AuthError::Failed(e) => {
                 GatewayError { upstream: true, ..GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, format!("the upstream's sign-in failed: {e}")) }
             }
@@ -193,31 +265,50 @@ impl UpstreamAuth {
         matches!(self, UpstreamAuth::PerKey(_))
     }
 
-    /// The header to call the upstream with, for `key` (needed for `oauth_user`).
-    pub async fn header(&self, state: &AppState, key: Option<Uuid>) -> Result<Option<(HeaderName, HeaderValue)>, AuthError> {
+    /// The labels that tell a key's sign-ins apart; empty where the key signs in once, or not at all.
+    pub fn sign_in_by(&self) -> &[String] {
+        match self {
+            UpstreamAuth::PerKey(c) => &c.config.sign_in_by,
+            _ => &[],
+        }
+    }
+
+    /// Where `who`'s sign-in is kept, for an upstream whose keys sign in on their own.
+    pub fn slot(&self, who: Who) -> Result<Option<Slot>, AuthError> {
+        match self {
+            UpstreamAuth::PerKey(c) => c.slot(who).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// The header to call the upstream with, for `who` (needed for `oauth_user`).
+    pub async fn header(&self, state: &AppState, who: Option<Who<'_>>) -> Result<Option<(HeaderName, HeaderValue)>, AuthError> {
         match self {
             UpstreamAuth::None => Ok(None),
             UpstreamAuth::Static(h, v) => Ok(Some((h.clone(), v.clone()))),
             UpstreamAuth::Client(c) => bearer(&state.oauth.client_token(state, c).await.map_err(AuthError::Failed)?).map(Some),
             UpstreamAuth::PerKey(c) => {
-                let key = key.ok_or_else(|| AuthError::NotConnected(c.name.clone()))?;
-                bearer(&state.oauth.user_token(state, c, key).await?).map(Some)
+                let who = who.ok_or_else(|| AuthError::NotConnected { name: c.name.clone(), labels: String::new(), link: None })?;
+                let slot = c.slot(who)?;
+                let token = state.oauth.user_token(state, c, &slot).await?;
+                state.oauth.used(state, c, slot);
+                bearer(&token).map(Some)
             }
         }
     }
 
     /// The upstream refused the token: get another one next time.
-    pub async fn renew(&self, state: &AppState, key: Option<Uuid>) {
+    pub async fn renew(&self, state: &AppState, who: Option<Who<'_>>) {
         match self {
             UpstreamAuth::Client(c) => {
                 state.oauth.client.lock().expect("tokens lock").remove(&(c.kind, c.upstream));
             }
             UpstreamAuth::PerKey(c) => {
-                if let Some(key) = key {
-                    state.oauth.user.lock().expect("tokens lock").remove(&(c.kind, c.upstream, key));
-                    if let Err(e) = db::expire_oauth_token(&state.db, c.kind.as_str(), c.upstream, key).await {
+                if let Some(slot) = who.and_then(|w| c.slot(w).ok()) {
+                    if let Err(e) = db::expire_oauth_token(&state.db, c.sign_in(&slot)).await {
                         tracing::warn!(error = %e, "could not mark an OAuth token expired");
                     }
+                    state.oauth.user.lock().expect("tokens lock").remove(&(c.kind, c.upstream, slot));
                 }
             }
             _ => {}
@@ -225,12 +316,81 @@ impl UpstreamAuth {
     }
 }
 
-/// Tokens in this replica's memory: client credentials ones, and keys' ones read from Postgres.
+impl Client {
+    /// Where `who`'s sign-in is kept; refused when the request lacks a label the upstream tells
+    /// sign-ins apart by.
+    pub fn slot(&self, who: Who) -> Result<Slot, AuthError> {
+        let labels = labels_for(&self.config.sign_in_by, who.labels).map_err(|label| AuthError::MissingLabel { name: self.name.clone(), label })?;
+        Ok(Slot { key: who.key, labels })
+    }
+
+    /// The sign-in's row.
+    pub fn sign_in<'a>(&self, slot: &'a Slot) -> db::SignInRef<'a> {
+        db::SignInRef { kind: self.kind.as_str(), upstream: self.upstream, key: slot.key, labels: &slot.labels }
+    }
+
+    /// No sign-in for `slot`: with a link to sign in where the upstream tells sign-ins apart by labels.
+    fn not_connected(&self, state: &AppState, slot: &Slot) -> AuthError {
+        let link = (!slot.labels.is_empty()).then(|| self.link_origin().map(|o| Ticket::new(self, slot).url(&o, &state.cfg.secret_box))).flatten();
+        AuthError::NotConnected { name: self.name.clone(), labels: slot.labels.clone(), link }
+    }
+
+    /// The gateway's address as the upstream's sign-in sends people back to it, for links in
+    /// errors; requests to the API do not tell how browsers reach the gateway.
+    fn link_origin(&self) -> Option<String> {
+        let url = reqwest::Url::parse(self.config.redirect_uri.as_deref()?).ok()?;
+        Some(url.origin().ascii_serialization()).filter(|o| o != "null")
+    }
+}
+
+/// A link that signs one tenant or user in to an upstream, for the application to show them: the
+/// sign-in sealed with the gateway's encryption key, so it needs no table and cannot be altered.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Ticket {
+    pub kind: Kind,
+    pub upstream: Uuid,
+    #[serde(flatten)]
+    pub slot: Slot,
+    /// Unix seconds.
+    pub expires: i64,
+}
+
+/// Where sign-in links go, after the gateway's address, followed by the ticket.
+pub const SIGN_IN_PATH: &str = "/admin/auth/oauth/sign-in";
+/// How long a sign-in link works.
+pub const TICKET_TTL_SECS: i64 = 900;
+
+impl Ticket {
+    pub fn new(c: &Client, slot: &Slot) -> Self {
+        Ticket { kind: c.kind, upstream: c.upstream, slot: slot.clone(), expires: Utc::now().timestamp() + TICKET_TTL_SECS }
+    }
+
+    pub fn url(&self, origin: &str, sb: &SecretBox) -> String {
+        let sealed = sb.seal(&serde_json::to_vec(self).expect("a ticket serializes"));
+        format!("{origin}{SIGN_IN_PATH}/{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sealed))
+    }
+
+    /// The ticket in a link, if the gateway sealed it and it has not expired.
+    pub fn open(s: &str, sb: &SecretBox) -> Option<Self> {
+        let sealed = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s).ok()?;
+        let t: Ticket = serde_json::from_slice(&sb.open(&sealed).ok()?).ok()?;
+        (t.expires > Utc::now().timestamp()).then_some(t)
+    }
+}
+
+/// Tokens in this replica's memory: client credentials ones, and sign-ins' ones read from Postgres.
 #[derive(Default)]
 pub struct Tokens {
     client: std::sync::Mutex<HashMap<(Kind, Uuid), (String, Instant)>>,
-    user: std::sync::Mutex<HashMap<(Kind, Uuid, Uuid), (String, Option<Instant>)>>,
+    user: std::sync::Mutex<HashMap<(Kind, Uuid, Slot), (String, Option<Instant>)>>,
+    /// When this replica last recorded a sign-in's use in Postgres.
+    used: std::sync::Mutex<HashMap<(Kind, Uuid, Slot), Instant>>,
 }
+
+/// A sign-in's use is recorded at most this often, so calls do not each write to Postgres.
+const USED_EVERY: Duration = Duration::from_secs(3600);
+/// Sign-ins in memory past this many, entries no longer needed are dropped.
+const MEMORY_PRUNE_AT: usize = 1000;
 
 /// A token is renewed this long before it expires, so one never expires on the way.
 const EARLY: Duration = Duration::from_secs(60);
@@ -271,18 +431,51 @@ impl Tokens {
         Ok(t.access_token)
     }
 
-    async fn user_token(&self, state: &AppState, c: &Client, key: Uuid) -> Result<String, AuthError> {
-        let slot = (c.kind, c.upstream, key);
+    /// Keeps a sign-in's token in memory. With many sign-ins (one per user), those held past their
+    /// time are let go first, so the map does not grow without end.
+    fn hold(&self, slot: (Kind, Uuid, Slot), held: (String, Option<Instant>)) {
+        let mut user = self.user.lock().expect("tokens lock");
+        if user.len() >= MEMORY_PRUNE_AT {
+            user.retain(|_, (_, until)| until.is_some_and(|u| u > Instant::now()));
+        }
+        user.insert(slot, held);
+    }
+
+    /// Records that the sign-in was used, at most once in `USED_EVERY`, without waiting for it.
+    fn used(&self, state: &AppState, c: &Client, s: Slot) {
+        let slot = (c.kind, c.upstream, s);
+        {
+            let mut used = self.used.lock().expect("tokens lock");
+            if used.get(&slot).is_some_and(|at| at.elapsed() < USED_EVERY) {
+                return;
+            }
+            if used.len() >= MEMORY_PRUNE_AT {
+                used.retain(|_, at| at.elapsed() < USED_EVERY);
+            }
+            used.insert(slot.clone(), Instant::now());
+        }
+        let state = state.clone();
+        tokio::spawn(async move {
+            let (kind, upstream, s) = slot;
+            let r = db::SignInRef { kind: kind.as_str(), upstream, key: s.key, labels: &s.labels };
+            if let Err(e) = db::touch_oauth_token(&state.db, r).await {
+                tracing::warn!(error = %e, "could not record a sign-in's use");
+            }
+        });
+    }
+
+    async fn user_token(&self, state: &AppState, c: &Client, s: &Slot) -> Result<String, AuthError> {
+        let slot = (c.kind, c.upstream, s.clone());
         if let Some((token, expires)) = self.user.lock().expect("tokens lock").get(&slot)
             && fresh(*expires)
         {
             return Ok(token.clone());
         }
         let failed = |e: String| AuthError::Failed(e);
-        let not_connected = || AuthError::NotConnected(c.name.clone());
+        let not_connected = || c.not_connected(state, s);
         let sb = &state.cfg.secret_box;
         let open = |sealed: &[u8]| sb.open(sealed).and_then(|b| String::from_utf8(b).map_err(|_| "corrupt token".into())).map_err(failed);
-        let row = db::get_oauth_token(&state.db, c.kind.as_str(), c.upstream, key).await.map_err(|e| failed(e.to_string()))?.ok_or_else(not_connected)?;
+        let row = db::get_oauth_token(&state.db, c.sign_in(s)).await.map_err(|e| failed(e.to_string()))?.ok_or_else(not_connected)?;
         let until = |at: Option<chrono::DateTime<Utc>>| at.map(|at| Instant::now() + (at - Utc::now()).to_std().unwrap_or_default());
         // Kept in memory for at most a few minutes, so a key signed out on another replica stops
         // working here too.
@@ -292,16 +485,16 @@ impl Tokens {
         };
         if fresh(until(row.expires_at)) {
             let token = open(&row.access_token)?;
-            self.user.lock().expect("tokens lock").insert(slot, (token.clone(), held(until(row.expires_at))));
+            self.hold(slot, (token.clone(), held(until(row.expires_at))));
             return Ok(token);
         }
         // Refreshed under the row's lock: another replica may be doing the same, and the
         // authorization server may give a new refresh token and retire the old one.
         let mut tx = state.db.begin().await.map_err(|e| failed(e.to_string()))?;
-        let row = db::lock_oauth_token(&mut *tx, c.kind.as_str(), c.upstream, key).await.map_err(|e| failed(e.to_string()))?.ok_or_else(not_connected)?;
+        let row = db::lock_oauth_token(&mut *tx, c.sign_in(s)).await.map_err(|e| failed(e.to_string()))?.ok_or_else(not_connected)?;
         if fresh(until(row.expires_at)) {
             let token = open(&row.access_token)?;
-            self.user.lock().expect("tokens lock").insert(slot, (token.clone(), held(until(row.expires_at))));
+            self.hold(slot, (token.clone(), held(until(row.expires_at))));
             return Ok(token);
         }
         let refresh = row.refresh_token.as_deref().map(open).transpose()?.ok_or_else(not_connected)?;
@@ -314,7 +507,7 @@ impl Tokens {
             Err(e) => {
                 // A refresh token the server no longer takes needs a new sign-in.
                 if e.starts_with("invalid_grant") {
-                    let _ = db::delete_oauth_token(&mut *tx, c.kind.as_str(), c.upstream, key).await;
+                    let _ = db::delete_oauth_token(&mut *tx, c.sign_in(s)).await;
                     let _ = tx.commit().await;
                     return Err(not_connected());
                 }
@@ -323,11 +516,11 @@ impl Tokens {
         };
         let expires_at = t.expires_in.map(|s| Utc::now() + chrono::Duration::seconds(s as i64));
         let refresh = t.refresh_token.as_deref().unwrap_or(&refresh);
-        db::update_oauth_token(&mut *tx, c.kind.as_str(), c.upstream, key, &sb.seal(t.access_token.as_bytes()), Some(&sb.seal(refresh.as_bytes())), expires_at)
+        db::update_oauth_token(&mut *tx, c.sign_in(s), &sb.seal(t.access_token.as_bytes()), Some(&sb.seal(refresh.as_bytes())), expires_at)
             .await
             .map_err(|e| failed(e.to_string()))?;
         tx.commit().await.map_err(|e| failed(e.to_string()))?;
-        self.user.lock().expect("tokens lock").insert(slot, (t.access_token.clone(), held(until(expires_at))));
+        self.hold(slot, (t.access_token.clone(), held(until(expires_at))));
         Ok(t.access_token)
     }
 }
@@ -402,8 +595,8 @@ impl Client {
         Ok(url.into())
     }
 
-    /// Exchanges an authorization code, and stores the key's tokens.
-    pub async fn complete(&self, state: &AppState, key: Uuid, code: &str, verifier: &str, redirect_uri: &str, by: &str) -> Result<(), String> {
+    /// Exchanges an authorization code, and stores the sign-in's tokens.
+    pub async fn complete(&self, state: &AppState, slot: &Slot, code: &str, verifier: &str, redirect_uri: &str, by: &str) -> Result<(), String> {
         let form = vec![
             ("grant_type", "authorization_code".to_string()),
             ("code", code.to_string()),
@@ -414,17 +607,22 @@ impl Client {
         let sb = &state.cfg.secret_box;
         let expires_at = t.expires_in.map(|s| Utc::now() + chrono::Duration::seconds(s as i64));
         let refresh = t.refresh_token.as_deref().map(|r| sb.seal(r.as_bytes()));
-        db::save_oauth_token(&state.db, self.kind.as_str(), self.upstream, key, &sb.seal(t.access_token.as_bytes()), refresh.as_deref(), expires_at, t.scope.as_deref(), by)
+        db::save_oauth_token(&state.db, self.sign_in(slot), &sb.seal(t.access_token.as_bytes()), refresh.as_deref(), expires_at, t.scope.as_deref(), by)
             .await
             .map_err(|e| e.to_string())?;
-        state.oauth.user.lock().expect("tokens lock").remove(&(self.kind, self.upstream, key));
+        state.oauth.user.lock().expect("tokens lock").remove(&(self.kind, self.upstream, slot.clone()));
         Ok(())
     }
 }
 
-/// Forgets a key's tokens for an upstream, in this replica's memory.
-pub fn forget(state: &AppState, kind: Kind, upstream: Uuid, key: Uuid) {
-    state.oauth.user.lock().expect("tokens lock").remove(&(kind, upstream, key));
+/// Forgets a sign-in's tokens for an upstream, in this replica's memory.
+pub fn forget(state: &AppState, kind: Kind, upstream: Uuid, slot: &Slot) {
+    state.oauth.user.lock().expect("tokens lock").remove(&(kind, upstream, slot.clone()));
+}
+
+/// Forgets every sign-in's tokens for an upstream, in this replica's memory.
+pub fn forget_upstream(state: &AppState, kind: Kind, upstream: Uuid) {
+    state.oauth.user.lock().expect("tokens lock").retain(|(k, u, _), _| (*k, *u) != (kind, upstream));
 }
 
 // ---------------------------------------------------------------- discovery
@@ -643,6 +841,56 @@ pub async fn discover(
 mod tests {
     use super::*;
 
+    fn by(labels: &[&str]) -> Vec<String> {
+        labels.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn sign_ins_split_by_nothing_tenant_or_tenant_and_user() {
+        assert!(valid_sign_in_by(&[]));
+        assert!(valid_sign_in_by(&by(&["tenant"])));
+        assert!(valid_sign_in_by(&by(&["tenant", "user"])));
+        for bad in [&["user"][..], &["user", "tenant"], &["tenant", "user", "x"], &["team"]] {
+            assert!(!valid_sign_in_by(&by(bad)), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn slots_keep_the_named_labels_sorted_and_refuse_missing_ones() {
+        let labels = Labels::parse("user=u1,feature=chat,tenant=t1").unwrap();
+        assert_eq!(labels_for(&[], &labels).unwrap(), "");
+        assert_eq!(labels_for(&by(&["tenant"]), &labels).unwrap(), "tenant=t1");
+        assert_eq!(labels_for(&by(&["user", "tenant"]), &labels).unwrap(), "tenant=t1,user=u1");
+        assert_eq!(labels_for(&by(&["tenant", "user"]), &Labels::parse("tenant=t1").unwrap()).unwrap_err(), "user");
+        let c = Client { kind: Kind::Mcp, upstream: Uuid::nil(), name: "x".into(), config: OAuthConfig { sign_in_by: by(&["tenant"]), ..Default::default() }, secret: None };
+        let err = c.slot(Who { key: Uuid::nil(), labels: &Labels::default() }).unwrap_err();
+        assert!(matches!(&err, AuthError::MissingLabel { label, .. } if label == "tenant"));
+        assert!(err.not_signed_in());
+        assert_eq!(err.into_gateway().status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn sign_in_links_are_sealed_and_expire() {
+        let sb = SecretBox::from_base64(&base64::engine::general_purpose::STANDARD.encode([7u8; 32])).unwrap();
+        let config = OAuthConfig { sign_in_by: by(&["tenant"]), redirect_uri: Some("https://gw.example.com/admin/auth/oauth/callback".into()), ..Default::default() };
+        let c = Client { kind: Kind::A2a, upstream: Uuid::now_v7(), name: "x".into(), config, secret: None };
+        let slot = Slot { key: Uuid::now_v7(), labels: "tenant=t1".into() };
+        let url = Ticket::new(&c, &slot).url(&c.link_origin().unwrap(), &sb);
+        let ticket = url.strip_prefix("https://gw.example.com/admin/auth/oauth/sign-in/").expect("on the gateway's address");
+        let t = Ticket::open(ticket, &sb).unwrap();
+        assert_eq!((t.kind, t.upstream, &t.slot), (Kind::A2a, c.upstream, &slot));
+        // Altered, or sealed with another key: refused.
+        let mut altered = ticket.to_string();
+        altered.replace_range(10..11, if &ticket[10..11] == "A" { "B" } else { "A" });
+        assert!(Ticket::open(&altered, &sb).is_none());
+        let other = SecretBox::from_base64(&base64::engine::general_purpose::STANDARD.encode([8u8; 32])).unwrap();
+        assert!(Ticket::open(ticket, &other).is_none());
+        // Expired: refused.
+        let old = Ticket { expires: Utc::now().timestamp() - 1, ..Ticket::new(&c, &slot) };
+        let old = old.url("https://gw.example.com", &sb);
+        assert!(Ticket::open(old.rsplit('/').next().unwrap(), &sb).is_none());
+    }
+
     #[test]
     fn pkce_challenges_are_the_verifiers_sha256_in_base64url() {
         // As Node's crypto computes it: createHash("sha256").update(v).digest("base64url").
@@ -687,7 +935,7 @@ mod tests {
         assert_eq!(header(auth.header(&state, None).await.unwrap()), "Bearer token-1");
         // Keys that sign in on their own need a key.
         let per_key = UpstreamAuth::PerKey(Arc::new(Client { kind: Kind::Mcp, upstream: Uuid::nil(), name: "y".into(), config: OAuthConfig::default(), secret: None }));
-        assert!(matches!(per_key.header(&state, None).await, Err(AuthError::NotConnected(_))));
+        assert!(matches!(per_key.header(&state, None).await, Err(AuthError::NotConnected { .. })));
     }
 
     #[test]

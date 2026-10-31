@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e4c4311505ba5c10f5ceeb31d075de7371deb21b0c46b3a3143660350f594d5d"
+}

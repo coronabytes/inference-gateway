@@ -48,11 +48,11 @@ function LabelInput({ hint, value, onChange }: { hint: string; value: Labels; on
 }
 
 /** A filter bar's request labels: just the requests with all of them. */
-export function LabelFilter(props: { value: Labels; onChange: (labels: Labels) => void }) {
-  return <LabelInput hint={LABEL_FILTER_HINT} {...props} />;
+export function LabelFilter({ hint, ...props }: { value: Labels; onChange: (labels: Labels) => void; hint?: string }) {
+  return <LabelInput hint={hint ?? LABEL_FILTER_HINT} {...props} />;
 }
 
 /** The labels to send with requests (the playground's), as `x-gateway-labels`. */
-export function LabelEditor(props: { value: Labels; onChange: (labels: Labels) => void }) {
-  return <LabelInput hint={LABEL_EDITOR_HINT} {...props} />;
+export function LabelEditor({ hint, ...props }: { value: Labels; onChange: (labels: Labels) => void; hint?: string }) {
+  return <LabelInput hint={hint ?? LABEL_EDITOR_HINT} {...props} />;
 }

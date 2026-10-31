@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT upstream_kind, upstream_id, count(*) AS \"n!\" FROM oauth_tokens WHERE key_id = $1 AND labels <> '' GROUP BY upstream_kind, upstream_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "upstream_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "upstream_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "upstream_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "upstream_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "n!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "55aace4557b81e94ba281dd9357c94aa4c5e1e5e4d0fe29dc2a008041bd6dd0e"
+}

@@ -192,12 +192,16 @@ pub(crate) async fn update_a2a_agent(
     let before = view(existing.clone());
     let row = row(&state, i, Some(&existing)).await?;
     db::update_a2a_agent(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    let dropped = super::oauth::drop_stale_sign_ins(&state, crate::oauth::Kind::A2a, id, (&existing.auth, existing.oauth.as_deref()), (&row.auth, row.oauth.as_deref())).await?;
     broadcast_reload(&state, "A2A agent updated").await;
     tracing::info!(a2a_agent = %id, "A2A agent updated");
     let v = view(row);
     let mut changes = audit::changes(&before, &v);
     if secret_changed {
         changes.insert("secret".into(), "replaced".into());
+    }
+    if dropped > 0 {
+        changes.insert("sign_ins".into(), format!("{dropped} removed").into());
     }
     if !changes.is_empty() {
         audit::Event::new("a2a_agent", "update").on(id, &v.name).details(changes.into()).record(&state, &actor).await;

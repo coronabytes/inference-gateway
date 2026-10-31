@@ -8,6 +8,7 @@ pub mod mcp_tools;
 mod guard;
 pub mod models;
 pub mod rerank;
+pub mod sign_ins;
 pub mod responses;
 pub mod routing;
 
@@ -281,7 +282,7 @@ pub(crate) async fn run_model(
         Ok(w) => {
             let (w, r) = mcp_tools::route(state, &key, labels, &raw, inbound, w).await;
             routed = r;
-            match mcp_tools::toolset(state, &key, w).await {
+            match mcp_tools::toolset(state, &key, labels, w).await {
                 Ok(set) => Some(Arc::new(set)),
                 Err(e) => {
                     tracker.fail(&e);

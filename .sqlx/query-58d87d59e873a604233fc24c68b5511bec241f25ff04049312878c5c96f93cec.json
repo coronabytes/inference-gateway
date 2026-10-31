@@ -1,0 +1,119 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT upstream_kind, upstream_id, labels, created_at, expires_at, refresh_token IS NOT NULL AS \"refreshable!\", scope, connected_by, last_used_at\n           FROM oauth_tokens WHERE key_id = $1 AND labels = ''",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "upstream_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "upstream_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "upstream_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "upstream_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "labels",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "labels"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "refreshable!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "scope",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "scope"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "connected_by",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "connected_by"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "last_used_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "last_used_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      null,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "58d87d59e873a604233fc24c68b5511bec241f25ff04049312878c5c96f93cec"
+}

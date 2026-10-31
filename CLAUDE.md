@@ -6,6 +6,12 @@ Write implementation plans as Markdown files in `docs/plans/` (for example
 `docs/plans/prompt-logging.md`). The folder is in `.gitignore`: plans stay local and are never
 committed.
 
+## Pull requests
+
+Keep pull request descriptions to a single line naming the features added or bugs fixed. No
+detailed write-ups, no test plans, and never mention the data, hosts, accounts, keys or systems used
+while testing.
+
 ## Admin API and console data
 
 Filter on the server. When a page has a filter (time range, key, model, labels), send it as a query
