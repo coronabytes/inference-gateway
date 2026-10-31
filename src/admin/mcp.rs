@@ -1,6 +1,8 @@
 //! Admin API for MCP servers: which upstream the gateway proxies at `/mcp/{name}`, how it
 //! authenticates there, and which keys may use it; and trying one out.
 
+use std::collections::BTreeMap;
+
 use axum::{
     Extension, Json,
     extract::{Path, State},
@@ -15,7 +17,7 @@ use crate::{
     audit::{self, Actor},
     db,
     error::AdminError,
-    mcp::{McpAuth, McpServer, McpServerRow, ProbedTool},
+    mcp::{McpAuth, McpServer, McpServerRow, ProbedTool, hub::SEPARATOR},
     model::normalize_tags,
     state::AppState,
     sync::broadcast_reload,
@@ -37,6 +39,14 @@ pub(crate) struct McpServerView {
     project_ids: Vec<Uuid>,
     timeout_secs: i32,
     enabled: bool,
+    /// The tools keys may call; empty for every tool the server offers.
+    allowed_tools: Vec<String>,
+    /// Tools keys may not call, whatever `allowed_tools` says.
+    denied_tools: Vec<String>,
+    /// USD per tool call, unless `tool_prices` names the tool.
+    price_per_call: f64,
+    /// USD per call of these tools.
+    tool_prices: BTreeMap<String, f64>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -54,6 +64,10 @@ fn view(s: McpServerRow) -> McpServerView {
         project_ids: s.project_ids,
         timeout_secs: s.timeout_secs,
         enabled: s.enabled,
+        allowed_tools: s.allowed_tools,
+        denied_tools: s.denied_tools,
+        price_per_call: s.price_per_call,
+        tool_prices: s.tool_prices.0,
         created_at: s.created_at,
         updated_at: s.updated_at,
     }
@@ -87,6 +101,18 @@ pub(crate) struct McpServerInput {
     timeout_secs: Option<i32>,
     #[serde(default = "enabled")]
     enabled: bool,
+    /// The tools keys may call; empty (the default) for every tool the server offers, new ones included.
+    #[serde(default)]
+    allowed_tools: Vec<String>,
+    /// Tools keys may not call, whatever `allowed_tools` says.
+    #[serde(default)]
+    denied_tools: Vec<String>,
+    /// USD per tool call, charged once the tool answered. Default 0.
+    #[serde(default)]
+    price_per_call: f64,
+    /// USD per call of these tools, instead of `price_per_call`.
+    #[serde(default)]
+    tool_prices: BTreeMap<String, f64>,
 }
 
 fn enabled() -> bool {
@@ -106,9 +132,11 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
         (1..=64).contains(&s.len())
             && s.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
             && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+            // `__` separates server and tool in the names /mcp lists.
+            && !s.contains(SEPARATOR)
     };
     if !slug(&name) {
-        return Err(AdminError::bad_request("the name is 1-64 lowercase letters, digits, - and _, starting with a letter or digit"));
+        return Err(AdminError::bad_request("the name is 1-64 lowercase letters, digits, - and _ (not __), starting with a letter or digit"));
     }
     let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     let url = i.url.trim().to_string();
@@ -163,6 +191,26 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
     if !(1..=3600).contains(&timeout_secs) {
         return Err(AdminError::bad_request("the timeout is 1 to 3600 seconds"));
     }
+    // Tool names as servers give them: case matters; at most 128 characters, without control characters.
+    let tool_name = |t: &str| (1..=128).contains(&t.len()) && !t.chars().any(char::is_control);
+    let tool_list = |list: Vec<String>, what: &str| -> R<Vec<String>> {
+        let mut list: Vec<String> = list.into_iter().map(|t| t.trim().to_string()).collect();
+        if let Some(bad) = list.iter().find(|t| !tool_name(t)) {
+            return Err(AdminError::bad_request(format!("'{bad}' in {what} is not a tool name")));
+        }
+        list.sort();
+        list.dedup();
+        Ok(list)
+    };
+    let allowed_tools = tool_list(i.allowed_tools, "allowed_tools")?;
+    let denied_tools = tool_list(i.denied_tools, "denied_tools")?;
+    let price = |p: f64| p.is_finite() && p >= 0.0;
+    if !price(i.price_per_call) || !i.tool_prices.values().all(|p| price(*p)) {
+        return Err(AdminError::bad_request("prices are zero or more USD"));
+    }
+    if let Some(bad) = i.tool_prices.keys().find(|t| !tool_name(t)) {
+        return Err(AdminError::bad_request(format!("'{bad}' in tool_prices is not a tool name")));
+    }
     let now = Utc::now();
     Ok(McpServerRow {
         id: existing.map_or_else(Uuid::now_v7, |e| e.id),
@@ -176,6 +224,10 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
         project_ids,
         timeout_secs,
         enabled: i.enabled,
+        allowed_tools,
+        denied_tools,
+        price_per_call: i.price_per_call,
+        tool_prices: sqlx::types::Json(i.tool_prices),
         created_at: existing.map_or(now, |e| e.created_at),
         updated_at: now,
     })

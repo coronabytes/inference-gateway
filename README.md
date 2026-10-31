@@ -18,7 +18,7 @@ Single Rust service · distroless, locked-down container image · Postgres + Val
 - **Reliable routing.** Load balancing, failover and retries across deployments and regions, with traffic moving away from failing or slow ones.
 - **Auto routing.** One model name that picks the best model for each request.
 - **Guardrails.** Mask personal data and block prompt attacks with Bedrock Guardrails, Model Armor or Mistral moderation.
-- **MCP gateway.** MCP servers behind the same virtual keys, with their credentials kept in the gateway and every tool call logged.
+- **MCP gateway.** MCP servers behind the same virtual keys, one by one or all in one endpoint, with their credentials kept in the gateway, tool filters, and every tool call logged and priced.
 - **Cost and usage.** Metrics and a request log by model, key, project and your own labels. OpenTelemetry export.
 - **Admin console.** Web UI with single sign-on, playground and model catalog.
 - **Scales out.** Stateless replicas; configuration changes apply everywhere without restarts.

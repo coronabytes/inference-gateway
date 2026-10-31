@@ -19,6 +19,8 @@ pub struct Inner {
     pub entra: crate::entra::Entra,
     pub http: reqwest::Client,
     pub records: mpsc::Sender<RequestRecord>,
+    /// The gateway's sessions with MCP servers, and their tool lists, for `/mcp`.
+    pub mcp: crate::mcp::Upstreams,
     /// Memory for logged prompts and responses until they are written.
     pub bodies: crate::capture::Budget,
     pub started: Instant,
@@ -95,6 +97,7 @@ fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Send
         entra: crate::entra::Entra::default(),
         http: reqwest::Client::new(),
         records,
+        mcp: crate::mcp::Upstreams::default(),
         bodies: crate::capture::Budget::new(1 << 20),
         started: Instant::now(),
         started_at: chrono::Utc::now(),

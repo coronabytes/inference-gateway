@@ -131,6 +131,8 @@ pub struct Tracker {
     capture: Option<Box<Capture>>,
     /// The tool an MCP call called.
     tool: Option<String>,
+    /// A price per call (an MCP tool's), in USD, on top of what the usage costs.
+    charge_usd: f64,
 }
 
 /// Rough tokens for a number of bytes of text, for when a provider reports no usage. About four
@@ -186,6 +188,7 @@ impl Tracker {
             guardrails: GuardrailCharge::default(),
             capture: None,
             tool: None,
+            charge_usd: 0.0,
         }
     }
 
@@ -200,6 +203,11 @@ impl Tracker {
     /// The tool an MCP call calls.
     pub fn tool(&mut self, name: &str) {
         self.tool = Some(crate::util::truncate(name, 200));
+    }
+
+    /// Charges a price per call, in USD, on top of the usage.
+    pub fn charge(&mut self, usd: f64) {
+        self.charge_usd += usd;
     }
 
     /// Whether this call's bodies are logged.
@@ -324,7 +332,7 @@ impl Drop for Tracker {
             }
         }
         let guardrails = std::mem::take(&mut self.guardrails);
-        let cost = self.deployment.as_ref().map_or(0.0, |d| d.pricing.cost(&self.usage)) + guardrails.cost_usd;
+        let cost = self.deployment.as_ref().map_or(0.0, |d| d.pricing.cost(&self.usage)) + guardrails.cost_usd + self.charge_usd;
         let rec = RequestRecord {
             id: self.id,
             ts: self.ts,

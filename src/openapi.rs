@@ -36,7 +36,7 @@ use utoipa::{
     paths(
         paths::chat_completions, paths::responses, paths::messages, paths::count_tokens, paths::embeddings,
         paths::rerank, paths::decisions, paths::systemone, paths::list_models, paths::list_models_extended,
-        paths::mcp_post, paths::mcp_get, paths::mcp_delete,
+        paths::mcp_hub_post, paths::mcp_hub_get, paths::mcp_hub_delete, paths::mcp_post, paths::mcp_get, paths::mcp_delete,
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
         paths::get_oidc_settings, paths::put_oidc_settings, paths::test_oidc_settings, paths::list_admins, paths::delete_admin, paths::set_admin_projects,
@@ -616,6 +616,39 @@ mod paths {
     fn list_models_extended() {}
 
     const MCP_SESSION: &str = "The session the server opened, as the gateway handed it out with `initialize`'s answer. It only works \n        with the key that opened it; an unknown one is answered with `404`, after which the client starts a new session.";
+
+    /// MCP: every server
+    ///
+    /// One MCP server with the tools of every MCP server the key may use, named \
+    /// `{server}__{tool}`, where the server's tool filters allow them. The gateway answers here itself, \
+    /// statelessly, in any protocol version, and calls the tool in a session it keeps with the server for \
+    /// the key. Each `tools/call` is an entry in the request log (api `mcp`), counts against the key's \
+    /// limits and budgets, and is charged the tool's price.
+    #[utoipa::path(post, path = "/mcp", tag = "MCP", request_body(content = Object, content_type = "application/json"),
+        responses(
+            (status = 200, description = "The gateway's answer.", content((Object = "application/json"))),
+            (status = 202, description = "Accepted: notifications and responses have no answer."),
+            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+        ),
+        params(("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_hub_post() {}
+
+    /// MCP: every server, listen
+    ///
+    /// Not offered: the gateway's own MCP server sends nothing unasked.
+    #[utoipa::path(get, path = "/mcp", tag = "MCP",
+        responses((status = 405, description = "Not offered.")),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_hub_get() {}
+
+    /// MCP: every server, end session
+    ///
+    /// Not needed: the gateway's own MCP server keeps no sessions.
+    #[utoipa::path(delete, path = "/mcp", tag = "MCP",
+        responses((status = 405, description = "Not needed.")),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_hub_delete() {}
 
     /// MCP: send messages
     ///

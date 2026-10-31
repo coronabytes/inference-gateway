@@ -2,7 +2,7 @@
 //! macros; `.sqlx/` holds the offline metadata so builds need no database
 //! (regenerate with `cargo sqlx prepare` after changing a query or migration).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -781,8 +781,9 @@ pub async fn delete_guardrail(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
 pub async fn list_mcp_servers(pool: &PgPool) -> sqlx::Result<Vec<McpServerRow>> {
     sqlx::query_as!(
         McpServerRow,
-        "SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, created_at, updated_at
-         FROM mcp_servers ORDER BY name"
+        r#"SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools, denied_tools,
+                  price_per_call, tool_prices AS "tool_prices: Json<BTreeMap<String, f64>>", created_at, updated_at
+           FROM mcp_servers ORDER BY name"#
     )
     .fetch_all(pool)
     .await
@@ -791,8 +792,9 @@ pub async fn list_mcp_servers(pool: &PgPool) -> sqlx::Result<Vec<McpServerRow>> 
 pub async fn get_mcp_server(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<McpServerRow>> {
     sqlx::query_as!(
         McpServerRow,
-        "SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, created_at, updated_at
-         FROM mcp_servers WHERE id = $1",
+        r#"SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools, denied_tools,
+                  price_per_call, tool_prices AS "tool_prices: Json<BTreeMap<String, f64>>", created_at, updated_at
+           FROM mcp_servers WHERE id = $1"#,
         id
     )
     .fetch_optional(pool)
@@ -801,8 +803,9 @@ pub async fn get_mcp_server(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<McpS
 
 pub async fn insert_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sqlx::Result<()> {
     sqlx::query!(
-        "INSERT INTO mcp_servers (id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())",
+        "INSERT INTO mcp_servers (id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools,
+             denied_tools, price_per_call, tool_prices, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())",
         s.id,
         s.name,
         s.description,
@@ -814,6 +817,10 @@ pub async fn insert_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sql
         &s.project_ids,
         s.timeout_secs,
         s.enabled,
+        &s.allowed_tools,
+        &s.denied_tools,
+        s.price_per_call,
+        &s.tool_prices as &Json<BTreeMap<String, f64>>,
     )
     .execute(db)
     .await?;
@@ -823,7 +830,8 @@ pub async fn insert_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sql
 pub async fn update_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sqlx::Result<()> {
     sqlx::query!(
         "UPDATE mcp_servers SET name = $2, description = $3, url = $4, auth = $5, auth_header = $6, secret = $7, tags = $8,
-             project_ids = $9, timeout_secs = $10, enabled = $11, updated_at = now()
+             project_ids = $9, timeout_secs = $10, enabled = $11, allowed_tools = $12, denied_tools = $13, price_per_call = $14,
+             tool_prices = $15, updated_at = now()
          WHERE id = $1",
         s.id,
         s.name,
@@ -836,6 +844,10 @@ pub async fn update_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sql
         &s.project_ids,
         s.timeout_secs,
         s.enabled,
+        &s.allowed_tools,
+        &s.denied_tools,
+        s.price_per_call,
+        &s.tool_prices as &Json<BTreeMap<String, f64>>,
     )
     .execute(db)
     .await?;

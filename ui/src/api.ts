@@ -403,6 +403,13 @@ export interface McpServer {
   project_ids: string[];
   timeout_secs: number;
   enabled: boolean;
+  /** The tools keys may call; empty for every tool the server offers. */
+  allowed_tools: string[];
+  /** Tools keys may not call, whatever `allowed_tools` says. */
+  denied_tools: string[];
+  /** USD per tool call, unless `tool_prices` names the tool. */
+  price_per_call: number;
+  tool_prices: Record<string, number>;
   created_at: string;
   updated_at: string;
 }
@@ -419,6 +426,10 @@ export interface McpServerInput {
   project_ids: string[];
   timeout_secs: number;
   enabled: boolean;
+  allowed_tools: string[];
+  denied_tools: string[];
+  price_per_call: number;
+  tool_prices: Record<string, number>;
 }
 
 /** What `POST /mcp-servers/{id}/test` answers. */

@@ -9,11 +9,11 @@
 //! session one key opened cannot be used with another, and any replica can forward any session.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use aws_lc_rs::hmac;
@@ -29,6 +29,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
+
+pub mod hub;
 
 use crate::{
     accounting::Tracker,
@@ -57,6 +59,10 @@ pub struct McpServerRow {
     pub project_ids: Vec<Uuid>,
     pub timeout_secs: i32,
     pub enabled: bool,
+    pub allowed_tools: Vec<String>,
+    pub denied_tools: Vec<String>,
+    pub price_per_call: f64,
+    pub tool_prices: sqlx::types::Json<BTreeMap<String, f64>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -104,6 +110,12 @@ pub struct McpServer {
     /// For a POST's answer, streamed or not. A client's GET stream stays open as long as both
     /// sides keep it.
     pub timeout: Duration,
+    /// The tools keys may call: empty for all of them, but never the denied ones.
+    allowed_tools: Vec<String>,
+    denied_tools: Vec<String>,
+    /// USD per call, by tool, else `price_per_call`.
+    price_per_call: f64,
+    tool_prices: BTreeMap<String, f64>,
 }
 
 impl McpServer {
@@ -131,7 +143,26 @@ impl McpServer {
             tags: row.tags,
             project_ids: row.project_ids,
             timeout: Duration::from_secs(row.timeout_secs.max(1) as u64),
+            allowed_tools: row.allowed_tools,
+            denied_tools: row.denied_tools,
+            price_per_call: row.price_per_call,
+            tool_prices: row.tool_prices.0,
         })
+    }
+
+    /// Whether keys may see and call this tool of the server.
+    pub fn allows_tool(&self, tool: &str) -> bool {
+        (self.allowed_tools.is_empty() || self.allowed_tools.iter().any(|t| t == tool)) && !self.denied_tools.iter().any(|t| t == tool)
+    }
+
+    /// Whether some of the server's tools are hidden from keys.
+    fn filters_tools(&self) -> bool {
+        !self.allowed_tools.is_empty() || !self.denied_tools.is_empty()
+    }
+
+    /// What a call of `tool` costs, in USD.
+    pub fn price(&self, tool: &str) -> f64 {
+        self.tool_prices.get(tool).copied().unwrap_or(self.price_per_call)
     }
 
     /// As for deployments: a server limited to projects is only for keys in one of them, and a key
@@ -148,9 +179,10 @@ fn sensitive(v: &str) -> Option<HeaderValue> {
     Some(v)
 }
 
-/// Headers of the client's request the server gets; everything else (the client's key above all)
-/// stays at the gateway.
-const FORWARDED: [&str; 4] = ["accept", "content-type", "mcp-protocol-version", "last-event-id"];
+/// Headers of the client's request the server gets, with the `Mcp-Param-*` ones (SEP-2243);
+/// everything else (the client's key above all) stays at the gateway.
+const FORWARDED: [&str; 6] = ["accept", "content-type", "mcp-protocol-version", "last-event-id", "mcp-method", "mcp-name"];
+const FORWARDED_PREFIX: &str = "mcp-param-";
 /// Headers of the server's answer the client gets. Not `WWW-Authenticate`: a client must not start
 /// signing in to the server, whose credentials are the gateway's.
 const RETURNED: [&str; 2] = ["content-type", "mcp-protocol-version"];
@@ -181,6 +213,22 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
         .ok_or_else(|| GatewayError::not_found(format!("no MCP server '{name}' that this key may use")))?;
     let labels = Labels::from_headers(headers)?;
     let messages = if method == Method::POST { messages(&body) } else { Vec::new() };
+    // A call of a tool the server's filters hide is answered here, as one of an unknown tool.
+    if let Some((id, tool)) = messages.iter().filter_map(call_of).find(|(_, tool)| !server.allows_tool(tool)) {
+        let mut t = Tracker::new(state, Some(key), &labels, &server.name, "mcp", false);
+        t.tool(tool);
+        t.fail_status(403, "the tool is not available through the gateway");
+        if messages.len() > 1 {
+            return Err(GatewayError::forbidden(format!("the tool '{tool}' is not available through the gateway")));
+        }
+        let error = json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("Unknown tool: {tool}") } });
+        return Ok(axum::Json(error).into_response());
+    }
+    // `tools/list` answers are read whole, to take out the hidden tools.
+    let lists: Vec<String> = match server.filters_tools() {
+        true => messages.iter().filter(|m| m.get("method").and_then(Value::as_str) == Some("tools/list")).filter_map(|m| m.get("id").and_then(id_key)).collect(),
+        false => Vec::new(),
+    };
     let mut calls = Calls::new(state, key, &labels, &server, &messages);
     if !calls.is_empty()
         && let Err(e) = auth::check_key_limits(state, key).await
@@ -205,8 +253,8 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
     }
 
     let mut req = state.http.request(method.clone(), &server.url);
-    for h in FORWARDED {
-        if let Some(v) = headers.get(h) {
+    for (h, v) in headers {
+        if FORWARDED.contains(&h.as_str()) || h.as_str().starts_with(FORWARDED_PREFIX) {
             req = req.header(h, v);
         }
     }
@@ -248,6 +296,10 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
         out = out.header(SESSION, s);
     }
     let stream = resp.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|t| t.starts_with("text/event-stream"));
+    if !lists.is_empty() && status.is_success() {
+        let body = filtered(resp, stream, &server, &lists, &mut calls).await.inspect_err(|e| calls.fail(e))?;
+        return Ok(out.body(Body::from(body)).unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response()));
+    }
     let upstream = resp.bytes_stream().boxed();
     let body = if calls.is_empty() {
         Body::from_stream(upstream)
@@ -271,6 +323,66 @@ fn messages(body: &[u8]) -> Vec<Value> {
     }
 }
 
+/// A `tools/call` request's id and tool.
+fn call_of(m: &Value) -> Option<(&Value, &str)> {
+    (m.get("method").and_then(Value::as_str) == Some("tools/call")).then_some(())?;
+    Some((m.get("id")?, m.pointer("/params/name").and_then(Value::as_str).unwrap_or("?")))
+}
+
+/// The answer to a POST with `tools/list` requests, read whole, without the tools the server's
+/// filters hide; the replies to tool calls in it settle those calls.
+async fn filtered(resp: reqwest::Response, sse: bool, server: &McpServer, lists: &[String], calls: &mut Calls) -> Result<Bytes, GatewayError> {
+    let mut body = resp.bytes_stream();
+    let mut buf = Vec::new();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|e| GatewayError::from_reqwest(&e))?;
+        if buf.len() + chunk.len() > MAX_READ {
+            return Err(GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "the MCP server's answer is too large"));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    calls.ended = true;
+    let mut edit = |m: &mut Value| {
+        calls.settle(m);
+        if m.get("id").and_then(id_key).is_some_and(|id| lists.contains(&id))
+            && let Some(tools) = m.pointer_mut("/result/tools").and_then(Value::as_array_mut)
+        {
+            tools.retain(|t| t.get("name").and_then(Value::as_str).is_some_and(|n| server.allows_tool(n)));
+        }
+    };
+    if !sse {
+        let mut v: Value = serde_json::from_slice(&buf).map_err(|_| GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "the MCP server's answer is not JSON"))?;
+        match &mut v {
+            Value::Array(batch) => batch.iter_mut().for_each(&mut edit),
+            m => edit(m),
+        }
+        return Ok(Bytes::from(v.to_string()));
+    }
+    // Events are written again with their name and data; ids and retry hints, which only matter for
+    // resuming a stream, are left out of this one, which is complete.
+    let mut parser = SseParser::default();
+    let mut out = String::new();
+    let mut events = parser.feed(&buf);
+    events.extend(parser.finish());
+    for event in events {
+        if let Some(name) = &event.event {
+            out.push_str(&format!("event: {name}\n"));
+        }
+        let data = match serde_json::from_str::<Value>(&event.data) {
+            Ok(mut m) => {
+                edit(&mut m);
+                m.to_string()
+            }
+            Err(_) => event.data,
+        };
+        for line in data.split('\n') {
+            out.push_str(&format!("data: {line}\n"));
+        }
+        out.push('\n');
+    }
+    Ok(Bytes::from(out))
+}
+
 /// A JSON-RPC id as a map key: `1` and `"1"` are different ids.
 fn id_key(id: &Value) -> Option<String> {
     matches!(id, Value::String(_) | Value::Number(_)).then(|| id.to_string())
@@ -280,7 +392,8 @@ fn id_key(id: &Value) -> Option<String> {
 /// written when its call is dropped: once its reply came, it failed, or the exchange ended without a
 /// reply (see `Drop`).
 struct Calls {
-    open: HashMap<String, Tracker>,
+    /// Each call's entry, and what the call costs once the tool answers.
+    open: HashMap<String, (Tracker, f64)>,
     /// The server's answer ran to its end (rather than the client going away first).
     ended: bool,
 }
@@ -289,13 +402,13 @@ impl Calls {
     fn new(state: &AppState, key: &VirtualKey, labels: &Labels, server: &McpServer, messages: &[Value]) -> Self {
         let mut calls = HashMap::new();
         for m in messages {
-            let (Some("tools/call"), Some(id)) = (m.get("method").and_then(Value::as_str), m.get("id").and_then(id_key)) else { continue };
+            let Some((Some(id), tool)) = call_of(m).map(|(id, tool)| (id_key(id), tool)) else { continue };
             let mut t = Tracker::new(state, Some(key), labels, &server.name, "mcp", false);
-            t.tool(m.pointer("/params/name").and_then(Value::as_str).unwrap_or("?"));
+            t.tool(tool);
             if let Some(c) = t.log() {
                 c.request(capture::Body::Json(m.clone()));
             }
-            calls.insert(id, t);
+            calls.insert(id, (t, server.price(tool)));
         }
         Self { open: calls, ended: false }
     }
@@ -306,18 +419,22 @@ impl Calls {
 
     /// Ends every open call with the error.
     fn fail(&mut self, e: &GatewayError) {
-        self.open.drain().for_each(|(_, mut t)| t.fail(e));
+        self.open.drain().for_each(|(_, (mut t, _))| t.fail(e));
     }
 
     fn fail_status(&mut self, status: u16, msg: impl Into<String>) {
         let msg = msg.into();
-        self.open.drain().for_each(|(_, mut t)| t.fail_status(status, msg.clone()));
+        self.open.drain().for_each(|(_, (mut t, _))| t.fail_status(status, msg.clone()));
     }
 
     /// A message from the server: the reply to one of the calls ends its entry. Requests and
     /// notifications the server sends meanwhile (progress, sampling) are not the gateway's.
     fn settle(&mut self, reply: &Value) {
-        let Some(mut t) = reply.get("id").and_then(id_key).and_then(|id| self.open.remove(&id)) else { return };
+        let Some((mut t, price)) = reply.get("id").and_then(id_key).and_then(|id| self.open.remove(&id)) else { return };
+        // A tool that answered is charged, also when it reports an error: it ran.
+        if reply.get("result").is_some() {
+            t.charge(price);
+        }
         if let Some(e) = reply.get("error") {
             let code = e.get("code").and_then(Value::as_i64).unwrap_or(0);
             let status = match code {
@@ -349,7 +466,7 @@ impl Drop for Calls {
             // 499, as nginx logs it: the client closed the request before it finished.
             false => (499, "the client went away before the tool answered"),
         };
-        for (_, mut t) in self.open.drain() {
+        for (_, (mut t, _)) in self.open.drain() {
             if let Some(c) = t.log().filter(|_| !self.ended) {
                 c.incomplete();
             }
@@ -478,7 +595,7 @@ impl SessionTag {
     }
 }
 
-// ---------------------------------------------------------------- probing
+// ---------------------------------------------------------------- the gateway as a client
 
 /// What a server says about itself: from `initialize` and `tools/list`, for the console's test.
 #[derive(Serialize, utoipa::ToSchema)]
@@ -498,99 +615,141 @@ pub struct ProbedTool {
     pub description: Option<String>,
 }
 
-/// The protocol version the gateway asks for when it talks to a server itself.
+/// The protocol version the gateway asks for when it talks to a server itself: the newest with an
+/// `initialize` handshake, which servers of every version still answer.
 const PROTOCOL_VERSION: &str = "2025-11-25";
 
-/// Opens a session with the server, as a client would, lists its tools and closes the session.
-pub async fn probe(state: &AppState, server: &McpServer) -> Result<Probe, String> {
-    state.cfg.upstream_policy.check_url(&server.url).map_err(|why| format!("the address is not allowed: {why}"))?;
+/// A session the gateway opened with a server.
+#[derive(Clone)]
+struct Session {
+    /// None when the server keeps no sessions.
+    id: Option<String>,
+    version: Option<String>,
+}
+
+/// Opens a session with the server, as a client would.
+async fn open(state: &AppState, server: &McpServer) -> Result<(Session, Value), RpcError> {
+    state.cfg.upstream_policy.check_url(&server.url).map_err(|why| RpcError::other(format!("the address is not allowed: {why}")))?;
     let init = json!({
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "jsonrpc": "2.0", "id": 0, "method": "initialize",
         "params": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": { "name": "inference-gateway", "version": crate::VERSION },
         },
     });
-    let (session, reply) = rpc(state, server, None, None, &init).await?;
-    let result = reply.get("result").ok_or_else(|| "initialize did not succeed".to_string())?;
+    let (id, reply) = rpc(state, server, &Session { id: None, version: None }, &init).await?;
+    let result = reply.get("result").cloned().ok_or_else(|| RpcError::other("initialize did not succeed"))?;
     let version = result.get("protocolVersion").and_then(Value::as_str).map(str::to_string);
-    let server_info = result.get("serverInfo").cloned();
-    let session = session.as_deref();
-    let notified = rpc(state, server, session, version.as_deref(), &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).await;
+    let session = Session { id, version };
+    rpc(state, server, &session, &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).await?;
+    Ok((session, result))
+}
+
+/// Every tool the server offers, page by page, as the server describes them.
+async fn tools(state: &AppState, server: &McpServer, session: &Session) -> Result<Vec<Value>, RpcError> {
     let mut tools = Vec::new();
-    let listed = async {
-        notified?;
-        let mut cursor: Option<String> = None;
-        // Pages until the server has no more, within reason.
-        for page in 2..12 {
-            let mut list = json!({ "jsonrpc": "2.0", "id": page, "method": "tools/list" });
-            if let Some(c) = &cursor {
-                list["params"] = json!({ "cursor": c });
-            }
-            let (_, reply) = rpc(state, server, session, version.as_deref(), &list).await?;
-            let result = reply.get("result").ok_or_else(|| "tools/list did not succeed".to_string())?;
-            for t in result.get("tools").and_then(Value::as_array).into_iter().flatten() {
-                let Some(name) = t.get("name").and_then(Value::as_str) else { continue };
-                let description = t.get("description").and_then(Value::as_str).map(|d| crate::util::truncate(d, 300));
-                tools.push(ProbedTool { name: name.to_string(), description });
-            }
-            cursor = result.get("nextCursor").and_then(Value::as_str).map(str::to_string);
-            if cursor.is_none() {
-                break;
-            }
+    let mut cursor: Option<String> = None;
+    // Pages until the server has no more, within reason.
+    for page in 1..=10 {
+        let mut list = json!({ "jsonrpc": "2.0", "id": page, "method": "tools/list" });
+        if let Some(c) = &cursor {
+            list["params"] = json!({ "cursor": c });
         }
-        Ok::<_, String>(())
-    }
-    .await;
-    if let Some(s) = session {
-        let mut req = state.http.delete(&server.url).header(SESSION, s).timeout(Duration::from_secs(10));
-        if let Some((h, v)) = &server.auth {
-            req = req.header(h, v);
+        let (_, reply) = rpc(state, server, session, &list).await?;
+        let result = reply.get("result").ok_or_else(|| RpcError::other("tools/list did not succeed"))?;
+        tools.extend(result.get("tools").and_then(Value::as_array).into_iter().flatten().cloned());
+        cursor = result.get("nextCursor").and_then(Value::as_str).map(str::to_string);
+        if cursor.is_none() {
+            break;
         }
-        let _ = req.send().await;
     }
-    listed?;
-    Ok(Probe { protocol_version: version, server_info, tools })
+    Ok(tools)
+}
+
+/// Ends a session the gateway opened, if the server keeps sessions.
+async fn close(state: &AppState, server: &McpServer, session: &Session) {
+    let Some(id) = &session.id else { return };
+    let mut req = state.http.delete(&server.url).header(SESSION, id).timeout(Duration::from_secs(10));
+    if let Some((h, v)) = &server.auth {
+        req = req.header(h, v);
+    }
+    let _ = req.send().await;
+}
+
+/// Opens a session with the server, as a client would, lists its tools and closes the session.
+pub async fn probe(state: &AppState, server: &McpServer) -> Result<Probe, String> {
+    let (session, result) = open(state, server).await.map_err(|e| e.message)?;
+    let listed = tools(state, server, &session).await;
+    close(state, server, &session).await;
+    let tools = listed
+        .map_err(|e| e.message)?
+        .iter()
+        .filter_map(|t| {
+            let name = t.get("name").and_then(Value::as_str)?.to_string();
+            let description = t.get("description").and_then(Value::as_str).map(|d| crate::util::truncate(d, 300));
+            Some(ProbedTool { name, description })
+        })
+        .collect();
+    Ok(Probe {
+        protocol_version: result.get("protocolVersion").and_then(Value::as_str).map(str::to_string),
+        server_info: result.get("serverInfo").cloned(),
+        tools,
+    })
+}
+
+/// Why a message to a server failed: the server's HTTP status, when it answered with one.
+#[derive(Debug)]
+struct RpcError {
+    status: Option<u16>,
+    message: String,
+}
+
+impl RpcError {
+    fn other(message: impl Into<String>) -> Self {
+        Self { status: None, message: message.into() }
+    }
 }
 
 /// Sends one message and returns the session id the server gave, if any, and the reply to the
 /// message (`null` for a notification, which has none).
-async fn rpc(state: &AppState, server: &McpServer, session: Option<&str>, version: Option<&str>, msg: &Value) -> Result<(Option<String>, Value), String> {
+async fn rpc(state: &AppState, server: &McpServer, session: &Session, msg: &Value) -> Result<(Option<String>, Value), RpcError> {
+    let method = msg.get("method").and_then(Value::as_str).unwrap_or("?");
     let mut req = state
         .http
         .post(&server.url)
         .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("mcp-method", method)
         .json(msg)
-        .timeout(server.timeout.min(Duration::from_secs(30)));
-    if let Some(s) = session {
+        .timeout(server.timeout);
+    if let Some(s) = &session.id {
         req = req.header(SESSION, s);
     }
-    if let Some(v) = version {
+    if let Some(v) = &session.version {
         req = req.header("mcp-protocol-version", v);
     }
     if let Some((h, v)) = &server.auth {
         req = req.header(h, v);
     }
-    let method = msg.get("method").and_then(Value::as_str).unwrap_or("?");
-    let resp = req.send().await.map_err(|e| format!("{method}: {}", GatewayError::from_reqwest(&e).message))?;
+    let failed = |e: reqwest::Error| RpcError::other(format!("{method}: {}", GatewayError::from_reqwest(&e).message));
+    let resp = req.send().await.map_err(failed)?;
     let status = resp.status();
     let session = resp.headers().get(SESSION).and_then(|v| v.to_str().ok()).map(str::to_string);
     let sse = resp.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|t| t.starts_with("text/event-stream"));
     if !status.is_success() {
         let hint = match status.as_u16() {
             401 | 403 => " (check the server's authentication)",
-            404 | 405 => " (check the URL: it is the server's MCP endpoint, often ending in /mcp)",
+            405 => " (check the URL: it is the server's MCP endpoint, often ending in /mcp)",
             _ => "",
         };
-        return Err(format!("{method}: the server answered HTTP {}{hint}", status.as_u16()));
+        return Err(RpcError { status: Some(status.as_u16()), message: format!("{method}: the server answered HTTP {}{hint}", status.as_u16()) });
     }
     let Some(id) = msg.get("id") else { return Ok((session, Value::Null)) };
     let mut body = resp.bytes_stream();
     let mut parser = SseParser::default();
     let mut buf = Vec::new();
     while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|e| format!("{method}: {}", GatewayError::from_reqwest(&e).message))?;
+        let chunk = chunk.map_err(failed)?;
         if sse {
             // An event stream may carry requests and notifications before the reply.
             for event in parser.feed(&chunk) {
@@ -599,7 +758,7 @@ async fn rpc(state: &AppState, server: &McpServer, session: Option<&str>, versio
                 }
             }
         } else if buf.len() + chunk.len() > MAX_READ {
-            return Err(format!("{method}: the answer is too large"));
+            return Err(RpcError::other(format!("{method}: the answer is too large")));
         } else {
             buf.extend_from_slice(&chunk);
         }
@@ -608,7 +767,61 @@ async fn rpc(state: &AppState, server: &McpServer, session: Option<&str>, versio
         .into_iter()
         .find(|m| m.get("id") == Some(id))
         .map(|r| (session, r))
-        .ok_or_else(|| format!("{method}: the server's answer has no reply"))
+        .ok_or_else(|| RpcError::other(format!("{method}: the server's answer has no reply")))
+}
+
+/// The sessions the gateway keeps open with servers for `/mcp`, one per key and server, and the
+/// servers' tool lists, both in this replica's memory. A session unused for `SESSION_IDLE` is opened
+/// again; a tool list is fetched again after `TOOLS_FRESH`, or when its server's settings change.
+#[derive(Default)]
+pub struct Upstreams {
+    sessions: std::sync::Mutex<HashMap<(Uuid, Uuid), (Session, Instant)>>,
+    tools: std::sync::Mutex<HashMap<Uuid, (Arc<McpServer>, Instant, Arc<Vec<Value>>)>>,
+}
+
+const SESSION_IDLE: Duration = Duration::from_secs(600);
+const TOOLS_FRESH: Duration = Duration::from_secs(60);
+
+impl Upstreams {
+    /// The server's tools as it lists them, unfiltered.
+    pub async fn tools(&self, state: &AppState, server: &Arc<McpServer>) -> Result<Arc<Vec<Value>>, String> {
+        if let Some((s, at, tools)) = self.tools.lock().expect("tools lock").get(&server.id)
+            && Arc::ptr_eq(s, server)
+            && at.elapsed() < TOOLS_FRESH
+        {
+            return Ok(tools.clone());
+        }
+        let (session, _) = open(state, server).await.map_err(|e| e.message)?;
+        let listed = tools(state, server, &session).await;
+        close(state, server, &session).await;
+        let listed = Arc::new(listed.map_err(|e| e.message)?);
+        self.tools.lock().expect("tools lock").insert(server.id, (server.clone(), Instant::now(), listed.clone()));
+        Ok(listed)
+    }
+
+    /// Sends a request for `key` and returns the server's reply, in the key's session with the
+    /// server, which is opened when there is none or the server forgot it.
+    pub async fn call(&self, state: &AppState, key: Uuid, server: &McpServer, msg: &Value) -> Result<Value, String> {
+        let slot = (key, server.id);
+        let cached = {
+            let mut sessions = self.sessions.lock().expect("sessions lock");
+            sessions.retain(|_, (_, used)| used.elapsed() < SESSION_IDLE);
+            sessions.get(&slot).map(|(s, _)| s.clone())
+        };
+        let reused = cached.is_some();
+        let mut session = match cached {
+            Some(s) => s,
+            None => open(state, server).await.map_err(|e| e.message)?.0,
+        };
+        let mut result = rpc(state, server, &session, msg).await;
+        // A server that restarted, or ended the session, answers 404: start a new one, once.
+        if reused && matches!(result, Err(RpcError { status: Some(404), .. })) {
+            session = open(state, server).await.map_err(|e| e.message)?.0;
+            result = rpc(state, server, &session, msg).await;
+        }
+        self.sessions.lock().expect("sessions lock").insert(slot, (session, Instant::now()));
+        result.map(|(_, reply)| reply).map_err(|e| e.message)
+    }
 }
 
 #[cfg(test)]
@@ -630,8 +843,9 @@ mod tests {
         assert_eq!(id_key(&Value::Null), None);
     }
 
-    fn server(id: Uuid) -> McpServer {
-        McpServer { id, name: "s".into(), url: "http://x".into(), auth: None, tags: vec![], project_ids: vec![], timeout: Duration::from_secs(1) }
+    pub(super) fn server(id: Uuid) -> McpServer {
+        McpServer { id, name: "s".into(), url: "http://x".into(), auth: None, tags: vec![], project_ids: vec![], timeout: Duration::from_secs(1),
+            allowed_tools: vec![], denied_tools: vec![], price_per_call: 0.0, tool_prices: BTreeMap::new() }
     }
 
     #[tokio::test]
@@ -663,6 +877,7 @@ mod tests {
             let id = m["id"].clone();
             let result = match (m["method"].as_str(), m.pointer("/params/name").and_then(Value::as_str)) {
                 (Some("initialize"), _) => return ([(SESSION, "up-1")], Json(json!({ "jsonrpc": "2.0", "id": id, "result": {} }))).into_response(),
+                (Some("tools/list"), _) => json!({ "tools": (["echo", "fail", "secret"].map(|n| json!({ "name": n, "inputSchema": { "type": "object" } })).to_vec()) }),
                 (Some("tools/call"), Some("fail")) => json!({ "content": [{ "type": "text", "text": "it broke" }], "isError": true }),
                 (Some("tools/call"), _) if headers.get(SESSION).map(|v| v.as_bytes()) != Some(b"up-1") => return StatusCode::NOT_FOUND.into_response(),
                 (Some("tools/call"), _) => json!({ "content": [{ "type": "text", "text": m.pointer("/params/arguments/text") }] }),
@@ -694,6 +909,90 @@ mod tests {
         // The last message of an event stream, or the JSON body.
         let last = text.rsplit("data: ").next().unwrap_or_default();
         (status, headers, serde_json::from_str(last.trim()).unwrap_or(Value::Null))
+    }
+
+    /// A state with key `sk-gw-client` and server `tools` at `url`, which hides its tool `secret`
+    /// and charges $0.01 a call, $0.5 for `fail`.
+    fn filtered_state(url: String) -> (AppState, tokio::sync::mpsc::Receiver<crate::accounting::RequestRecord>) {
+        let (state, records) = crate::state::test_state_local();
+        let mut snap = crate::registry::Snapshot::default();
+        let key = VirtualKey { key_hash: crate::util::sha256(b"sk-gw-client").to_vec(), ..crate::auth::tests::key() };
+        snap.keys.insert(crate::util::sha256(b"sk-gw-client"), Arc::new(key));
+        let auth = Some((header::AUTHORIZATION, HeaderValue::from_static("Bearer upstream-secret")));
+        let server = McpServer {
+            name: "tools".into(),
+            url,
+            auth,
+            denied_tools: vec!["secret".into()],
+            price_per_call: 0.01,
+            tool_prices: BTreeMap::from([("fail".into(), 0.5)]),
+            ..server(Uuid::now_v7())
+        };
+        snap.mcp_servers.insert("tools".into(), Arc::new(server));
+        state.registry.set_snapshot(snap);
+        (state, records)
+    }
+
+    #[tokio::test]
+    async fn hidden_tools_are_left_out_and_refused_and_calls_are_charged() {
+        let (state, mut records) = filtered_state(upstream().await);
+        let app = axum::Router::new().route("/mcp/{server}", axum::routing::post(proxy)).with_state(state);
+        let (_, headers, _) = call(&app, "/mcp/tools", None, json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" })).await;
+        let session = headers.get(SESSION).unwrap().to_str().unwrap().to_string();
+
+        let (_, _, reply) = call(&app, "/mcp/tools", Some(&session), json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" })).await;
+        let names: Vec<&str> = reply["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["echo", "fail"]);
+
+        let (status, _, reply) = call(&app, "/mcp/tools", Some(&session), json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "secret" } })).await;
+        assert_eq!((status, &reply["error"]["code"]), (StatusCode::OK, &json!(-32602)));
+        let r = records.try_recv().unwrap();
+        assert_eq!((r.tool.as_deref(), r.status_code, r.cost_usd), (Some("secret"), 403, 0.0));
+
+        let echo = json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "hi" } } });
+        call(&app, "/mcp/tools", Some(&session), echo).await;
+        assert_eq!(records.try_recv().unwrap().cost_usd, 0.01);
+        // A tool that reports an error has run, and is charged.
+        call(&app, "/mcp/tools", Some(&session), json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "fail" } })).await;
+        let r = records.try_recv().unwrap();
+        assert_eq!((r.status_code, r.cost_usd), (422, 0.5));
+    }
+
+    #[tokio::test]
+    async fn the_gateways_own_server_lists_and_calls_every_servers_tools() {
+        let (state, mut records) = filtered_state(upstream().await);
+        let app = axum::Router::new().route("/mcp", axum::routing::post(hub::hub)).with_state(state);
+        let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+        let send = |body: Value| {
+            use tower::ServiceExt;
+            let req = axum::http::Request::post("/mcp")
+                .header("host", "gateway.example.com")
+                .header("authorization", "Bearer sk-gw-client")
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .header("mcp-protocol-version", "2025-11-25")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            let app = app.clone();
+            async move {
+                let resp = app.oneshot(req).await.unwrap();
+                let status = resp.status();
+                let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+                serde_json::from_slice::<Value>(&bytes).unwrap_or_else(|_| panic!("{status}: {}", String::from_utf8_lossy(&bytes)))
+            }
+        };
+        let reply = send(list).await;
+        let names: Vec<&str> = reply["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["tools__echo", "tools__fail"]);
+
+        let reply = send(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "tools__echo", "arguments": { "text": "hi" } } })).await;
+        assert_eq!(reply["result"]["content"][0]["text"], "hi");
+        let r = records.try_recv().unwrap();
+        assert_eq!((r.model.as_str(), r.tool.as_deref(), r.status_code, r.cost_usd), ("tools", Some("echo"), 200, 0.01));
+
+        let reply = send(json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "tools__secret" } })).await;
+        assert_eq!(reply["error"]["code"], -32602);
+        assert_eq!(records.try_recv().unwrap().status_code, 403);
     }
 
     #[tokio::test]

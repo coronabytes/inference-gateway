@@ -150,6 +150,7 @@ async fn run() -> Result<(), String> {
         entra: entra::Entra::default(),
         http,
         records: tx,
+        mcp: mcp::Upstreams::default(),
         bodies: capture::Budget::new(prompt_log_buffer),
         started: Instant::now(),
         started_at: chrono::Utc::now(),
@@ -182,6 +183,7 @@ async fn run() -> Result<(), String> {
         .route("/rerank", post(api::rerank::rerank))
         .route("/v1/models", get(api::models::list_models))
         .route("/v1/models-extended", get(api::models::list_models_extended))
+        .route("/mcp", post(mcp::hub::hub).get(mcp::hub::hub).delete(mcp::hub::hub))
         .route("/mcp/{server}", post(mcp::proxy).get(mcp::proxy).delete(mcp::proxy));
     if let Some(signals) = telemetry::describe() {
         tracing::info!(%signals, "exporting OpenTelemetry");

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, created_at, updated_at\n         FROM mcp_servers WHERE id = $1",
+  "query": "SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools, denied_tools,\n                  price_per_call, tool_prices AS \"tool_prices: Json<BTreeMap<String, f64>>\", created_at, updated_at\n           FROM mcp_servers ORDER BY name",
   "describe": {
     "columns": [
       {
@@ -126,6 +126,50 @@
       },
       {
         "ordinal": 11,
+        "name": "allowed_tools",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "allowed_tools"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "denied_tools",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "denied_tools"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "price_per_call",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "price_per_call"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "tool_prices: Json<BTreeMap<String, f64>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "tool_prices"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -136,7 +180,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 16,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -148,9 +192,7 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Uuid"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -165,8 +207,12 @@
       false,
       false,
       false,
+      false,
+      false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "30cfb4d976c0eb37a5b509ab3c887f3167504d086b84079fab8d8dfb50662fd1"
+  "hash": "679a94a3c4914727c970d7e5f7ccefd19675294361a5aabeea4a2ecf97e0f713"
 }

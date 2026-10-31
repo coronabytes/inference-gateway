@@ -1,19 +1,43 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type McpAuth, type McpServer, type McpServerInput, type McpServerTestResult, type NamedItem, type TagInfo } from "../api";
-import { Button, MenuButton, MultiSelect, PageActions, Segmented, TextInput, Toggle } from "../components/controls";
+import { Button, MenuButton, MultiSelect, PageActions, Segmented, Switch, TextInput, Toggle } from "../components/controls";
 import { TagEditor, TagList } from "../components/Tags";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
-import { dateTime, ms } from "../format";
+import { dateTime, ms, usd } from "../format";
 
 const AUTH_LABEL: Record<McpAuth, string> = { none: "None", bearer: "Bearer token", header: "Header" };
 
-/** Where clients reach a server through the gateway. */
-const endpoint = (name: string) => `${location.origin}/mcp/${name}`;
+/** Where clients reach one server through the gateway, or every server with no name. */
+const endpoint = (name?: string) => `${location.origin}/mcp${name ? `/${name}` : ""}`;
 
 /** The upstream's host and path, without the scheme. */
 const upstream = (url: string) => url.replace(/^https?:\/\//, "");
 
-/** MCP servers: upstreams the gateway proxies at `/mcp/{name}`, with its own credentials for them. */
+/** A server as the admin API takes it back, keeping its stored secret. */
+const toInput = (s: McpServer): McpServerInput => ({
+  name: s.name,
+  description: s.description,
+  url: s.url,
+  auth: s.auth,
+  auth_header: s.auth_header,
+  tags: s.tags,
+  project_ids: s.project_ids,
+  timeout_secs: s.timeout_secs,
+  enabled: s.enabled,
+  allowed_tools: s.allowed_tools,
+  denied_tools: s.denied_tools,
+  price_per_call: s.price_per_call,
+  tool_prices: s.tool_prices,
+});
+
+/** Which tools keys may call, short. */
+function toolsSummary(s: McpServer): string {
+  if (s.allowed_tools.length) return `${s.allowed_tools.length} allowed`;
+  if (s.denied_tools.length) return `All but ${s.denied_tools.length}`;
+  return "All";
+}
+
+/** MCP servers: upstreams the gateway proxies at `/mcp/{name}` and combines at `/mcp`, with its own credentials for them. */
 export function McpServers() {
   const [rows, setRows] = useState<McpServer[]>([]);
   const [projects, setProjects] = useState<NamedItem[]>([]);
@@ -21,7 +45,7 @@ export function McpServers() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<McpServer | "new" | null>(null);
   const [copyOf, setCopyOf] = useState<McpServer | null>(null);
-  const [trying, setTrying] = useState<McpServer | null>(null);
+  const [tools, setTools] = useState<McpServer | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
 
   const load = useCallback(async () => {
@@ -40,14 +64,9 @@ export function McpServers() {
     load();
   }, [load]);
 
-  const save = async (s: McpServer, changes: Partial<McpServerInput>) => {
-    try {
-      const { name, description, url, auth, auth_header, tags, project_ids, timeout_secs, enabled } = s;
-      await api(`/mcp-servers/${s.id}`, { method: "PUT", json: { name, description, url, auth, auth_header, tags, project_ids, timeout_secs, enabled, ...changes } });
-      await load();
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  const update = async (s: McpServer, changes: Partial<McpServerInput>) => {
+    await api(`/mcp-servers/${s.id}`, { method: "PUT", json: { ...toInput(s), ...changes } });
+    await load();
   };
 
   const remove = (s: McpServer) =>
@@ -55,7 +74,8 @@ export function McpServers() {
       title: "Delete MCP server",
       message: (
         <>
-          Delete MCP server <strong>{s.name}</strong>? Clients using <span className="mono">/mcp/{s.name}</span> stop working. The server itself is not changed.
+          Delete MCP server <strong>{s.name}</strong>? Clients using <span className="mono">/mcp/{s.name}</span> stop working, and its tools leave{" "}
+          <span className="mono">/mcp</span>. The server itself is not changed.
         </>
       ),
       action: async () => {
@@ -70,7 +90,8 @@ export function McpServers() {
     <div className="page">
       <div className="page-head">
         <p className="muted small">
-          Clients connect to <span className="mono">{endpoint("{name}")}</span> over Streamable HTTP, with a virtual key as their bearer token.
+          Clients connect to <span className="mono">{endpoint()}</span> for the tools of every server their key may use, named{" "}
+          <span className="mono">server__tool</span>, or to <span className="mono">{endpoint("{name}")}</span> for one server. They authenticate with a virtual key.
         </p>
         <PageActions actions={[{ label: "New MCP server", onClick: () => setEditing("new"), primary: true }]} />
       </div>
@@ -82,6 +103,8 @@ export function McpServers() {
               <th>Name</th>
               <th>Server</th>
               <th>Authentication</th>
+              <th>Tools</th>
+              <th>Price</th>
               <th>Access</th>
               <th>Status</th>
               <th>Updated</th>
@@ -102,6 +125,11 @@ export function McpServers() {
                   {AUTH_LABEL[s.auth]}
                   {s.auth === "header" && <span className="muted small mono"> {s.auth_header}</span>}
                 </td>
+                <td>{toolsSummary(s)}</td>
+                <td title={Object.keys(s.tool_prices).length ? "Some tools have prices of their own." : undefined}>
+                  {usd(s.price_per_call)}
+                  {Object.keys(s.tool_prices).length > 0 && <span className="muted small"> +{Object.keys(s.tool_prices).length}</span>}
+                </td>
                 <td>
                   <TagList tags={s.tags} projects={projectNames(s.project_ids)} empty="Every key" />
                 </td>
@@ -111,14 +139,14 @@ export function McpServers() {
                   <IconButton label={`Edit ${s.name}`} title="Edit" onClick={() => setEditing(s)}>
                     <EditIcon />
                   </IconButton>
-                  <IconButton label={`Try ${s.name}`} title="Connect and list its tools" onClick={() => setTrying(s)}>
+                  <IconButton label={`Tools of ${s.name}`} title="Connect, list its tools, choose which keys may call and their prices" onClick={() => setTools(s)}>
                     <TryIcon />
                   </IconButton>
                   <MenuButton
                     label={`More for ${s.name}`}
                     className="icon-btn"
                     items={[
-                      { label: s.enabled ? "Disable" : "Enable", onClick: () => save(s, { enabled: !s.enabled }) },
+                      { label: s.enabled ? "Disable" : "Enable", onClick: () => update(s, { enabled: !s.enabled }).catch((e) => setError((e as Error).message)) },
                       {
                         label: "Duplicate",
                         onClick: () => {
@@ -136,7 +164,7 @@ export function McpServers() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="empty">
+                <td colSpan={9} className="empty">
                   No MCP servers yet.
                 </td>
               </tr>
@@ -146,7 +174,16 @@ export function McpServers() {
       </div>
 
       {confirming && <ConfirmDialog request={confirming} onClose={() => setConfirming(null)} />}
-      {trying && <TryMcpServer server={trying} onClose={() => setTrying(null)} />}
+      {tools && (
+        <ServerTools
+          server={tools}
+          onClose={() => setTools(null)}
+          onSave={async (changes) => {
+            await update(tools, changes);
+            setTools(null);
+          }}
+        />
+      )}
       {editing && (
         <McpServerForm
           initial={editing === "new" ? undefined : editing}
@@ -196,6 +233,7 @@ function McpServerForm({
   const [tags, setTags] = useState<string[]>(from?.tags ?? []);
   const [projectIds, setProjectIds] = useState<string[]>(from?.project_ids ?? []);
   const [timeout, setTimeoutSecs] = useState(String(from?.timeout_secs ?? 300));
+  const [price, setPrice] = useState(String(from?.price_per_call ?? 0));
   const [enabled, setEnabled] = useState(from?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -204,7 +242,10 @@ function McpServerForm({
   const keepsSecret = !!initial?.has_secret && initial.auth !== "none";
   const timeoutSecs = Number(timeout);
   const badTimeout = !Number.isInteger(timeoutSecs) || timeoutSecs < 1 || timeoutSecs > 3600;
-  const missing = !name.trim() || !url.trim() || badTimeout || (auth !== "none" && !secret.trim() && !keepsSecret) || (auth === "header" && !authHeader.trim());
+  const pricePerCall = price.trim() ? Number(price) : 0;
+  const badPrice = !Number.isFinite(pricePerCall) || pricePerCall < 0;
+  const missing =
+    !name.trim() || !url.trim() || badTimeout || badPrice || (auth !== "none" && !secret.trim() && !keepsSecret) || (auth === "header" && !authHeader.trim());
 
   const submit = async () => {
     setBusy(true);
@@ -220,6 +261,11 @@ function McpServerForm({
         project_ids: projectIds,
         timeout_secs: timeoutSecs,
         enabled,
+        // Set in the tools dialog; a duplicate starts with the same.
+        allowed_tools: from?.allowed_tools ?? [],
+        denied_tools: from?.denied_tools ?? [],
+        price_per_call: pricePerCall,
+        tool_prices: from?.tool_prices ?? {},
       });
     } catch (e) {
       setError((e as Error).message);
@@ -246,7 +292,7 @@ function McpServerForm({
       <div className="form">
         <TextInput
           caption="Name"
-          hint="Clients call the server at /mcp/ followed by this name. Lowercase letters, digits, - and _. Renaming it changes the address clients use."
+          hint="Clients call the server at /mcp/ followed by this name, and find its tools at /mcp as name__tool. Lowercase letters, digits, - and _. Renaming it changes both."
           mono
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -329,42 +375,95 @@ function McpServerForm({
         />
         <div className="row">
           <TextInput
+            caption="Price per call"
+            hint="USD charged to the key for each tool call, once the tool has answered. Counts toward key and project budgets. Tools can have prices of their own in the tools dialog."
+            inputMode="decimal"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+          />
+          <TextInput
             caption="Timeout"
             hint="Seconds a call may take, its streamed answer included: 1 to 3600."
             inputMode="numeric"
             value={timeout}
             onChange={(e) => setTimeoutSecs(e.target.value)}
           />
-          <Toggle caption="Enabled" hint="A disabled server answers 404, as if it did not exist." checked={enabled} onChange={setEnabled} />
         </div>
+        <Toggle caption="Enabled" hint="A disabled server answers 404, as if it did not exist, and its tools leave /mcp." checked={enabled} onChange={setEnabled} />
       </div>
     </Modal>
   );
 }
 
-/** Connects to the server through the gateway's admin API and lists its tools, with how to connect a client. */
-function TryMcpServer({ server, onClose }: { server: McpServer; onClose: () => void }) {
+/**
+ * Connects to the server through the admin API and lists its tools, with a switch for whether keys
+ * may call each one and its price; and how to connect a client.
+ */
+function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (changes: Partial<McpServerInput>) => Promise<void>; onClose: () => void }) {
   const [result, setResult] = useState<McpServerTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // "listed": keys call only the tools switched on, new ones not; "all": every tool but those switched off.
+  const [mode, setMode] = useState<"all" | "listed">(server.allowed_tools.length ? "listed" : "all");
+  const [on, setOn] = useState<Record<string, boolean>>({});
+  const [prices, setPrices] = useState<Record<string, string>>(Object.fromEntries(Object.entries(server.tool_prices).map(([t, p]) => [t, String(p)])));
+  const [dirty, setDirty] = useState(false);
 
   const run = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
-      setResult(await api<McpServerTestResult>(`/mcp-servers/${server.id}/test`, { method: "POST" }));
+      const r = await api<McpServerTestResult>(`/mcp-servers/${server.id}/test`, { method: "POST" });
+      setResult(r);
+      setOn(
+        Object.fromEntries(
+          r.tools.map((t) => [t.name, server.allowed_tools.length ? server.allowed_tools.includes(t.name) : !server.denied_tools.includes(t.name)]),
+        ),
+      );
     } catch (e) {
       setResult(null);
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }, [server.id]);
+  }, [server]);
 
   useEffect(() => {
     run();
   }, [run]);
 
+  const offered = result?.tools.map((t) => t.name) ?? [];
+  const priceOf = (t: string) => (prices[t]?.trim() ? Number(prices[t]) : null);
+  const badPrice = Object.keys(prices).some((t) => {
+    const p = priceOf(t);
+    return p != null && (!Number.isFinite(p) || p < 0);
+  });
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      // Tools the server no longer offers keep what was set for them.
+      const gone = (list: string[]) => list.filter((t) => !offered.includes(t));
+      const switched = (value: boolean) => offered.filter((t) => on[t] === value);
+      await onSave({
+        allowed_tools: mode === "listed" ? [...switched(true), ...gone(server.allowed_tools)] : [],
+        denied_tools: mode === "all" ? [...switched(false), ...gone(server.denied_tools)] : [],
+        tool_prices: Object.fromEntries(
+          Object.keys(prices)
+            .map((t) => [t, priceOf(t)] as const)
+            .filter((e): e is readonly [string, number] => e[1] != null),
+        ),
+      });
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  const change = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v);
+    setDirty(true);
+  };
   const config = JSON.stringify(
     { mcpServers: { [server.name]: { type: "http", url: endpoint(server.name), headers: { Authorization: "Bearer ${GATEWAY_API_KEY}" } } } },
     null,
@@ -373,14 +472,17 @@ function TryMcpServer({ server, onClose }: { server: McpServer; onClose: () => v
   const info = result?.server_info;
   return (
     <Modal
-      title={`Try ${server.name}`}
+      title={`Tools of ${server.name}`}
       size="wide"
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Close</Button>
-          <Button variant="primary" onClick={run} disabled={busy}>
-            {busy ? "Connecting…" : "Connect again"}
+          <Button onClick={onClose}>{dirty ? "Cancel" : "Close"}</Button>
+          <Button onClick={run} disabled={busy}>
+            {busy && !result ? "Connecting…" : "Connect again"}
+          </Button>
+          <Button variant="primary" onClick={save} disabled={busy || !dirty || badPrice || !result?.ok}>
+            Save
           </Button>
         </>
       }
@@ -397,24 +499,52 @@ function TryMcpServer({ server, onClose }: { server: McpServer; onClose: () => v
                 .join(" · ")}
             </span>
           </div>
+          <div className="form">
+            <Segmented
+              caption="Keys may call"
+              hint="Every tool: also tools the server adds later, but not those switched off. Only the tools switched on: tools the server adds later stay hidden until you switch them on. Hidden tools are left out of the tool lists and refused."
+              options={[
+                { value: "all", label: "Every tool" },
+                { value: "listed", label: "Only the tools switched on" },
+              ]}
+              value={mode}
+              onChange={change(setMode)}
+            />
+          </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th>On</th>
                   <th>Tool</th>
                   <th>Description</th>
+                  <th>Price per call</th>
                 </tr>
               </thead>
               <tbody>
                 {result.tools.map((t) => (
                   <tr key={t.name}>
+                    <td>
+                      <Switch label={`Keys may call ${t.name}`} checked={!!on[t.name]} onChange={(v) => change(setOn)({ ...on, [t.name]: v })} />
+                    </td>
                     <td className="mono">{t.name}</td>
                     <td className="muted">{t.description}</td>
+                    <td>
+                      <TextInput
+                        caption="USD"
+                        mono
+                        inputMode="decimal"
+                        aria-label={`Price per call of ${t.name}`}
+                        value={prices[t.name] ?? ""}
+                        placeholder={String(server.price_per_call)}
+                        onChange={(e) => change(setPrices)({ ...prices, [t.name]: e.target.value })}
+                      />
+                    </td>
                   </tr>
                 ))}
                 {result.tools.length === 0 && (
                   <tr>
-                    <td colSpan={2} className="empty">
+                    <td colSpan={4} className="empty">
                       The server offers no tools.
                     </td>
                   </tr>
@@ -427,7 +557,8 @@ function TryMcpServer({ server, onClose }: { server: McpServer; onClose: () => v
       <h4>Connect a client</h4>
       <p className="muted small">
         For clients that read an <span className="mono">mcpServers</span> configuration, such as Claude Code, Cursor or VS Code. Replace{" "}
-        <span className="mono">{"${GATEWAY_API_KEY}"}</span> with a virtual key{!server.enabled && "; the server is disabled until you enable it"}.
+        <span className="mono">{"${GATEWAY_API_KEY}"}</span> with a virtual key. With <span className="mono">{endpoint()}</span> as the URL instead, the client gets the tools of every server the key may use
+        {!server.enabled && "; this server is disabled until you enable it"}.
       </p>
       <pre className="raw">{config}</pre>
     </Modal>

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, created_at, updated_at\n         FROM mcp_servers ORDER BY name",
+  "query": "SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools, denied_tools,\n                  price_per_call, tool_prices AS \"tool_prices: Json<BTreeMap<String, f64>>\", created_at, updated_at\n           FROM mcp_servers WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -126,6 +126,50 @@
       },
       {
         "ordinal": 11,
+        "name": "allowed_tools",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "allowed_tools"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "denied_tools",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "denied_tools"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "price_per_call",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "price_per_call"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "tool_prices: Json<BTreeMap<String, f64>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "tool_prices"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -136,7 +180,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 16,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -148,7 +192,9 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Uuid"
+      ]
     },
     "nullable": [
       false,
@@ -163,8 +209,12 @@
       false,
       false,
       false,
+      false,
+      false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "9ccef358b237256c1ab8926b4f8f90f522705c44600cfa4936404ab64d84d204"
+  "hash": "d17b750307a3eac8bfffca20984602fc06e446b12308711857b9e21b21007413"
 }
