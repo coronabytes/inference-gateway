@@ -4,7 +4,7 @@ import { Button, MenuButton, MultiSelect, PageActions, Segmented, Switch, TextIn
 import { TagEditor, TagList } from "../components/Tags";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, ms, usd } from "../format";
-import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState } from "./UpstreamAuth";
+import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState, withClient } from "./UpstreamAuth";
 
 
 /** Where clients reach one server through the gateway, or every server with no name. */
@@ -253,7 +253,7 @@ function McpServerForm({
         name: name.trim(),
         description: description.trim() || undefined,
         url: url.trim(),
-        ...authInput(auth),
+        ...authInput(await withClient("mcp", url, auth)),
         tags,
         project_ids: projectIds,
         timeout_secs: timeoutSecs,
@@ -298,16 +298,26 @@ function McpServerForm({
           autoFocus
         />
         <TextInput caption="Description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="optional" />
-        <TextInput
-          caption="URL"
-          hint="The server's Streamable HTTP endpoint, often ending in /mcp. The gateway calls it from its own network: addresses on private networks need GATEWAY_UPSTREAM_ALLOWED_NETWORKS."
-          mono
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://mcp.example.com/mcp"
-          required
+        <AuthFields
+          kind="mcp"
+          url={url}
+          urlField={(discover) => (
+            <TextInput
+              caption="URL"
+              hint="The server's Streamable HTTP endpoint, often ending in /mcp. The gateway calls it from its own network: addresses on private networks need GATEWAY_UPSTREAM_ALLOWED_NETWORKS."
+              mono
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://mcp.example.com/mcp"
+              required
+              action={discover}
+            />
+          )}
+          value={auth}
+          onChange={setAuth}
+          keepsSecret={keepsSecret}
+          auto={!from}
         />
-        <AuthFields kind="mcp" url={url} value={auth} onChange={setAuth} keepsSecret={keepsSecret} />
         <TagEditor
           caption="Tags"
           hint={

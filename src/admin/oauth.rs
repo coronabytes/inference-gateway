@@ -24,6 +24,9 @@ use crate::{
 
 /// Where authorization servers send the person signing a key in back to, after the gateway's address.
 pub const CALLBACK_PATH: &str = "/admin/auth/oauth/callback";
+/// The gateway's client ID metadata document, after its address: its URL is the gateway's client
+/// ID at authorization servers that take such documents.
+pub const CLIENT_METADATA_PATH: &str = "/admin/auth/oauth/client.json";
 /// The sign-in in progress, in the console session.
 const PENDING_KEY: &str = "oauth.pending";
 /// A sign-in must come back within this time.
@@ -36,18 +39,49 @@ pub(crate) struct DiscoverInput {
     kind: String,
     /// The MCP server's URL, or the A2A agent's card URL.
     url: String,
-    /// Register the gateway as a public client (RFC 7591), where the authorization server offers it.
+    /// Use the gateway's client ID metadata document as its client ID, where the authorization server
+    /// takes one and the gateway's address is public HTTPS. Nothing is registered.
+    #[serde(default)]
+    metadata_document: bool,
+    /// Otherwise register the gateway as a public client (RFC 7591), where the authorization server
+    /// offers it.
     #[serde(default)]
     register: bool,
 }
 
-/// Finds the authorization server of an MCP server or A2A agent, and registers the gateway there
-/// when asked. The redirect URI it registers is the gateway's address as the console reaches it.
+/// Finds the authorization server of an MCP server or A2A agent, and gets the gateway a client
+/// there when asked. Its redirect URI is the gateway's address as the console reaches it.
 pub(crate) async fn discover(State(state): State<AppState>, headers: HeaderMap, uri: Uri, Json(i): Json<DiscoverInput>) -> R<Json<Discovered>> {
     let kind = Kind::parse(&i.kind).ok_or_else(|| AdminError::bad_request("kind is mcp or a2a"))?;
     let url = super::mcp::check_url(&state, &i.url)?;
-    let redirect = format!("{}{CALLBACK_PATH}", crate::a2a::origin(&headers, &uri));
-    oauth::discover(&state, kind, &url, i.register, &redirect).await.map(Json).map_err(AdminError::bad_request)
+    let origin = crate::a2a::origin(&headers, &uri);
+    let redirect = format!("{origin}{CALLBACK_PATH}");
+    let document = (i.metadata_document && fetchable(&origin)).then(|| format!("{origin}{CLIENT_METADATA_PATH}"));
+    oauth::discover(&state, kind, &url, document.as_deref(), i.register, &redirect).await.map(Json).map_err(AdminError::bad_request)
+}
+
+/// Whether an authorization server elsewhere can fetch documents from `origin`: client ID metadata
+/// documents must be served over HTTPS, and a loopback address is only the server's own.
+fn fetchable(origin: &str) -> bool {
+    let Ok(u) = reqwest::Url::parse(origin) else { return false };
+    let host = u.host_str().unwrap_or("localhost").trim_matches(['[', ']']);
+    let loopback = host == "localhost" || host.ends_with(".localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+    u.scheme() == "https" && !loopback
+}
+
+/// `GET /admin/auth/oauth/client.json`: the gateway's client ID metadata document. An upstream's
+/// authorization server fetches it when a key signs in with the gateway's client ID, its URL.
+pub(crate) async fn client_metadata(headers: HeaderMap, uri: Uri) -> Json<serde_json::Value> {
+    let origin = crate::a2a::origin(&headers, &uri);
+    Json(serde_json::json!({
+        "client_id": format!("{origin}{CLIENT_METADATA_PATH}"),
+        "client_name": "Inference Gateway",
+        "client_uri": origin,
+        "redirect_uris": [format!("{origin}{CALLBACK_PATH}")],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }))
 }
 
 /// An upstream a key signs in to on its own, and whether it has.

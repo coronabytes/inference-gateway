@@ -42,7 +42,7 @@ use utoipa::{
         paths::a2a_card, paths::a2a_jsonrpc, paths::a2a_rest_post, paths::a2a_rest_get, paths::a2a_rest_delete,
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
-        paths::oauth_callback, paths::oauth_discover, paths::key_connections, paths::key_connect, paths::key_disconnect,
+        paths::oauth_callback, paths::oauth_client_metadata, paths::oauth_discover, paths::key_connections, paths::key_connect, paths::key_disconnect,
         paths::get_oidc_settings, paths::put_oidc_settings, paths::test_oidc_settings, paths::list_admins, paths::delete_admin, paths::set_admin_projects,
         paths::list_credentials, paths::create_credential, paths::update_credential, paths::delete_credential, paths::foundry_deployments, paths::bedrock_models, paths::aws_regions,
         paths::list_guardrails, paths::create_guardrail, paths::update_guardrail, paths::delete_guardrail, paths::test_guardrail,
@@ -918,10 +918,20 @@ mod paths {
         responses((status = 303, description = "Back to the console's Access page, with `connected` or `connect_error`.")))]
     fn oauth_callback() {}
 
+    /// Gateway's client metadata
+    ///
+    /// The gateway's client ID metadata document. At authorization servers that take such documents, \
+    /// the gateway's client ID is this document's URL, and the server fetches it when a key signs in.
+    #[utoipa::path(get, path = "/admin/auth/oauth/client.json", tag = "Sign-in",
+        responses((status = 200, description = "The document: the gateway's name and redirect URI, as a public client.", body = Object)))]
+    fn oauth_client_metadata() {}
+
     /// Discover OAuth
     ///
     /// Finds an MCP server's (RFC 9728) or A2A agent's (its card) authorization server and what its \
-    /// metadata says. With `register`, registers the gateway there as a public client (RFC 7591).
+    /// metadata says. With `metadata_document`, the gateway's client ID metadata document becomes its \
+    /// client where the server takes one; otherwise, with `register`, registers the gateway there as \
+    /// a public client (RFC 7591).
     #[utoipa::path(post, path = "/admin/api/oauth/discover", tag = "Upstream OAuth", request_body = admin::oauth::DiscoverInput,
         responses(
             (status = 200, description = "What was found.", body = oauth::Discovered),
