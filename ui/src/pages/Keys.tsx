@@ -187,10 +187,10 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
     prompt_logging: k.prompt_logging,
   });
 
-  // Tags the filter offers: those deployments and routers carry, and those keys still hold.
+  // Tags the filter offers: those deployments, routers and MCP servers carry, and those keys still hold.
   const tagOptions = tags.map((t) => t.tag).sort();
-  // Keys pick only tags that deployments or routers carry.
-  const pickableTags = tags.filter((t) => t.deployments + t.routers > 0).map((t) => t.tag);
+  // Keys pick only tags that deployments, routers or MCP servers carry.
+  const pickableTags = tags.filter((t) => t.deployments + t.routers + t.mcp_servers > 0).map((t) => t.tag);
   // Guardrail names by id, for the grid; empty for users, who cannot list them.
   const guardrailNames = new Map(guardrails.map((g) => [g.id, g.name]));
 
@@ -657,8 +657,8 @@ function KeyForm({
               caption="Tags"
               hint={
                 allowedTags.length
-                  ? "This key can use deployments and routers without tags, and those whose tags are all selected here."
-                  : "No tags selected: this key can use every model, except deployments limited to other projects."
+                  ? "This key can use deployments, routers and MCP servers without tags, and those whose tags are all selected here."
+                  : "No tags selected: this key can use every model and MCP server, except those limited to other projects."
               }
               options={tags}
               value={allowedTags}

@@ -8,16 +8,18 @@ import { UserMenu } from "./components/UserMenu";
 import { Cluster } from "./pages/Cluster";
 import { Keys } from "./pages/Keys";
 import { Logs, RequestLog } from "./pages/Logs";
+import { McpServers } from "./pages/McpServers";
 import { Metrics } from "./pages/Metrics";
 import { Models } from "./pages/Models";
 import { Playground } from "./pages/Playground";
 import { useTheme } from "./theme";
 
-type PageId = "metrics" | "logs" | "access" | "models" | "cluster";
+type PageId = "metrics" | "logs" | "access" | "models" | "tools" | "cluster";
 
 const PAGES: Record<PageId, { label: string; el: ReactNode }> = {
   metrics: { label: "Metrics", el: <Metrics /> },
   models: { label: "Models", el: <Models /> },
+  tools: { label: "Tools", el: <McpServers /> },
   access: { label: "Access", el: <Keys /> },
   logs: { label: "Logs", el: <Logs /> },
   cluster: { label: "Cluster", el: <Cluster /> },

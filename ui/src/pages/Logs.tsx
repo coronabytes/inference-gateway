@@ -348,9 +348,9 @@ export function RequestLog() {
                           {r === p && <LabelList labels={r.labels} onPick={pickLabel} />}
                         </td>
                         <td>
-                          <ToolList tools={r.tool_calls} onPick={setTool} />
+                          <ToolList tools={r.tool ? [r.tool] : r.tool_calls} onPick={setTool} />
                         </td>
-                        <td>{r.provider ?? "–"}</td>
+                        <td>{r.provider ?? (r.api === "mcp" ? "MCP" : "–")}</td>
                         <td className="num">{ms(r.latency_ms)}</td>
                         <td className="num">{ms(r.ttft_ms)}</td>
                         <td className="num">

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS \"key_name?\", l.model_name,\n                  l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l\n           WHERE l.id = ANY($1)",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.parent_id = ANY($1) ORDER BY l.ts",
   "describe": {
     "columns": [
       {
@@ -40,7 +40,12 @@
         "ordinal": 3,
         "name": "key_name?",
         "type_info": "Text",
-        "origin": "Expression"
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 4,
@@ -275,24 +280,35 @@
       },
       {
         "ordinal": 25,
+        "name": "tool",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "tool"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
         "name": "upstream_model?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 26,
+        "ordinal": 27,
         "name": "credential_name?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "tool_calls?",
         "type_info": "TextArray",
         "origin": "Expression"
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "bodies?",
         "type_info": "Text",
         "origin": "Expression"
@@ -308,33 +324,34 @@
       false,
       false,
       true,
-      null,
-      false,
-      true,
-      true,
-      false,
-      false,
       false,
       false,
       true,
-      false,
-      false,
+      true,
       false,
       false,
       false,
       false,
       true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
       true,
       true,
       true,
       false,
       false,
       false,
+      true,
       null,
       null,
       null,
       null
     ]
   },
-  "hash": "d7ace23115501eca3f25b288a75b70b7fe3b6609834f80e74622a491874b916f"
+  "hash": "aaef0608f5ca610629248090e46754fa1103ebda346abdeeecf75dba9ddc921a"
 }

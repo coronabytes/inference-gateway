@@ -61,6 +61,8 @@ pub struct RequestRecord {
     pub bodies: Logged,
     /// What became of them, for the entry's `bodies` column: set by the writer.
     pub bodies_status: Option<&'static str>,
+    /// The tool an MCP call called (see `mcp`).
+    pub tool: Option<String>,
 }
 
 /// A logged request's bodies on their way to the writer. They are never copied: a clone of a
@@ -127,6 +129,8 @@ pub struct Tracker {
     guardrails: GuardrailCharge,
     /// Where the key's prompts are logged: what this call's entry keeps of its bodies.
     capture: Option<Box<Capture>>,
+    /// The tool an MCP call called.
+    tool: Option<String>,
 }
 
 /// Rough tokens for a number of bytes of text, for when a provider reports no usage. About four
@@ -181,6 +185,7 @@ impl Tracker {
             stream_ended: false,
             guardrails: GuardrailCharge::default(),
             capture: None,
+            tool: None,
         }
     }
 
@@ -190,6 +195,11 @@ impl Tracker {
             c.guardrails(trace);
         }
         self.guardrails = charge;
+    }
+
+    /// The tool an MCP call calls.
+    pub fn tool(&mut self, name: &str) {
+        self.tool = Some(crate::util::truncate(name, 200));
     }
 
     /// Whether this call's bodies are logged.
@@ -340,6 +350,7 @@ impl Drop for Tracker {
             search_cost_usd: self.deployment.as_ref().map_or(0.0, |d| d.pricing.search_cost(&self.usage)),
             bodies: Logged(self.capture.take()),
             bodies_status: None,
+            tool: self.tool.take(),
         };
         telemetry::end_call(&self.cx, &rec, self.deployment.as_ref().map(|d| d.upstream_model.as_str()));
         if let Some((parent, decides_status)) = self.parent.take() {
@@ -482,6 +493,7 @@ impl Drop for Rollup {
             search_cost_usd: s.search_cost_usd,
             bodies: Logged(s.capture),
             bodies_status: None,
+            tool: None,
         };
         telemetry::end_call(&self.cx, &rec, None);
         if self.tx.try_send(rec).is_err() {

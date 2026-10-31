@@ -191,36 +191,41 @@ pub(crate) mod tests {
     use crate::model::{KeyScope, VirtualKey};
 
     /// A test state whose registry holds a key per `(secret, scope, enabled)`.
+    /// An enabled inference key without limits, outside projects.
+    pub(crate) fn key() -> VirtualKey {
+        VirtualKey {
+            id: uuid::Uuid::now_v7(),
+            name: "test".into(),
+            key_hash: Vec::new(),
+            key_prefix: String::new(),
+            scope: KeyScope::Inference,
+            project_id: None,
+            project_active: true,
+            allowed_models: vec![],
+            allowed_tags: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            max_budget_usd: None,
+            budget_period: None,
+            spend_usd: 0.0,
+            spend_reset_at: None,
+            enabled: true,
+            expires_at: None,
+            metadata: serde_json::json!({}),
+            guardrail_ids: Vec::new(),
+            web_search: true,
+            prompt_logging: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
     pub(crate) fn state_with_keys(keys: &[(&str, KeyScope, bool)]) -> crate::state::AppState {
         let state = crate::state::test_state();
         let mut snap = crate::registry::Snapshot::default();
         for (secret, scope, enabled) in keys {
             let hash = crate::util::sha256(secret.as_bytes());
-            let key = VirtualKey {
-                id: uuid::Uuid::now_v7(),
-                name: secret.to_string(),
-                key_hash: hash.to_vec(),
-                key_prefix: String::new(),
-                scope: *scope,
-                project_id: None,
-                project_active: true,
-                allowed_models: vec![],
-                allowed_tags: vec![],
-                rpm_limit: None,
-                tpm_limit: None,
-                max_budget_usd: None,
-                budget_period: None,
-                spend_usd: 0.0,
-                spend_reset_at: None,
-                enabled: *enabled,
-                expires_at: None,
-                metadata: serde_json::json!({}),
-                guardrail_ids: Vec::new(),
-                web_search: true,
-                prompt_logging: false,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            };
+            let key = VirtualKey { name: secret.to_string(), key_hash: hash.to_vec(), scope: *scope, enabled: *enabled, ..key() };
             snap.keys.insert(hash, std::sync::Arc::new(key));
         }
         state.registry.set_snapshot(snap);

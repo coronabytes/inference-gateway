@@ -386,6 +386,51 @@ export interface GuardrailTestResult {
   error?: string;
 }
 
+export type McpAuth = "none" | "bearer" | "header";
+
+/** An MCP server the gateway proxies at `/mcp/{name}` (`GET /mcp-servers`). */
+export interface McpServer {
+  id: string;
+  name: string;
+  description?: string;
+  url: string;
+  auth: McpAuth;
+  /** The header that carries the secret, for `header` auth. */
+  auth_header?: string;
+  /** Whether a secret is stored; the secret itself is never returned. */
+  has_secret: boolean;
+  tags: string[];
+  project_ids: string[];
+  timeout_secs: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface McpServerInput {
+  name: string;
+  description?: string;
+  url: string;
+  auth: McpAuth;
+  auth_header?: string;
+  /** Omitted on update: the stored secret stays. */
+  secret?: string;
+  tags: string[];
+  project_ids: string[];
+  timeout_secs: number;
+  enabled: boolean;
+}
+
+/** What `POST /mcp-servers/{id}/test` answers. */
+export interface McpServerTestResult {
+  ok: boolean;
+  latency_ms: number;
+  protocol_version?: string;
+  server_info?: { name?: string; version?: string };
+  tools: { name: string; description?: string }[];
+  error?: string;
+}
+
 export interface CredentialInput {
   name: string;
   provider?: Provider;
@@ -394,11 +439,12 @@ export interface CredentialInput {
   secrets: Secrets;
 }
 
-/** A tag and how many deployments, routers and keys carry it (`GET /tags`). */
+/** A tag and how many deployments, routers, MCP servers and keys carry it (`GET /tags`). */
 export interface TagInfo {
   tag: string;
   deployments: number;
   routers: number;
+  mcp_servers: number;
   keys: number;
 }
 
@@ -678,6 +724,8 @@ export interface LogRow {
   credential_name: string | null;
   /** The tools its response called, where its prompt and response are logged. */
   tool_calls: string[] | null;
+  /** The tool an MCP call (api `mcp`) called, on the server named by `model_name`. */
+  tool: string | null;
   api: string;
   stream: boolean;
   status_code: number;

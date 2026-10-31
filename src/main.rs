@@ -19,6 +19,7 @@ mod entra;
 mod error;
 mod ir;
 mod labels;
+mod mcp;
 mod model;
 mod netguard;
 mod openapi;
@@ -180,7 +181,8 @@ async fn run() -> Result<(), String> {
         .route("/v2/rerank", post(api::rerank::rerank))
         .route("/rerank", post(api::rerank::rerank))
         .route("/v1/models", get(api::models::list_models))
-        .route("/v1/models-extended", get(api::models::list_models_extended));
+        .route("/v1/models-extended", get(api::models::list_models_extended))
+        .route("/mcp/{server}", post(mcp::proxy).get(mcp::proxy).delete(mcp::proxy));
     if let Some(signals) = telemetry::describe() {
         tracing::info!(%signals, "exporting OpenTelemetry");
     }

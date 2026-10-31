@@ -29,6 +29,17 @@ pub async fn run() -> Result<(), String> {
         }
     }
     println!("credentials: {moved} re-encrypted, {kept} already under the current key");
+    let (mut moved, mut kept) = (0usize, 0usize);
+    for (id, name, sealed) in db::sealed_mcp_secrets(&mut *tx).await.map_err(pg)? {
+        match sb.reseal(&sealed).map_err(|e| format!("MCP server '{name}' ({id}): {e}"))? {
+            Some(v) => {
+                db::set_mcp_secret(&mut *tx, id, &v).await.map_err(pg)?;
+                moved += 1;
+            }
+            None => kept += 1,
+        }
+    }
+    println!("MCP servers: {moved} secrets re-encrypted, {kept} already under the current key");
     match db::sealed_oidc_client_secret(&mut *tx).await.map_err(pg)? {
         Some(sealed) => match sb.reseal(&sealed).map_err(|e| format!("OIDC client secret: {e}"))? {
             Some(v) => {

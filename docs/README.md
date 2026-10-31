@@ -8,6 +8,7 @@
 - [Keys and access control](access.md): virtual keys, budgets, projects, tags
 - [Auto routers](auto-routers.md): one model name that picks the right model per request
 - [Guardrails](guardrails.md): mask personal data and block prompt attacks
+- [MCP servers](mcp.md): MCP servers behind the same keys, with the servers' credentials kept in the gateway
 - [Monitoring](monitoring.md): metrics, request and audit logs, OpenTelemetry
 
 **Run it**

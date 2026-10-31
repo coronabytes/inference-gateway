@@ -239,7 +239,13 @@ impl Capture {
         // Search covers the request as the client sent it and the response, whatever the
         // guardrails did: a masked or blocked prompt is found by what it said. The masked request
         // is only stored.
-        let (tools, text) = index(request.as_ref().map(|(v, _)| v), response.as_ref().map(|(v, _)| v));
+        let (mut tools, text) = index(request.as_ref().map(|(v, _)| v), response.as_ref().map(|(v, _)| v));
+        // An MCP call is found by the tool its request names.
+        if self.api == "mcp"
+            && let Some(tool) = request.as_ref().and_then(|(v, _)| v.pointer("/params/name")).and_then(Value::as_str)
+        {
+            tools = vec![tool.to_string()];
+        }
         let responses = self.api == "responses";
         let previous_response_id = request
             .as_ref()

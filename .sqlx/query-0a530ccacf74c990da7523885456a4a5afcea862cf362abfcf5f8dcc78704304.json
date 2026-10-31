@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO mcp_servers (id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, created_at, updated_at)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bytea",
+        "TextArray",
+        "UuidArray",
+        "Int4",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0a530ccacf74c990da7523885456a4a5afcea862cf362abfcf5f8dcc78704304"
+}

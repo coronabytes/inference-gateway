@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "ui"],
       "port": 5173
+    },
+    {
+      "name": "mock-mcp",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dev/mock-mcp.mjs"],
+      "port": 9998
     }
   ]
 }

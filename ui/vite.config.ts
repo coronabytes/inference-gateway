@@ -9,6 +9,7 @@ export default defineConfig({
     proxy: {
       "/admin/api": gateway,
       "/v1": gateway,
+      "/mcp": gateway,
       "/admin/openapi.json": gateway,
       "/admin/docs": gateway,
     },

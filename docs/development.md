@@ -21,10 +21,12 @@ Debug builds serve no console of their own: Vite's dev server proxies the API to
 
 ```bash
 node dev/mock-upstream.mjs                       # fake OpenAI/Anthropic provider on :9999
+node dev/mock-mcp.mjs                            # fake MCP server on :9998
 docker compose --profile replicas up -d --build  # two more gateway replicas on :8081 and :8082
 ```
 
 - The **mock provider** runs on loopback, which the gateway refuses unless allowed: `.env.example` already sets `GATEWAY_UPSTREAM_ALLOWED_NETWORKS=127.0.0.0/8,::1`. It is also a Bedrock guardrail: a Bedrock credential with `http://127.0.0.1:9999` as its endpoint (any API key) and a guardrail on it mask e-mail addresses and the name "Ada Lovelace", flag "lottery" and "casino", and block "ignore previous instructions".
+- The **mock MCP server** answers at `http://127.0.0.1:9998/mcp` with the bearer token `mock-mcp-secret`, as JSON, or as server-sent events with `?sse` in the URL. Its tools are `echo`, `add`, `fail` (a tool error) and `slow`.
 - The **replicas** share Postgres and Valkey with the gateway you run locally, so you can watch configuration changes, rate limits and budgets propagate between instances.
 
 ## Tests

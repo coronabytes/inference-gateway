@@ -37,6 +37,7 @@ use crate::{
 
 pub(crate) mod guardrails;
 pub(crate) mod hub;
+pub(crate) mod mcp;
 pub(crate) mod transfer;
 
 type R<T> = Result<T, AdminError>;
@@ -57,6 +58,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/guardrails/prices", get(guardrails::list_prices))
         .route("/guardrails/{id}", axum::routing::put(guardrails::update_guardrail).delete(guardrails::delete_guardrail))
         .route("/guardrails/{id}/test", post(guardrails::test_guardrail))
+        .route("/mcp-servers", get(mcp::list_mcp_servers).post(mcp::create_mcp_server))
+        .route("/mcp-servers/{id}", axum::routing::put(mcp::update_mcp_server).delete(mcp::delete_mcp_server))
+        .route("/mcp-servers/{id}/test", post(mcp::test_mcp_server))
         .route("/routers", get(list_routers).post(create_router))
         .route("/routers/{id}", axum::routing::put(update_router).delete(delete_router))
         .route("/aliases", get(list_aliases).post(create_alias))
@@ -1637,15 +1641,19 @@ fn check_budget(limit: Option<f64>, period: Option<&str>) -> R<()> {
     }
 }
 
-/// Every tag on a deployment or router, with how many deployments and routers carry it.
-async fn known_tags(state: &AppState) -> R<BTreeMap<String, (usize, usize)>> {
-    let (deployments, routers) = tokio::try_join!(db::list_deployments(&state.db), db::list_routers(&state.db))?;
-    let mut tags: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+/// Every tag on a deployment, router or MCP server, with how many of each carry it.
+async fn known_tags(state: &AppState) -> R<BTreeMap<String, (usize, usize, usize)>> {
+    let (deployments, routers, servers) =
+        tokio::try_join!(db::list_deployments(&state.db), db::list_routers(&state.db), db::list_mcp_servers(&state.db))?;
+    let mut tags: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
     for t in deployments.into_iter().flat_map(|d| d.tags) {
         tags.entry(t).or_default().0 += 1;
     }
     for t in routers.into_iter().flat_map(|r| r.tags) {
         tags.entry(t).or_default().1 += 1;
+    }
+    for t in servers.into_iter().flat_map(|s| s.tags) {
+        tags.entry(t).or_default().2 += 1;
     }
     Ok(tags)
 }
@@ -1654,20 +1662,22 @@ async fn list_tags(State(state): State<AppState>, Extension(access): Extension<A
     let (tags, held) = tokio::try_join!(known_tags(&state), async { Ok(db::key_tag_counts(&state.db, access.projects()).await?) })?;
     // Tags only keys still hold, once nothing carries them any more, come last.
     let mut out: Vec<Value> =
-        tags.iter().map(|(tag, (d, r))| json!({ "tag": tag, "deployments": d, "routers": r, "keys": held.get(tag).copied().unwrap_or(0) })).collect();
+        tags.iter()
+            .map(|(tag, (d, r, m))| json!({ "tag": tag, "deployments": d, "routers": r, "mcp_servers": m, "keys": held.get(tag).copied().unwrap_or(0) }))
+            .collect();
     let mut orphans: Vec<(&String, &i64)> = held.iter().filter(|(t, _)| !tags.contains_key(*t)).collect();
     orphans.sort();
-    out.extend(orphans.into_iter().map(|(tag, n)| json!({ "tag": tag, "deployments": 0, "routers": 0, "keys": n })));
+    out.extend(orphans.into_iter().map(|(tag, n)| json!({ "tag": tag, "deployments": 0, "routers": 0, "mcp_servers": 0, "keys": n })));
     Ok(Json(json!(out)))
 }
 
-/// A key's tags, normalized. Keys only pick tags that deployments or routers define; tags a key
-/// already holds stay valid after the last one carrying them is gone.
+/// A key's tags, normalized. Keys only pick tags that deployments, routers or MCP servers define;
+/// tags a key already holds stay valid after the last one carrying them is gone.
 async fn key_tags(state: &AppState, wanted: Vec<String>, held: &[String]) -> R<Vec<String>> {
     let tags = normalize_tags(wanted).map_err(AdminError::bad_request)?;
     let known = known_tags(state).await?;
     if let Some(t) = tags.iter().find(|t| !known.contains_key(*t) && !held.contains(t)) {
-        return Err(AdminError::bad_request(format!("no deployment or router has the tag '{t}'; add tags on the Models page")));
+        return Err(AdminError::bad_request(format!("no deployment, router or MCP server has the tag '{t}'; add tags on the Models or Tools page")));
     }
     Ok(tags)
 }
@@ -2093,6 +2103,11 @@ async fn delete_project(State(state): State<AppState>, Extension(actor): Extensi
         let models = models.into_iter().collect::<Vec<_>>().join(", ");
         return Err(AdminError::conflict(format!("deployments of {models} are limited to this project; remove it from them first")));
     }
+    let servers: Vec<String> =
+        db::list_mcp_servers(&state.db).await?.into_iter().filter(|s| s.project_ids.contains(&id)).map(|s| s.name).collect();
+    if !servers.is_empty() {
+        return Err(AdminError::conflict(format!("MCP servers {} are limited to this project; remove it from them first", servers.join(", "))));
+    }
     let keys = db::delete_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     // Replicas reload their keys so the deleted ones stop working there too.
     if !keys.is_empty() {
@@ -2327,7 +2342,8 @@ pub(crate) struct LogQuery {
     /// Just the requests whose stored prompt (after guardrails) or response contains these words:
     /// `"a phrase"`, `or`, `-word` and `prefix:*` work as in Postgres' `websearch_to_tsquery`.
     q: Option<String>,
-    /// Just the requests whose stored response called this tool (`web_search` for web searches).
+    /// Just the requests whose stored response called this tool (`web_search` for web searches),
+    /// and the MCP calls of a tool of this name.
     tool: Option<String>,
     /// Just the requests the guardrails did any of these to, as `blocked,masked`: `passed`,
     /// `flagged`, `masked` or `blocked`.

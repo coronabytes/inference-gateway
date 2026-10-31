@@ -34,6 +34,8 @@ pub struct Snapshot {
     pub projects: HashMap<Uuid, Arc<ProjectRow>>,
     /// Guardrails by name, ready to call.
     pub guardrails: BTreeMap<String, Arc<crate::guardrails::Active>>,
+    /// Enabled MCP servers by name, ready to call.
+    pub mcp_servers: HashMap<String, Arc<crate::mcp::McpServer>>,
     pub loaded_at: Option<DateTime<Utc>>,
     pub errors: Vec<String>,
 }
@@ -64,14 +66,15 @@ impl Registry {
     }
 
     pub async fn reload(&self, pool: &sqlx::PgPool, cfg: &Config) -> Result<(), sqlx::Error> {
-        let (rows, creds, keys, routers, aliases, projects, guardrails) = tokio::try_join!(
+        let (rows, creds, keys, routers, aliases, projects, guardrails, mcp_servers) = tokio::try_join!(
             db::list_deployments(pool),
             db::list_credentials(pool),
             db::list_keys(pool),
             db::list_routers(pool),
             db::list_aliases(pool),
             db::list_project_rows(pool),
-            db::list_guardrails(pool)
+            db::list_guardrails(pool),
+            db::list_mcp_servers(pool)
         )?;
         // Decrypt each credential once, however many deployments share it.
         let creds: HashMap<Uuid, Result<ResolvedCredential, String>> =
@@ -153,6 +156,17 @@ impl Registry {
                 Err(e) => {
                     let e = format!("guardrail {} ({}): {e}", g.id, g.name);
                     tracing::error!(error = %e, "skipping misconfigured guardrail");
+                    snap.errors.push(e);
+                }
+            }
+        }
+        for s in mcp_servers.into_iter().filter(|s| s.enabled) {
+            match crate::mcp::McpServer::build(s, &cfg.secret_box) {
+                Ok(s) => {
+                    snap.mcp_servers.insert(s.name.clone(), Arc::new(s));
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "skipping misconfigured MCP server");
                     snap.errors.push(e);
                 }
             }

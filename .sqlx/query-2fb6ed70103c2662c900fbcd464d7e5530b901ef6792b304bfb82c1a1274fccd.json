@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, secret AS \"secret!\" FROM mcp_servers WHERE secret IS NOT NULL FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "secret!",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "secret"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "2fb6ed70103c2662c900fbcd464d7e5530b901ef6792b304bfb82c1a1274fccd"
+}

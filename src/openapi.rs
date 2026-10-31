@@ -36,12 +36,14 @@ use utoipa::{
     paths(
         paths::chat_completions, paths::responses, paths::messages, paths::count_tokens, paths::embeddings,
         paths::rerank, paths::decisions, paths::systemone, paths::list_models, paths::list_models_extended,
+        paths::mcp_post, paths::mcp_get, paths::mcp_delete,
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
         paths::get_oidc_settings, paths::put_oidc_settings, paths::test_oidc_settings, paths::list_admins, paths::delete_admin, paths::set_admin_projects,
         paths::list_credentials, paths::create_credential, paths::update_credential, paths::delete_credential, paths::foundry_deployments, paths::bedrock_models, paths::aws_regions,
         paths::list_guardrails, paths::create_guardrail, paths::update_guardrail, paths::delete_guardrail, paths::test_guardrail,
         paths::guardrail_prices,
+        paths::list_mcp_servers, paths::create_mcp_server, paths::update_mcp_server, paths::delete_mcp_server, paths::test_mcp_server,
         paths::list_deployments, paths::create_deployment, paths::get_deployment, paths::update_deployment,
         paths::delete_deployment, paths::test_deployment, paths::clear_cooldown,
         paths::list_routers, paths::create_router, paths::update_router, paths::delete_router,
@@ -66,6 +68,7 @@ use utoipa::{
         (name = "Auto routers", description = "Model names that pick one of several chat models per request."),
         (name = "Model aliases", description = "Model names that serve another model, which they follow when it is renamed."),
         (name = "Guardrails", description = "Provider guardrails that mask or block what prompts and responses must not contain."),
+        (name = "MCP", description = "MCP servers behind the gateway: one key for every server, the servers' credentials kept in the gateway."),
         (name = "Virtual keys", description = "Keys for apps and people, with limits, budgets and access tags, and the projects that group them."),
         (name = "Configuration", description = "Tags, and exporting and importing the configuration."),
         (name = "Model hub", description = "The models a key may use, with their limits, prices and guardrails, and the models' metadata."),
@@ -407,6 +410,8 @@ mod schemas {
         deployments: usize,
         /// Auto routers carrying the tag.
         routers: usize,
+        /// MCP servers carrying the tag.
+        mcp_servers: usize,
         /// Keys holding the tag (for a user, their projects' keys).
         keys: usize,
     }
@@ -609,6 +614,48 @@ mod paths {
         ),
         security(("virtual_key" = []), ("virtual_key_header" = [])))]
     fn list_models_extended() {}
+
+    const MCP_SESSION: &str = "The session the server opened, as the gateway handed it out with `initialize`'s answer. It only works \n        with the key that opened it; an unknown one is answered with `404`, after which the client starts a new session.";
+
+    /// MCP: send messages
+    ///
+    /// The MCP server named `server`, over Streamable HTTP: JSON-RPC messages as the MCP specification \n    /// describes them, forwarded as they are, with the gateway's credentials for the server. The answer is \n    /// JSON or server-sent events, as the server chooses. Each `tools/call` is an entry in the request log \n    /// (api `mcp`) and counts against the key's limits and budgets.
+    #[utoipa::path(post, path = "/mcp/{server}", tag = "MCP", request_body(content = Object, content_type = "application/json"),
+        responses(
+            (status = 200, description = "The server's answer.", content((Object = "application/json"), (String = "text/event-stream"))),
+            (status = 202, description = "Accepted: notifications and responses have no answer."),
+            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+            (status = 404, description = "No such server for this key, or an unknown session.", body = OpenAiError),
+            (status = 429, description = "A rate limit or the key's budget, for a tool call; see `Retry-After`.", body = OpenAiError),
+            (status = 502, description = "The server failed, or refused the gateway's credentials.", body = OpenAiError),
+        ),
+        params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = MCP_SESSION),
+            ("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_post() {}
+
+    /// MCP: listen
+    ///
+    /// The server's own messages to the client, as server-sent events, where the server offers them.
+    #[utoipa::path(get, path = "/mcp/{server}", tag = "MCP",
+        responses(
+            (status = 200, description = "The server's messages.", content((String = "text/event-stream"))),
+            (status = 405, description = "The server does not offer this stream."),
+            (status = 404, description = "No such server for this key, or an unknown session.", body = OpenAiError),
+        ),
+        params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = MCP_SESSION)),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_get() {}
+
+    /// MCP: end session
+    #[utoipa::path(delete, path = "/mcp/{server}", tag = "MCP",
+        responses(
+            (status = 200, description = "The session ended."),
+            (status = 404, description = "No such server for this key, or an unknown session.", body = OpenAiError),
+        ),
+        params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = MCP_SESSION)),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_delete() {}
 
     // ------------------------------------------------------------ health
 
@@ -816,6 +863,60 @@ mod paths {
         responses((status = 200, description = "The regions.", body = Vec<crate::aws::AwsRegion>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn aws_regions() {}
+
+    // ------------------------------------------------------------ MCP servers
+
+    /// List MCP servers
+    #[utoipa::path(get, path = "/admin/api/mcp-servers", tag = "MCP",
+        responses((status = 200, description = "The MCP servers.", body = Vec<admin::mcp::McpServerView>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn list_mcp_servers() {}
+
+    /// Create MCP server
+    ///
+    /// An upstream MCP server, proxied at `/mcp/{name}`.
+    #[utoipa::path(post, path = "/admin/api/mcp-servers", tag = "MCP", request_body = admin::mcp::McpServerInput,
+        responses(
+            (status = 201, description = "The new MCP server.", body = admin::mcp::McpServerView),
+            (status = 400, description = "Invalid MCP server.", body = AdminError),
+            (status = 409, description = "The name is taken.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn create_mcp_server() {}
+
+    /// Update MCP server
+    ///
+    /// Without a secret, the stored secret stays.
+    #[utoipa::path(put, path = "/admin/api/mcp-servers/{id}", tag = "MCP", params(("id" = Uuid, Path)),
+        request_body = admin::mcp::McpServerInput,
+        responses(
+            (status = 200, description = "The MCP server.", body = admin::mcp::McpServerView),
+            (status = 400, description = "Invalid MCP server.", body = AdminError),
+            (status = 404, description = "No such MCP server.", body = AdminError),
+            (status = 409, description = "The name is taken.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn update_mcp_server() {}
+
+    /// Delete MCP server
+    #[utoipa::path(delete, path = "/admin/api/mcp-servers/{id}", tag = "MCP", params(("id" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Deleted."),
+            (status = 404, description = "No such MCP server.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn delete_mcp_server() {}
+
+    /// Test MCP server
+    ///
+    /// Connects as a client would, also while the server is disabled, and lists its tools. Nothing is \n    /// logged or charged to a key.
+    #[utoipa::path(post, path = "/admin/api/mcp-servers/{id}/test", tag = "MCP", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The server's tools, or why it could not be used with `ok: false`.", body = admin::mcp::McpServerTestResult),
+            (status = 404, description = "No such MCP server.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn test_mcp_server() {}
 
     // ------------------------------------------------------------ guardrails
 
@@ -1158,8 +1259,8 @@ mod paths {
 
     /// List tags
     ///
-    /// Every tag on deployments and routers, and those keys still hold, with how many of each
-    /// carry it.
+    /// Every tag on deployments, routers and MCP servers, and those keys still hold, with how many
+    /// of each carry it.
     #[utoipa::path(get, path = "/admin/api/tags", tag = "Configuration",
         responses((status = 200, description = "The tags.", body = Vec<TagUsage>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
