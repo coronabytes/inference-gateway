@@ -35,7 +35,7 @@ fn guardrail_names(ids: &[Uuid], guardrails: &[GuardrailRow]) -> Vec<String> {
 
 /// Guardrail ids by name; each must exist, in the file or on this gateway.
 fn guardrail_ids(names: &[String], guardrails: &[GuardrailRow], what: &str) -> R<Vec<Uuid>> {
-    let mut ids = Vec::with_capacity(names.len());
+    let mut ids = Vec::new();
     for name in names.iter().map(|n| n.trim()) {
         let g = guardrails
             .iter()

@@ -118,7 +118,7 @@ pub(super) fn check(i: ToolRouterInput, servers: &[(Uuid, &str)], is_decision_mo
     if !(1..=MAX_ROUTES).contains(&i.routes.len()) {
         return Err(AdminError::bad_request(format!("a tool router has 1 to {MAX_ROUTES} routes")));
     }
-    let mut routes = Vec::with_capacity(i.routes.len());
+    let mut routes = Vec::new();
     for r in i.routes {
         let route_name = r.name.trim().to_string();
         let ok = (1..=64).contains(&route_name.len()) && route_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');

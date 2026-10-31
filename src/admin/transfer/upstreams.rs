@@ -34,7 +34,7 @@ fn yes() -> bool {
 
 /// Project ids by name, for a document's `projects`; each must exist, in the file or on this gateway.
 fn project_ids(names: &[String], projects: &[ProjectRow], what: &str) -> R<Vec<Uuid>> {
-    let mut ids = Vec::with_capacity(names.len());
+    let mut ids = Vec::new();
     for name in names.iter().map(|n| n.trim()) {
         let p = projects
             .iter()
@@ -409,7 +409,7 @@ pub(super) fn import_tool_routers(docs: Vec<ToolRouterDoc>, routers: &mut Vec<To
     let is_decision_model = |m: &str| deployments.iter().any(|d| d.model_name == m && d.mode == "decision");
     for d in docs {
         let what = format!("tool router '{}'", d.name.trim());
-        let mut routes = Vec::with_capacity(d.routes.len());
+        let mut routes = Vec::new();
         for r in &d.routes {
             let server = by_name
                 .get(r.server.trim())
