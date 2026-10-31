@@ -94,18 +94,26 @@ fn enabled() -> bool {
 
 /// Checks an input and builds the row it describes.
 async fn row(state: &AppState, i: ToolRouterInput, existing: Option<&ToolRouterRow>) -> R<ToolRouterRow> {
+    let servers = db::list_mcp_servers(&state.db).await?;
+    let servers: Vec<(Uuid, &str)> = servers.iter().map(|s| (s.id, s.name.as_str())).collect();
+    check(i, &servers, |m| crate::api::deployments_for(state, m, Mode::Decision).is_ok(), existing)
+}
+
+/// Checks an input against the MCP servers (id and name) and decision models there are, and
+/// builds the row it describes.
+pub(super) fn check(i: ToolRouterInput, servers: &[(Uuid, &str)], is_decision_model: impl Fn(&str) -> bool, existing: Option<&ToolRouterRow>) -> R<ToolRouterRow> {
     let name = check_name(&i.name, "tool router")?;
     if name.contains(SEPARATOR) {
         return Err(AdminError::bad_request(format!("the tool router's name cannot contain {SEPARATOR}")));
     }
-    let servers = db::list_mcp_servers(&state.db).await?;
-    if servers.iter().any(|s| s.name == name) {
+    if servers.iter().any(|s| s.1 == name) {
         return Err(AdminError::conflict("an MCP server has this name: requests could not tell them apart"));
     }
     let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     let decision_model = i.decision_model.trim().to_string();
-    crate::api::deployments_for(state, &decision_model, Mode::Decision)
-        .map_err(|_| AdminError::bad_request(format!("'{decision_model}' is not a decision model")))?;
+    if !is_decision_model(&decision_model) {
+        return Err(AdminError::bad_request(format!("'{decision_model}' is not a decision model")));
+    }
     let instructions = i.instructions.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     if !(1..=MAX_ROUTES).contains(&i.routes.len()) {
         return Err(AdminError::bad_request(format!("a tool router has 1 to {MAX_ROUTES} routes")));
@@ -124,7 +132,7 @@ async fn row(state: &AppState, i: ToolRouterInput, existing: Option<&ToolRouterR
         if description.is_empty() {
             return Err(AdminError::bad_request(format!("route {route_name} needs a description: the decision model picks routes by it")));
         }
-        if !servers.iter().any(|s| s.id == r.server_id) {
+        if !servers.iter().any(|s| s.0 == r.server_id) {
             return Err(AdminError::bad_request(format!("route {route_name}: no such MCP server")));
         }
         let mut tools: Vec<String> = Vec::new();

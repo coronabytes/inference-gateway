@@ -1021,6 +1021,13 @@ tr.clickable:hover td { background: var(--wash); }
 .transfer-summary { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .transfer-summary details ul { margin: 6px 0 4px; padding-left: 18px; }
 .transfer-summary summary { cursor: pointer; }
+/* Backup & Restore: a switch per section, then per section what an import does (ConfigTransfer.tsx). */
+.transfer-head { margin: 6px 0 0; font-size: 13px; font-weight: 600; }
+.transfer-sections { display: flex; flex-wrap: wrap; gap: 8px; }
+.transfer-table { max-width: 640px; }
+.transfer-unfold { background: none; border: 0; padding: 0; font: inherit; color: var(--link); cursor: pointer; }
+.transfer-names ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.transfer-secrets { margin: 0; padding-left: 18px; }
 
 /* Dropdown with search (SearchSelect): drawn by the app, so it matches when open */
 .select { position: relative; display: inline-block; }

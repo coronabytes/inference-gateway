@@ -108,20 +108,28 @@ pub(crate) struct A2aAgentInput {
     enabled: bool,
 }
 
+/// Headers the gateway passes on to A2A agents itself: no secret goes in them.
+pub(super) const A2A_RESERVED: [&str; 3] = ["a2a-version", "a2a-extensions", "x-a2a-extensions"];
+
 fn enabled() -> bool {
     true
+}
+
+/// An agent card's URL; one without a path gets `/.well-known/agent-card.json`.
+pub(super) fn check_card_url(state: &AppState, url: &str) -> R<String> {
+    let mut card_url = check_url(state, url)?;
+    if reqwest::Url::parse(&card_url).is_ok_and(|u| u.path() == "/" && u.query().is_none()) {
+        card_url = format!("{}/.well-known/agent-card.json", card_url.trim_end_matches('/'));
+    }
+    Ok(card_url)
 }
 
 /// Checks an input and builds the row it describes; `existing` keeps its secret when none is given.
 async fn row(state: &AppState, i: A2aAgentInput, existing: Option<&A2aAgentRow>) -> R<A2aAgentRow> {
     let name = check_name(&i.name, "agent")?;
     let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
-    let mut card_url = check_url(state, &i.card_url)?;
-    if reqwest::Url::parse(&card_url).is_ok_and(|u| u.path() == "/" && u.query().is_none()) {
-        card_url = format!("{}/.well-known/agent-card.json", card_url.trim_end_matches('/'));
-    }
-    let reserved = ["a2a-version", "a2a-extensions", "x-a2a-extensions"];
-    let auth = check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), i.oauth, existing.and_then(|e| e.secret.as_deref()), &reserved)?;
+    let card_url = check_card_url(state, &i.card_url)?;
+    let auth = check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), i.oauth, existing.and_then(|e| e.secret.as_deref()), &A2A_RESERVED)?;
     let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;
     let project_ids = check_projects(state, i.project_ids).await?;
     let timeout_secs = i.timeout_secs.unwrap_or(existing.map_or(600, |e| e.timeout_secs));

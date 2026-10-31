@@ -1288,7 +1288,7 @@ pub async fn get_project(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Project
 
 /// Creates the project or updates its name, description, state and budget. Spend resets go
 /// through `reset_project_spend`.
-pub async fn upsert_project(pool: &PgPool, p: &ProjectRow) -> sqlx::Result<()> {
+pub async fn upsert_project(db: impl PgExecutor<'_>, p: &ProjectRow) -> sqlx::Result<()> {
     sqlx::query!(
         "INSERT INTO projects (id, name, description, enabled, max_budget_usd, budget_period, guardrail_ids, web_search, prompt_logging,
              created_at, updated_at)
@@ -1307,7 +1307,7 @@ pub async fn upsert_project(pool: &PgPool, p: &ProjectRow) -> sqlx::Result<()> {
         p.prompt_logging.as_str(),
         p.created_at,
     )
-    .execute(pool)
+    .execute(db)
     .await?;
     Ok(())
 }
@@ -1460,7 +1460,7 @@ pub async fn get_key(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<VirtualKey>
     .await
 }
 
-pub async fn insert_key(pool: &PgPool, k: &VirtualKey) -> sqlx::Result<()> {
+pub async fn insert_key(db: impl PgExecutor<'_>, k: &VirtualKey) -> sqlx::Result<()> {
     sqlx::query!(
         "INSERT INTO virtual_keys (id, name, key_hash, key_prefix, allowed_models, allowed_tags, rpm_limit, tpm_limit,
              max_budget_usd, budget_period, spend_usd, enabled, expires_at, metadata, scope, project_id, guardrail_ids, web_search,
@@ -1485,7 +1485,7 @@ pub async fn insert_key(pool: &PgPool, k: &VirtualKey) -> sqlx::Result<()> {
         k.web_search,
         k.prompt_logging,
     )
-    .execute(pool)
+    .execute(db)
     .await?;
     Ok(())
 }

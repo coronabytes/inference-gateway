@@ -427,6 +427,8 @@ mod schemas {
     pub struct ImportChanges {
         created: Vec<String>,
         updated: Vec<String>,
+        /// Entries of the file that match one here that is already the same.
+        unchanged: usize,
     }
 
     #[derive(Serialize, ToSchema)]
@@ -434,15 +436,23 @@ mod schemas {
         dry_run: bool,
         credentials: ImportChanges,
         guardrails: ImportChanges,
+        projects: ImportChanges,
         deployments: ImportChanges,
         routers: ImportChanges,
         aliases: ImportChanges,
-        /// Keys whose allowed models follow a renamed model (only `updated`).
+        /// The file's keys, and keys whose allowed models follow a renamed model.
         keys: ImportChanges,
         /// Models whose metadata the file sets, or that takes a renamed model's along.
         model_metadata: ImportChanges,
+        mcp_servers: ImportChanges,
+        a2a_agents: ImportChanges,
+        tool_routers: ImportChanges,
         /// New credentials that need their secrets entered before their deployments work.
         needs_secrets: Vec<String>,
+        /// New MCP servers that work once their secret is entered.
+        mcp_servers_need_secrets: Vec<String>,
+        /// New A2A agents that work once their secret is entered.
+        a2a_agents_need_secrets: Vec<String>,
     }
 
     #[derive(Serialize, ToSchema)]
@@ -1573,8 +1583,8 @@ mod paths {
 
     /// Export configuration
     ///
-    /// Credentials come without their secrets.
-    #[utoipa::path(get, path = "/admin/api/config/export", tag = "Configuration",
+    /// Credentials, MCP servers and A2A agents come without their secrets; keys with the hash of \n    /// theirs, never the secret itself.
+    #[utoipa::path(get, path = "/admin/api/config/export", tag = "Configuration", params(admin::transfer::ExportQuery),
         responses((status = 200, description = "The configuration.", body = admin::transfer::Document)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn export_config() {}

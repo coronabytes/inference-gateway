@@ -274,6 +274,34 @@ pub(super) async fn check_projects(state: &AppState, mut project_ids: Vec<Uuid>)
     Ok(project_ids)
 }
 
+/// A server's tool filters, sorted and deduplicated, and its prices, checked.
+pub(super) fn check_tools(allowed: Vec<String>, denied: Vec<String>, price_per_call: f64, tool_prices: &BTreeMap<String, f64>) -> R<(Vec<String>, Vec<String>)> {
+    // Tool names as servers give them: case matters; at most 128 characters, without control characters.
+    let tool_name = |t: &str| (1..=128).contains(&t.len()) && !t.chars().any(char::is_control);
+    let tool_list = |list: Vec<String>, what: &str| -> R<Vec<String>> {
+        let mut list: Vec<String> = list.into_iter().map(|t| t.trim().to_string()).collect();
+        if let Some(bad) = list.iter().find(|t| !tool_name(t)) {
+            return Err(AdminError::bad_request(format!("'{bad}' in {what} is not a tool name")));
+        }
+        list.sort();
+        list.dedup();
+        Ok(list)
+    };
+    let allowed = tool_list(allowed, "allowed_tools")?;
+    let denied = tool_list(denied, "denied_tools")?;
+    let price = |p: f64| p.is_finite() && p >= 0.0;
+    if !price(price_per_call) || !tool_prices.values().all(|p| price(*p)) {
+        return Err(AdminError::bad_request("prices are zero or more USD"));
+    }
+    if let Some(bad) = tool_prices.keys().find(|t| !tool_name(t)) {
+        return Err(AdminError::bad_request(format!("'{bad}' in tool_prices is not a tool name")));
+    }
+    Ok((allowed, denied))
+}
+
+/// Headers the gateway sets itself on MCP requests: no secret goes in them.
+pub(super) const MCP_RESERVED: [&str; 5] = ["mcp-session-id", "mcp-protocol-version", "last-event-id", "mcp-method", "mcp-name"];
+
 /// Checks an input and builds the row it describes; `existing` keeps its secret when none is given.
 async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow>) -> R<McpServerRow> {
     let name = check_name(&i.name, "server")?;
@@ -286,34 +314,14 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
     }
     let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     let url = check_url(state, &i.url)?;
-    let reserved = ["mcp-session-id", "mcp-protocol-version", "last-event-id", "mcp-method", "mcp-name"];
-    let auth = check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), i.oauth, existing.and_then(|e| e.secret.as_deref()), &reserved)?;
+    let auth = check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), i.oauth, existing.and_then(|e| e.secret.as_deref()), &MCP_RESERVED)?;
     let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;
     let project_ids = check_projects(state, i.project_ids).await?;
     let timeout_secs = i.timeout_secs.unwrap_or(existing.map_or(300, |e| e.timeout_secs));
     if !(1..=3600).contains(&timeout_secs) {
         return Err(AdminError::bad_request("the timeout is 1 to 3600 seconds"));
     }
-    // Tool names as servers give them: case matters; at most 128 characters, without control characters.
-    let tool_name = |t: &str| (1..=128).contains(&t.len()) && !t.chars().any(char::is_control);
-    let tool_list = |list: Vec<String>, what: &str| -> R<Vec<String>> {
-        let mut list: Vec<String> = list.into_iter().map(|t| t.trim().to_string()).collect();
-        if let Some(bad) = list.iter().find(|t| !tool_name(t)) {
-            return Err(AdminError::bad_request(format!("'{bad}' in {what} is not a tool name")));
-        }
-        list.sort();
-        list.dedup();
-        Ok(list)
-    };
-    let allowed_tools = tool_list(i.allowed_tools, "allowed_tools")?;
-    let denied_tools = tool_list(i.denied_tools, "denied_tools")?;
-    let price = |p: f64| p.is_finite() && p >= 0.0;
-    if !price(i.price_per_call) || !i.tool_prices.values().all(|p| price(*p)) {
-        return Err(AdminError::bad_request("prices are zero or more USD"));
-    }
-    if let Some(bad) = i.tool_prices.keys().find(|t| !tool_name(t)) {
-        return Err(AdminError::bad_request(format!("'{bad}' in tool_prices is not a tool name")));
-    }
+    let (allowed_tools, denied_tools) = check_tools(i.allowed_tools, i.denied_tools, i.price_per_call, &i.tool_prices)?;
     let now = Utc::now();
     Ok(McpServerRow {
         id: existing.map_or_else(Uuid::now_v7, |e| e.id),
