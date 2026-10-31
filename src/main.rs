@@ -23,6 +23,7 @@ mod labels;
 mod mcp;
 mod model;
 mod netguard;
+mod oauth;
 mod openapi;
 mod prices;
 mod providers;
@@ -153,6 +154,7 @@ async fn run() -> Result<(), String> {
         records: tx,
         mcp: mcp::Upstreams::default(),
         a2a: a2a::Cards::default(),
+        oauth: oauth::Tokens::default(),
         bodies: capture::Budget::new(prompt_log_buffer),
         started: Instant::now(),
         started_at: chrono::Utc::now(),

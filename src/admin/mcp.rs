@@ -18,6 +18,7 @@ use crate::{
     db,
     error::AdminError,
     mcp::{McpAuth, McpServer, McpServerRow, ProbedTool, hub::SEPARATOR},
+    oauth::OAuthConfig,
     model::normalize_tags,
     state::AppState,
     sync::broadcast_reload,
@@ -35,6 +36,9 @@ pub(crate) struct McpServerView {
     auth_header: Option<String>,
     /// Whether a secret is stored. The secret itself is never returned.
     has_secret: bool,
+    /// The OAuth client, for `oauth` and `oauth_user` auth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth: Option<OAuthConfig>,
     tags: Vec<String>,
     project_ids: Vec<Uuid>,
     timeout_secs: i32,
@@ -60,6 +64,7 @@ fn view(s: McpServerRow) -> McpServerView {
         auth: McpAuth::parse(&s.auth).unwrap_or(McpAuth::None),
         auth_header: s.auth_header,
         has_secret: s.secret.is_some(),
+        oauth: s.oauth.map(|o| o.0),
         tags: s.tags,
         project_ids: s.project_ids,
         timeout_secs: s.timeout_secs,
@@ -86,10 +91,13 @@ pub(crate) struct McpServerInput {
     /// The header that carries the secret, for `header` auth.
     #[serde(default)]
     auth_header: Option<String>,
-    /// The token or API key the gateway sends, for `bearer` and `header` auth. Write-only; omitted
-    /// on an update, the server keeps its secret.
+    /// The token or API key the gateway sends, for `bearer` and `header` auth, or the OAuth client's
+    /// secret. Write-only; omitted on an update, the server keeps its secret.
     #[serde(default)]
     secret: Option<String>,
+    /// The OAuth client, for `oauth` and `oauth_user` auth.
+    #[serde(default)]
+    oauth: Option<OAuthConfig>,
     /// A key with tags may only use untagged servers and those sharing a tag with it.
     #[serde(default)]
     tags: Vec<String>,
@@ -148,16 +156,93 @@ pub(super) fn check_url(state: &AppState, url: &str) -> R<String> {
     Ok(url)
 }
 
-/// How the gateway signs in to an upstream: the header name, for `header` auth, and the sealed
-/// secret, which is `existing`'s when no new one is given. `reserved` are headers the gateway sets.
+/// How the gateway signs in to an upstream, as checked: the header name, for `header` auth, the
+/// sealed secret, and the OAuth client.
+pub(super) struct CheckedAuth {
+    pub header: Option<String>,
+    pub secret: Option<Vec<u8>>,
+    pub oauth: Option<sqlx::types::Json<OAuthConfig>>,
+}
+
+/// How the gateway signs in to an upstream. The secret is `existing`'s when no new one is given;
+/// `reserved` are headers the gateway sets.
 pub(super) fn check_auth(
     state: &AppState,
     auth: McpAuth,
     header: Option<&str>,
     secret: Option<&str>,
+    oauth: Option<OAuthConfig>,
     existing: Option<&[u8]>,
     reserved: &[&str],
-) -> R<(Option<String>, Option<Vec<u8>>)> {
+) -> R<CheckedAuth> {
+    let oauth = match auth {
+        McpAuth::OAuth | McpAuth::OAuthUser => Some(sqlx::types::Json(check_oauth(state, auth, oauth)?)),
+        _ if oauth.is_some() => return Err(AdminError::bad_request("an OAuth client only applies to OAuth authentication")),
+        _ => None,
+    };
+    // A public client (PKCE, no secret) keeps none.
+    let public = oauth.as_ref().is_some_and(|o| o.token_auth.as_deref() == Some("none"));
+    let secret = match (auth, secret.map(str::trim)) {
+        (McpAuth::None, _) => None,
+        _ if public => None,
+        (_, Some(s)) if !s.is_empty() => {
+            if HeaderValue::from_str(s).is_err() {
+                return Err(AdminError::bad_request("the secret must be printable characters without line breaks"));
+            }
+            Some(state.cfg.secret_box.seal(s.as_bytes()))
+        }
+        // Signing in per key works without a client secret, where the server registered a public client.
+        (McpAuth::OAuthUser, _) => existing.map(<[u8]>::to_vec),
+        _ => Some(existing.map(<[u8]>::to_vec).ok_or_else(|| AdminError::bad_request("the secret is required for this authentication"))?),
+    };
+    let header = check_header(auth, header, reserved)?;
+    Ok(CheckedAuth { header, secret, oauth })
+}
+
+/// An OAuth client: URLs the gateway may reach, a client id, and what signing keys in needs.
+fn check_oauth(state: &AppState, auth: McpAuth, oauth: Option<OAuthConfig>) -> R<OAuthConfig> {
+    let o = oauth.ok_or_else(|| AdminError::bad_request("OAuth needs its client: token URL and client id"))?;
+    let token_url = check_url(state, &o.token_url).map_err(|e| AdminError::bad_request(format!("token URL: {}", e.1)))?;
+    let optional_url = |u: Option<String>, what: &str| -> R<Option<String>> {
+        match u.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+            Some(u) => check_url(state, u).map(Some).map_err(|e| AdminError::bad_request(format!("{what}: {}", e.1))),
+            None => Ok(None),
+        }
+    };
+    let authorization_url = optional_url(o.authorization_url, "authorization URL")?;
+    if auth == McpAuth::OAuthUser && authorization_url.is_none() {
+        return Err(AdminError::bad_request("signing keys in needs the authorization URL"));
+    }
+    let client_id = o.client_id.trim().to_string();
+    if client_id.is_empty() || client_id.len() > 500 {
+        return Err(AdminError::bad_request("the client id is required"));
+    }
+    let mut scopes: Vec<String> = o.scopes.iter().flat_map(|s| s.split_whitespace()).map(str::to_string).collect();
+    scopes.dedup();
+    if let Some(m) = o.token_auth.as_deref().filter(|m| !matches!(*m, "client_secret_basic" | "client_secret_post" | "none")) {
+        return Err(AdminError::bad_request(format!("'{m}' is not a token authentication: use client_secret_basic, client_secret_post or none")));
+    }
+    // The resource and the redirect URI are compared as given, so only checked to be URLs.
+    let url = |u: Option<String>, what: &str| -> R<Option<String>> {
+        match u.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+            Some(u) if reqwest::Url::parse(u).is_ok() => Ok(Some(u.to_string())),
+            Some(_) => Err(AdminError::bad_request(format!("the {what} is not a valid URL"))),
+            None => Ok(None),
+        }
+    };
+    Ok(OAuthConfig {
+        token_url,
+        authorization_url,
+        client_id,
+        scopes,
+        resource: url(o.resource, "resource")?,
+        redirect_uri: url(o.redirect_uri, "redirect URI")?,
+        token_auth: o.token_auth,
+    })
+}
+
+/// The header name, for `header` auth.
+fn check_header(auth: McpAuth, header: Option<&str>, reserved: &[&str]) -> R<Option<String>> {
     let auth_header = match auth {
         McpAuth::Header => {
             let h = header.map(str::trim).unwrap_or_default().to_ascii_lowercase();
@@ -174,17 +259,7 @@ pub(super) fn check_auth(
         }
         _ => None,
     };
-    let secret = match (auth, secret.map(str::trim)) {
-        (McpAuth::None, _) => None,
-        (_, Some(s)) if !s.is_empty() => {
-            if HeaderValue::from_str(s).is_err() {
-                return Err(AdminError::bad_request("the secret must be printable characters without line breaks"));
-            }
-            Some(state.cfg.secret_box.seal(s.as_bytes()))
-        }
-        _ => Some(existing.map(<[u8]>::to_vec).ok_or_else(|| AdminError::bad_request("the secret is required for this authentication"))?),
-    };
-    Ok((auth_header, secret))
+    Ok(auth_header)
 }
 
 /// Projects, sorted and deduplicated, each of which must exist.
@@ -209,8 +284,7 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
     let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     let url = check_url(state, &i.url)?;
     let reserved = ["mcp-session-id", "mcp-protocol-version", "last-event-id", "mcp-method", "mcp-name"];
-    let (auth_header, secret) =
-        check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), existing.and_then(|e| e.secret.as_deref()), &reserved)?;
+    let auth = check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), i.oauth, existing.and_then(|e| e.secret.as_deref()), &reserved)?;
     let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;
     let project_ids = check_projects(state, i.project_ids).await?;
     let timeout_secs = i.timeout_secs.unwrap_or(existing.map_or(300, |e| e.timeout_secs));
@@ -244,8 +318,9 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
         description,
         url,
         auth: i.auth.as_str().to_string(),
-        auth_header,
-        secret,
+        auth_header: auth.header,
+        secret: auth.secret,
+        oauth: auth.oauth,
         tags,
         project_ids,
         timeout_secs,

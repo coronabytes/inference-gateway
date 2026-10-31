@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type McpAuth, type McpServer, type McpServerInput, type McpServerTestResult, type NamedItem, type TagInfo } from "../api";
+import { api, type McpServer, type McpServerInput, type McpServerTestResult, type NamedItem, type TagInfo } from "../api";
 import { Button, MenuButton, MultiSelect, PageActions, Segmented, Switch, TextInput, Toggle } from "../components/controls";
 import { TagEditor, TagList } from "../components/Tags";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, ms, usd } from "../format";
+import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState } from "./UpstreamAuth";
 
-const AUTH_LABEL: Record<McpAuth, string> = { none: "None", bearer: "Bearer token", header: "Header" };
 
 /** Where clients reach one server through the gateway, or every server with no name. */
 const endpoint = (name?: string) => `${location.origin}/mcp${name ? `/${name}` : ""}`;
@@ -20,6 +20,7 @@ const toInput = (s: McpServer): McpServerInput => ({
   url: s.url,
   auth: s.auth,
   auth_header: s.auth_header,
+  oauth: s.oauth,
   tags: s.tags,
   project_ids: s.project_ids,
   timeout_secs: s.timeout_secs,
@@ -227,9 +228,7 @@ function McpServerForm({
   const [name, setName] = useState(initial?.name ?? (copyOf ? `${copyOf.name}-copy` : ""));
   const [description, setDescription] = useState(from?.description ?? "");
   const [url, setUrl] = useState(from?.url ?? "");
-  const [auth, setAuth] = useState<McpAuth>(from?.auth ?? "bearer");
-  const [authHeader, setAuthHeader] = useState(from?.auth_header ?? "x-api-key");
-  const [secret, setSecret] = useState("");
+  const [auth, setAuth] = useState<AuthState>(authState(from));
   const [tags, setTags] = useState<string[]>(from?.tags ?? []);
   const [projectIds, setProjectIds] = useState<string[]>(from?.project_ids ?? []);
   const [timeout, setTimeoutSecs] = useState(String(from?.timeout_secs ?? 300));
@@ -239,13 +238,13 @@ function McpServerForm({
   const [busy, setBusy] = useState(false);
 
   // A stored secret stays unless a new one is typed; a duplicate has none.
-  const keepsSecret = !!initial?.has_secret && initial.auth !== "none";
+  const keepsSecret = !!initial?.has_secret;
   const timeoutSecs = Number(timeout);
   const badTimeout = !Number.isInteger(timeoutSecs) || timeoutSecs < 1 || timeoutSecs > 3600;
   const pricePerCall = price.trim() ? Number(price) : 0;
   const badPrice = !Number.isFinite(pricePerCall) || pricePerCall < 0;
   const missing =
-    !name.trim() || !url.trim() || badTimeout || badPrice || (auth !== "none" && !secret.trim() && !keepsSecret) || (auth === "header" && !authHeader.trim());
+    !name.trim() || !url.trim() || badTimeout || badPrice || authMissing(auth, keepsSecret);
 
   const submit = async () => {
     setBusy(true);
@@ -254,9 +253,7 @@ function McpServerForm({
         name: name.trim(),
         description: description.trim() || undefined,
         url: url.trim(),
-        auth,
-        ...(auth === "header" && { auth_header: authHeader.trim() }),
-        ...(auth !== "none" && secret.trim() && { secret: secret.trim() }),
+        ...authInput(auth),
         tags,
         project_ids: projectIds,
         timeout_secs: timeoutSecs,
@@ -310,36 +307,7 @@ function McpServerForm({
           placeholder="https://mcp.example.com/mcp"
           required
         />
-        <Segmented
-          caption="Authentication"
-          hint="How the gateway signs in to the server. Clients never see this secret: they authenticate to the gateway with their virtual key."
-          options={(["none", "bearer", "header"] as const).map((value) => ({ value, label: AUTH_LABEL[value] }))}
-          value={auth}
-          onChange={setAuth}
-        />
-        {auth === "header" && (
-          <TextInput
-            caption="Header"
-            hint="The header the server reads its API key from."
-            mono
-            value={authHeader}
-            onChange={(e) => setAuthHeader(e.target.value)}
-            placeholder="x-api-key"
-            required
-          />
-        )}
-        {auth !== "none" && (
-          <TextInput
-            caption={auth === "bearer" ? "Token" : "API key"}
-            hint={auth === "bearer" ? "Sent as Authorization: Bearer followed by the token. Stored encrypted." : "Sent as the header's value. Stored encrypted."}
-            secret
-            mono
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder={keepsSecret ? "unchanged" : ""}
-            required={!keepsSecret}
-          />
-        )}
+        <AuthFields kind="mcp" url={url} value={auth} onChange={setAuth} keepsSecret={keepsSecret} />
         <TagEditor
           caption="Tags"
           hint={

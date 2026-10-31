@@ -39,6 +39,7 @@ pub(crate) mod a2a;
 pub(crate) mod guardrails;
 pub(crate) mod hub;
 pub(crate) mod mcp;
+pub(crate) mod oauth;
 pub(crate) mod transfer;
 
 type R<T> = Result<T, AdminError>;
@@ -62,6 +63,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/mcp-servers", get(mcp::list_mcp_servers).post(mcp::create_mcp_server))
         .route("/mcp-servers/{id}", axum::routing::put(mcp::update_mcp_server).delete(mcp::delete_mcp_server))
         .route("/mcp-servers/{id}/test", post(mcp::test_mcp_server))
+        .route("/oauth/discover", post(oauth::discover))
+        .route("/keys/{id}/connections", get(oauth::list_connections))
+        .route("/keys/{id}/connections/{kind}/{upstream}", post(oauth::connect).delete(oauth::disconnect))
         .route("/a2a-agents", get(a2a::list_a2a_agents).post(a2a::create_a2a_agent))
         .route("/a2a-agents/{id}", axum::routing::put(a2a::update_a2a_agent).delete(a2a::delete_a2a_agent))
         .route("/a2a-agents/{id}/test", post(a2a::test_a2a_agent))

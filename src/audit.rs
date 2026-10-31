@@ -39,6 +39,12 @@ impl Actor {
     pub fn system() -> Self {
         Self { kind: "system", id: None, name: Some("Gateway".into()) }
     }
+
+    /// An actor kept between requests by its parts, such as during an upstream sign-in.
+    pub fn restore(kind: &str, id: Option<Uuid>, name: Option<String>) -> Self {
+        let kind = ["master_key", "virtual_key", "session", "dev"].into_iter().find(|k| *k == kind).unwrap_or("system");
+        Self { kind, id, name }
+    }
 }
 
 /// One entry, built up and then recorded: `Event::new("key", "create").on(id, name).record(..)`.

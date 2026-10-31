@@ -23,6 +23,8 @@ pub struct Inner {
     pub mcp: crate::mcp::Upstreams,
     /// A2A agents' cards, for `/a2a`.
     pub a2a: crate::a2a::Cards,
+    /// Upstream OAuth tokens in memory.
+    pub oauth: crate::oauth::Tokens,
     /// Memory for logged prompts and responses until they are written.
     pub bodies: crate::capture::Budget,
     pub started: Instant,
@@ -101,6 +103,7 @@ fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Send
         records,
         mcp: crate::mcp::Upstreams::default(),
         a2a: crate::a2a::Cards::default(),
+        oauth: crate::oauth::Tokens::default(),
         bodies: crate::capture::Budget::new(1 << 20),
         started: Instant::now(),
         started_at: chrono::Utc::now(),

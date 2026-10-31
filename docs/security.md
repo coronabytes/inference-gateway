@@ -2,7 +2,7 @@
 
 How the gateway protects credentials, data and itself. To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
-- **Secrets.** Provider, MCP server and A2A agent secrets are only entered through the console or admin API, encrypted at rest (AES-256-GCM) and never returned. Virtual keys are stored as hashes.
+- **Secrets.** Provider, MCP server and A2A agent secrets (and keys' upstream OAuth tokens) are only entered through the console or admin API, encrypted at rest (AES-256-GCM) and never returned. Virtual keys are stored as hashes.
 - **No prompt storage by default.** Prompts and responses are not logged, in the request log or in telemetry, unless [prompt logging](#prompt-logging) is turned on for a key. Otherwise the only content kept is the encrypted, expiring history for `previous_response_id`, and none at all with `store: false`. A guardrail sends the prompt's text to its provider; the request log keeps only the kinds of things it found.
 - **Outbound connections.** The gateway connects only to public addresses unless you allow more (`GATEWAY_UPSTREAM_ALLOWED_NETWORKS`), never follows redirects, and always blocks cloud metadata addresses. A Google service account file cannot send its credentials anywhere but Google.
 - **Console.** Admin sessions use secure, HTTP-only cookies with CSRF protection, and single sign-on uses PKCE. Security headers (CSP, frame and referrer policies) are set on every response.

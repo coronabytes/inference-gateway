@@ -40,6 +40,7 @@ use crate::{
     error::{Dialect, ErrorKind, GatewayError},
     labels::Labels,
     model::VirtualKey,
+    oauth::{Kind, OAuthConfig, UpstreamAuth},
     sse::SseParser,
     state::AppState,
 };
@@ -55,6 +56,8 @@ pub struct McpServerRow {
     pub auth_header: Option<String>,
     /// Sealed with the gateway's encryption key.
     pub secret: Option<Vec<u8>>,
+    /// The OAuth client, for `oauth` and `oauth_user`.
+    pub oauth: Option<sqlx::types::Json<OAuthConfig>>,
     pub tags: Vec<String>,
     pub project_ids: Vec<Uuid>,
     pub timeout_secs: i32,
@@ -67,7 +70,7 @@ pub struct McpServerRow {
     pub updated_at: DateTime<Utc>,
 }
 
-/// How the gateway authenticates to an MCP server.
+/// How the gateway authenticates to an upstream: an MCP server or an A2A agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum McpAuth {
@@ -77,6 +80,12 @@ pub enum McpAuth {
     Bearer,
     /// The secret as the value of a header of the server's choice, such as `X-API-Key`.
     Header,
+    /// OAuth tokens the gateway gets with its own client credentials.
+    #[serde(rename = "oauth")]
+    OAuth,
+    /// OAuth tokens each key gets by signing in, in the console.
+    #[serde(rename = "oauth_user")]
+    OAuthUser,
 }
 
 impl McpAuth {
@@ -85,6 +94,8 @@ impl McpAuth {
             "none" => Some(Self::None),
             "bearer" => Some(Self::Bearer),
             "header" => Some(Self::Header),
+            "oauth" => Some(Self::OAuth),
+            "oauth_user" => Some(Self::OAuthUser),
             _ => None,
         }
     }
@@ -94,6 +105,8 @@ impl McpAuth {
             Self::None => "none",
             Self::Bearer => "bearer",
             Self::Header => "header",
+            Self::OAuth => "oauth",
+            Self::OAuthUser => "oauth_user",
         }
     }
 }
@@ -103,8 +116,8 @@ pub struct McpServer {
     pub id: Uuid,
     pub name: String,
     pub url: String,
-    /// The header carrying the gateway's secret, and its value.
-    auth: Option<(HeaderName, HeaderValue)>,
+    /// How the gateway authenticates to the server.
+    pub auth: UpstreamAuth,
     pub tags: Vec<String>,
     pub project_ids: Vec<Uuid>,
     /// For a POST's answer, streamed or not. A client's GET stream stays open as long as both
@@ -121,7 +134,8 @@ pub struct McpServer {
 impl McpServer {
     pub fn build(row: McpServerRow, sb: &SecretBox) -> Result<Self, String> {
         let ctx = |e: String| format!("MCP server {} ({}): {e}", row.id, row.name);
-        let auth = auth_header(&row.auth, row.auth_header.as_deref(), row.secret.as_deref(), sb).map_err(ctx)?;
+        let oauth = row.oauth.as_ref().map(|o| &o.0);
+        let auth = UpstreamAuth::build(Kind::Mcp, row.id, &row.name, &row.auth, row.auth_header.as_deref(), row.secret.as_deref(), oauth, sb).map_err(ctx)?;
         Ok(Self {
             id: row.id,
             name: row.name,
@@ -162,32 +176,6 @@ impl McpServer {
 pub fn open_to(key: &VirtualKey, project_ids: &[Uuid], tags: &[String]) -> bool {
     let in_project = project_ids.is_empty() || key.project_id.is_some_and(|p| project_ids.contains(&p));
     in_project && key.holds_all(tags)
-}
-
-/// The header carrying the gateway's secret for an upstream (an MCP server, an A2A agent), from its
-/// stored `auth`, header name and sealed secret.
-pub fn auth_header(auth: &str, header: Option<&str>, sealed: Option<&[u8]>, sb: &SecretBox) -> Result<Option<(HeaderName, HeaderValue)>, String> {
-    let auth = McpAuth::parse(auth).ok_or("unknown auth")?;
-    let secret = match sealed {
-        Some(sealed) => Some(String::from_utf8(sb.open(sealed)?).map_err(|_| "corrupt secret")?),
-        None => None,
-    };
-    let invalid = || "the secret is not a valid header value".to_string();
-    Ok(match (auth, secret) {
-        (McpAuth::None, _) => None,
-        (_, None) => return Err("its secret is missing".into()),
-        (McpAuth::Bearer, Some(s)) => Some((header::AUTHORIZATION, sensitive(&format!("Bearer {s}")).ok_or_else(invalid)?)),
-        (McpAuth::Header, Some(s)) => {
-            let name = header.and_then(|h| HeaderName::try_from(h).ok()).ok_or("invalid auth header")?;
-            Some((name, sensitive(&s).ok_or_else(invalid)?))
-        }
-    })
-}
-
-fn sensitive(v: &str) -> Option<HeaderValue> {
-    let mut v = HeaderValue::from_str(v).ok()?;
-    v.set_sensitive(true);
-    Some(v)
 }
 
 /// Headers of the client's request the server gets, with the `Mcp-Param-*` ones (SEP-2243);
@@ -263,29 +251,41 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
         return Err(e);
     }
 
-    let mut req = state.http.request(method.clone(), &server.url);
-    for (h, v) in headers {
-        if FORWARDED.contains(&h.as_str()) || h.as_str().starts_with(FORWARDED_PREFIX) {
+    let send = async |auth: Option<(HeaderName, HeaderValue)>| {
+        let mut req = state.http.request(method.clone(), &server.url);
+        for (h, v) in headers {
+            if FORWARDED.contains(&h.as_str()) || h.as_str().starts_with(FORWARDED_PREFIX) {
+                req = req.header(h, v);
+            }
+        }
+        if let Some(s) = session {
+            req = req.header(SESSION, s);
+        }
+        if let Some((h, v)) = auth {
             req = req.header(h, v);
         }
-    }
-    if let Some(s) = session {
-        req = req.header(SESSION, s);
-    }
-    if let Some((h, v)) = &server.auth {
-        req = req.header(h, v);
-    }
-    if method == Method::POST {
-        req = req.timeout(server.timeout).body(body);
-    }
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let e = GatewayError::from_reqwest(&e);
-            calls.fail(&e);
-            return Err(e);
+        if method == Method::POST {
+            req = req.timeout(server.timeout).body(body.clone());
         }
+        req.send().await.map_err(|e| GatewayError::from_reqwest(&e))
     };
+    let auth = server.auth.header(state, Some(key.id)).await.map_err(|e| {
+        let e = e.into_gateway();
+        calls.fail(&e);
+        e
+    })?;
+    let mut resp = send(auth).await;
+    // A token the server refuses is renewed, once.
+    if server.auth.renews() && resp.as_ref().is_ok_and(|r| r.status() == StatusCode::UNAUTHORIZED) {
+        server.auth.renew(state, Some(key.id)).await;
+        let auth = server.auth.header(state, Some(key.id)).await.map_err(|e| {
+            let e = e.into_gateway();
+            calls.fail(&e);
+            e
+        })?;
+        resp = send(auth).await;
+    }
+    let resp = resp.inspect_err(|e| calls.fail(e))?;
     let status = resp.status();
     if matches!(status.as_u16(), 401 | 403) {
         tracing::warn!(server = %server.name, status = status.as_u16(), "MCP server refused the gateway's credentials");
@@ -636,10 +636,18 @@ struct Session {
     /// None when the server keeps no sessions.
     id: Option<String>,
     version: Option<String>,
+    /// The header the gateway authenticates with.
+    auth: Option<(HeaderName, HeaderValue)>,
 }
 
-/// Opens a session with the server, as a client would.
-async fn open(state: &AppState, server: &McpServer) -> Result<(Session, Value), RpcError> {
+/// Why `/mcp` cannot list a server's tools for a key.
+pub enum ToolsError {
+    Auth(crate::oauth::AuthError),
+    Failed(String),
+}
+
+/// Opens a session with the server, as a client would, with `auth` as the gateway's credentials.
+async fn open(state: &AppState, server: &McpServer, auth: Option<(HeaderName, HeaderValue)>) -> Result<(Session, Value), RpcError> {
     state.cfg.upstream_policy.check_url(&server.url).map_err(|why| RpcError::other(format!("the address is not allowed: {why}")))?;
     let init = json!({
         "jsonrpc": "2.0", "id": 0, "method": "initialize",
@@ -649,10 +657,10 @@ async fn open(state: &AppState, server: &McpServer) -> Result<(Session, Value), 
             "clientInfo": { "name": "inference-gateway", "version": crate::VERSION },
         },
     });
-    let (id, reply) = rpc(state, server, &Session { id: None, version: None }, &init).await?;
+    let (id, reply) = rpc(state, server, &Session { id: None, version: None, auth: auth.clone() }, &init).await?;
     let result = reply.get("result").cloned().ok_or_else(|| RpcError::other("initialize did not succeed"))?;
     let version = result.get("protocolVersion").and_then(Value::as_str).map(str::to_string);
-    let session = Session { id, version };
+    let session = Session { id, version, auth };
     rpc(state, server, &session, &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).await?;
     Ok((session, result))
 }
@@ -682,7 +690,7 @@ async fn tools(state: &AppState, server: &McpServer, session: &Session) -> Resul
 async fn close(state: &AppState, server: &McpServer, session: &Session) {
     let Some(id) = &session.id else { return };
     let mut req = state.http.delete(&server.url).header(SESSION, id).timeout(Duration::from_secs(10));
-    if let Some((h, v)) = &server.auth {
+    if let Some((h, v)) = &session.auth {
         req = req.header(h, v);
     }
     let _ = req.send().await;
@@ -690,7 +698,14 @@ async fn close(state: &AppState, server: &McpServer, session: &Session) {
 
 /// Opens a session with the server, as a client would, lists its tools and closes the session.
 pub async fn probe(state: &AppState, server: &McpServer) -> Result<Probe, String> {
-    let (session, result) = open(state, server).await.map_err(|e| e.message)?;
+    let auth = match server.auth.header(state, None).await {
+        Ok(a) => a,
+        Err(crate::oauth::AuthError::NotConnected(_)) => {
+            return Err("each key signs in to this server on its own; sign a key in on the Access page, then call the server with it".into());
+        }
+        Err(e) => return Err(e.message()),
+    };
+    let (session, result) = open(state, server, auth).await.map_err(|e| e.message)?;
     let listed = tools(state, server, &session).await;
     close(state, server, &session).await;
     let tools = listed
@@ -739,7 +754,7 @@ async fn rpc(state: &AppState, server: &McpServer, session: &Session, msg: &Valu
     if let Some(v) = &session.version {
         req = req.header("mcp-protocol-version", v);
     }
-    if let Some((h, v)) = &server.auth {
+    if let Some((h, v)) = &session.auth {
         req = req.header(h, v);
     }
     let failed = |e: reqwest::Error| RpcError::other(format!("{method}: {}", GatewayError::from_reqwest(&e).message));
@@ -787,26 +802,44 @@ async fn rpc(state: &AppState, server: &McpServer, session: &Session, msg: &Valu
 #[derive(Default)]
 pub struct Upstreams {
     sessions: std::sync::Mutex<HashMap<(Uuid, Uuid), (Session, Instant)>>,
-    tools: std::sync::Mutex<HashMap<Uuid, (Arc<McpServer>, Instant, Arc<Vec<Value>>)>>,
+    /// By server, and by key where each key signs in on its own.
+    tools: std::sync::Mutex<HashMap<(Uuid, Option<Uuid>), (Arc<McpServer>, Instant, Arc<Vec<Value>>)>>,
 }
 
 const SESSION_IDLE: Duration = Duration::from_secs(600);
 const TOOLS_FRESH: Duration = Duration::from_secs(60);
 
 impl Upstreams {
-    /// The server's tools as it lists them, unfiltered.
-    pub async fn tools(&self, state: &AppState, server: &Arc<McpServer>) -> Result<Arc<Vec<Value>>, String> {
-        if let Some((s, at, tools)) = self.tools.lock().expect("tools lock").get(&server.id)
+    /// The server's tools as it lists them for `key`, unfiltered.
+    pub async fn tools(&self, state: &AppState, server: &Arc<McpServer>, key: Uuid) -> Result<Arc<Vec<Value>>, ToolsError> {
+        let slot = (server.id, server.auth.per_key().then_some(key));
+        if let Some((s, at, tools)) = self.tools.lock().expect("tools lock").get(&slot)
             && Arc::ptr_eq(s, server)
             && at.elapsed() < TOOLS_FRESH
         {
             return Ok(tools.clone());
         }
-        let (session, _) = open(state, server).await.map_err(|e| e.message)?;
-        let listed = tools(state, server, &session).await;
-        close(state, server, &session).await;
-        let listed = Arc::new(listed.map_err(|e| e.message)?);
-        self.tools.lock().expect("tools lock").insert(server.id, (server.clone(), Instant::now(), listed.clone()));
+        let mut renewed = false;
+        let listed = loop {
+            let auth = server.auth.header(state, Some(key)).await.map_err(ToolsError::Auth)?;
+            let result = match open(state, server, auth).await {
+                Ok((session, _)) => {
+                    let listed = tools(state, server, &session).await;
+                    close(state, server, &session).await;
+                    listed
+                }
+                Err(e) => Err(e),
+            };
+            match result {
+                Err(RpcError { status: Some(401), .. }) if server.auth.renews() && !renewed => {
+                    server.auth.renew(state, Some(key)).await;
+                    renewed = true;
+                }
+                other => break other.map_err(|e| ToolsError::Failed(e.message))?,
+            }
+        };
+        let listed = Arc::new(listed);
+        self.tools.lock().expect("tools lock").insert(slot, (server.clone(), Instant::now(), listed.clone()));
         Ok(listed)
     }
 
@@ -820,14 +853,22 @@ impl Upstreams {
             sessions.get(&slot).map(|(s, _)| s.clone())
         };
         let reused = cached.is_some();
+        // The token may have been renewed since the session was opened.
+        let auth = server.auth.header(state, Some(key)).await.map_err(|e| e.message())?;
         let mut session = match cached {
-            Some(s) => s,
-            None => open(state, server).await.map_err(|e| e.message)?.0,
+            Some(s) => Session { auth: auth.clone(), ..s },
+            None => open(state, server, auth).await.map_err(|e| e.message)?.0,
         };
         let mut result = rpc(state, server, &session, msg).await;
-        // A server that restarted, or ended the session, answers 404: start a new one, once.
-        if reused && matches!(result, Err(RpcError { status: Some(404), .. })) {
-            session = open(state, server).await.map_err(|e| e.message)?.0;
+        // A server that restarted, or ended the session, answers 404: start a new one, once. One
+        // that refuses the token gets a renewed one, once.
+        let refused = matches!(result, Err(RpcError { status: Some(401), .. })) && server.auth.renews();
+        if (reused && matches!(result, Err(RpcError { status: Some(404), .. }))) || refused {
+            if refused {
+                server.auth.renew(state, Some(key)).await;
+            }
+            let auth = server.auth.header(state, Some(key)).await.map_err(|e| e.message())?;
+            session = open(state, server, auth).await.map_err(|e| e.message)?.0;
             result = rpc(state, server, &session, msg).await;
         }
         self.sessions.lock().expect("sessions lock").insert(slot, (session, Instant::now()));
@@ -855,7 +896,7 @@ mod tests {
     }
 
     pub(super) fn server(id: Uuid) -> McpServer {
-        McpServer { id, name: "s".into(), url: "http://x".into(), auth: None, tags: vec![], project_ids: vec![], timeout: Duration::from_secs(1),
+        McpServer { id, name: "s".into(), url: "http://x".into(), auth: UpstreamAuth::None, tags: vec![], project_ids: vec![], timeout: Duration::from_secs(1),
             allowed_tools: vec![], denied_tools: vec![], price_per_call: 0.0, tool_prices: BTreeMap::new() }
     }
 
@@ -929,7 +970,7 @@ mod tests {
         let mut snap = crate::registry::Snapshot::default();
         let key = VirtualKey { key_hash: crate::util::sha256(b"sk-gw-client").to_vec(), ..crate::auth::tests::key() };
         snap.keys.insert(crate::util::sha256(b"sk-gw-client"), Arc::new(key));
-        let auth = Some((header::AUTHORIZATION, HeaderValue::from_static("Bearer upstream-secret")));
+        let auth = UpstreamAuth::Static(header::AUTHORIZATION, HeaderValue::from_static("Bearer upstream-secret"));
         let server = McpServer {
             name: "tools".into(),
             url,
@@ -1014,7 +1055,7 @@ mod tests {
         let key = VirtualKey { key_hash: crate::util::sha256(b"sk-gw-client").to_vec(), ..crate::auth::tests::key() };
         snap.keys.insert(crate::util::sha256(b"sk-gw-client"), Arc::new(key));
         for (name, url) in [("tools", url.clone()), ("events", format!("{url}?sse"))] {
-            let auth = Some((header::AUTHORIZATION, HeaderValue::from_static("Bearer upstream-secret")));
+            let auth = UpstreamAuth::Static(header::AUTHORIZATION, HeaderValue::from_static("Bearer upstream-secret"));
             snap.mcp_servers.insert(name.into(), Arc::new(McpServer { name: name.into(), url, auth, ..server(Uuid::now_v7()) }));
         }
         state.registry.set_snapshot(snap);

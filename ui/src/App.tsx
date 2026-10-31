@@ -63,7 +63,8 @@ const MOVED: Record<string, string> = {
 
 /** The page in the address (`#/page` or `#/page/tab`). */
 function currentPage(): PageId {
-  const h = window.location.hash.replace(/^#\/?/, "");
+  // A page may take parameters after it: `#/page?name=value`.
+  const h = window.location.hash.replace(/^#\/?/, "").split("?")[0];
   if (h in MOVED) window.history.replaceState(null, "", `#/${MOVED[h]}`);
   const page = (MOVED[h] ?? h).split("/")[0];
   return (page in PAGES ? page : "metrics") as PageId;

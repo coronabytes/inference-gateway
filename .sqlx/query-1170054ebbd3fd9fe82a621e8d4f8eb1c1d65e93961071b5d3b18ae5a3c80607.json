@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message, enabled,\n                created_at, updated_at\n         FROM a2a_agents WHERE id = $1",
+  "query": "SELECT id, name, description, card_url, auth, auth_header, secret, oauth AS \"oauth: Json<OAuthConfig>\", tags, project_ids, timeout_secs,\n                  price_per_message, enabled, created_at, updated_at\n           FROM a2a_agents WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,17 @@
       },
       {
         "ordinal": 7,
+        "name": "oauth: Json<OAuthConfig>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "a2a_agents",
+            "name": "oauth"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "tags",
         "type_info": "TextArray",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "project_ids",
         "type_info": "UuidArray",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "timeout_secs",
         "type_info": "Int4",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "price_per_message",
         "type_info": "Float8",
         "origin": {
@@ -125,7 +136,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -136,7 +147,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -147,7 +158,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -171,6 +182,7 @@
       false,
       true,
       true,
+      true,
       false,
       false,
       false,
@@ -180,5 +192,5 @@
       false
     ]
   },
-  "hash": "deb28ef5f5f3260487ac957045d664731c05319d1a9f185b18b518c4423c8416"
+  "hash": "1170054ebbd3fd9fe82a621e8d4f8eb1c1d65e93961071b5d3b18ae5a3c80607"
 }

@@ -16,6 +16,7 @@ import {
 } from "../api";
 import { Banner, Button, MenuButton, MultiSelect, PageActions, Select, Tabs, TextInput, Toggle, useDebounced, useHashTab } from "../components/controls";
 import { GuardrailList, TagList, TagPicker } from "../components/Tags";
+import { KeySignIns, takeSignInResult } from "./KeySignIns";
 import {
   Badge,
   BudgetMeter,
@@ -27,6 +28,7 @@ import {
   Modal,
   PauseIcon,
   PlayIcon,
+  PlugIcon,
   ResetIcon,
   optInt,
   optNum,
@@ -102,6 +104,9 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   const [editing, setEditing] = useState<Editing | null>(null);
   const [issued, setIssued] = useState<{ title: string; key: string } | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
+  const [signIns, setSignIns] = useState<VirtualKey | null>(null);
+  // A key's sign-in to an MCP server or A2A agent comes back here.
+  const [signedIn, setSignedIn] = useState(takeSignInResult);
   const [editingProject, setEditingProject] = useState<Project | "new" | null>(null);
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
@@ -335,6 +340,9 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
           >
             {k.enabled ? <PauseIcon /> : <PlayIcon />}
           </IconButton>
+          <IconButton label={`Sign-ins of ${k.name}`} title="Sign-ins to MCP servers and A2A agents" onClick={() => setSignIns(k)}>
+            <PlugIcon />
+          </IconButton>
           <IconButton
             label={`Regenerate ${k.name}`}
             title="Regenerate key"
@@ -401,6 +409,12 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
         />
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      {signedIn && (
+        <Banner tone={signedIn.tone} onDismiss={() => setSignedIn(null)}>
+          {signedIn.message}
+        </Banner>
+      )}
+      {signIns && <KeySignIns keyItem={signIns} onClose={() => setSignIns(null)} />}
       {projects.length > 0 && groups.length > 0 ? (
         groups.map((g) => (
           // An inactive project's keys are refused; its card shows them greyed out.

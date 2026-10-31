@@ -22,12 +22,13 @@ use rmcp::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use super::{Calls, McpServer};
+use super::{Calls, McpServer, ToolsError};
 use crate::{
     auth::{self, ClientKey},
     error::{Dialect, GatewayError},
     labels::Labels,
     model::VirtualKey,
+    oauth::AuthError,
     state::AppState,
 };
 
@@ -107,13 +108,19 @@ impl ServerHandler for Hub {
     async fn list_tools(&self, _request: Option<PaginatedRequestParams>, ctx: RequestContext<RoleServer>) -> Result<ListToolsResult, ErrorData> {
         let Caller { state, key, .. } = caller(&ctx)?;
         let servers = servers(&state, &key);
-        let lists = futures::future::join_all(servers.iter().map(|s| state.mcp.tools(&state, s))).await;
+        let lists = futures::future::join_all(servers.iter().map(|s| state.mcp.tools(&state, s, key.id))).await;
         let mut tools = Vec::new();
         for (server, listed) in servers.iter().zip(lists) {
-            // A server that cannot be reached leaves its tools out, rather than failing the others'.
+            // A server that cannot be reached leaves its tools out, rather than failing the others',
+            // and so does one the key has not signed in to yet.
             let listed = match listed {
                 Ok(l) => l,
-                Err(e) => {
+                Err(ToolsError::Auth(AuthError::NotConnected(_))) => continue,
+                Err(ToolsError::Auth(e)) => {
+                    tracing::warn!(server = %server.name, error = %e.message(), "MCP server's tools left out of /mcp");
+                    continue;
+                }
+                Err(ToolsError::Failed(e)) => {
                     tracing::warn!(server = %server.name, error = %e, "MCP server's tools left out of /mcp");
                     continue;
                 }

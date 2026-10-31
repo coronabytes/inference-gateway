@@ -20,6 +20,7 @@ use crate::{
     db,
     error::AdminError,
     mcp::McpAuth,
+    oauth::OAuthConfig,
     model::normalize_tags,
     state::AppState,
     sync::broadcast_reload,
@@ -37,6 +38,9 @@ pub(crate) struct A2aAgentView {
     auth_header: Option<String>,
     /// Whether a secret is stored. The secret itself is never returned.
     has_secret: bool,
+    /// The OAuth client, for `oauth` and `oauth_user` auth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth: Option<OAuthConfig>,
     tags: Vec<String>,
     project_ids: Vec<Uuid>,
     timeout_secs: i32,
@@ -56,6 +60,7 @@ fn view(a: A2aAgentRow) -> A2aAgentView {
         auth: McpAuth::parse(&a.auth).unwrap_or(McpAuth::None),
         auth_header: a.auth_header,
         has_secret: a.secret.is_some(),
+        oauth: a.oauth.map(|o| o.0),
         tags: a.tags,
         project_ids: a.project_ids,
         timeout_secs: a.timeout_secs,
@@ -80,10 +85,13 @@ pub(crate) struct A2aAgentInput {
     /// The header that carries the secret, for `header` auth.
     #[serde(default)]
     auth_header: Option<String>,
-    /// The token or API key the gateway sends, for `bearer` and `header` auth. Write-only; omitted
-    /// on an update, the agent keeps its secret.
+    /// The token or API key the gateway sends, for `bearer` and `header` auth, or the OAuth client's
+    /// secret. Write-only; omitted on an update, the agent keeps its secret.
     #[serde(default)]
     secret: Option<String>,
+    /// The OAuth client, for `oauth` and `oauth_user` auth.
+    #[serde(default)]
+    oauth: Option<OAuthConfig>,
     /// A key with tags may only use untagged agents and those sharing a tag with it.
     #[serde(default)]
     tags: Vec<String>,
@@ -113,8 +121,7 @@ async fn row(state: &AppState, i: A2aAgentInput, existing: Option<&A2aAgentRow>)
         card_url = format!("{}/.well-known/agent-card.json", card_url.trim_end_matches('/'));
     }
     let reserved = ["a2a-version", "a2a-extensions", "x-a2a-extensions"];
-    let (auth_header, secret) =
-        check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), existing.and_then(|e| e.secret.as_deref()), &reserved)?;
+    let auth = check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), i.oauth, existing.and_then(|e| e.secret.as_deref()), &reserved)?;
     let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;
     let project_ids = check_projects(state, i.project_ids).await?;
     let timeout_secs = i.timeout_secs.unwrap_or(existing.map_or(600, |e| e.timeout_secs));
@@ -131,8 +138,9 @@ async fn row(state: &AppState, i: A2aAgentInput, existing: Option<&A2aAgentRow>)
         description,
         card_url,
         auth: i.auth.as_str().to_string(),
-        auth_header,
-        secret,
+        auth_header: auth.header,
+        secret: auth.secret,
+        oauth: auth.oauth,
         tags,
         project_ids,
         timeout_secs,
@@ -217,7 +225,7 @@ pub(crate) async fn test_a2a_agent(State(state): State<AppState>, Path(id): Path
     let row = db::get_a2a_agent(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     let agent = A2aAgent::build(row, &state.cfg.secret_box).map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let started = std::time::Instant::now();
-    let result = crate::a2a::fetch_card(&state, &agent).await;
+    let result = crate::a2a::fetch_card(&state, &agent, None).await;
     let latency_ms = started.elapsed().as_millis() as u64;
     Ok(Json(match result {
         Ok(card) => A2aAgentTestResult { ok: true, latency_ms, card: Some(card.summary()), error: None },

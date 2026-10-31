@@ -21,6 +21,7 @@ On **Tools → New MCP server**:
    - **Bearer token** sends `Authorization: Bearer <token>`.
    - **Header** sends the key in a header of your choice, such as `x-api-key`.
    - **None** is for servers that need no credentials.
+   - **OAuth**: the gateway's own client, or each key signs in to the server. See [signing in to MCP servers and A2A agents](upstream-oauth.md).
 4. **Tags** and **projects** decide which keys may use the server, as for [deployments](access.md#tags):
    - A server limited to projects is only for keys in one of them.
    - A key with tags may use untagged servers and those whose tags it holds.

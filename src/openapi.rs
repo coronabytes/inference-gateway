@@ -40,6 +40,7 @@ use utoipa::{
         paths::a2a_card, paths::a2a_jsonrpc, paths::a2a_rest_post, paths::a2a_rest_get, paths::a2a_rest_delete,
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
+        paths::oauth_callback, paths::oauth_discover, paths::key_connections, paths::key_connect, paths::key_disconnect,
         paths::get_oidc_settings, paths::put_oidc_settings, paths::test_oidc_settings, paths::list_admins, paths::delete_admin, paths::set_admin_projects,
         paths::list_credentials, paths::create_credential, paths::update_credential, paths::delete_credential, paths::foundry_deployments, paths::bedrock_models, paths::aws_regions,
         paths::list_guardrails, paths::create_guardrail, paths::update_guardrail, paths::delete_guardrail, paths::test_guardrail,
@@ -71,6 +72,7 @@ use utoipa::{
         (name = "Model aliases", description = "Model names that serve another model, which they follow when it is renamed."),
         (name = "Guardrails", description = "Provider guardrails that mask or block what prompts and responses must not contain."),
         (name = "MCP", description = "MCP servers behind the gateway: one key for every server, the servers' credentials kept in the gateway."),
+        (name = "Upstream OAuth", description = "Signing the gateway, or each key, in to MCP servers and A2A agents with OAuth."),
         (name = "A2A", description = "A2A agents behind the gateway: one key for every agent, the agents' credentials kept in the gateway."),
         (name = "Virtual keys", description = "Keys for apps and people, with limits, budgets and access tags, and the projects that group them."),
         (name = "Configuration", description = "Tags, and exporting and importing the configuration."),
@@ -456,7 +458,7 @@ mod schemas {
 #[allow(dead_code)]
 mod paths {
     use super::schemas::*;
-    use crate::{admin, admin_auth, budget, db, model};
+    use crate::{admin, admin_auth, budget, db, model, oauth};
 
     // ------------------------------------------------------------ inference
 
@@ -824,6 +826,66 @@ mod paths {
         ),
         responses((status = 303, description = "Into the console, or back to the sign-in screen with `login_error`.")))]
     fn oidc_callback() {}
+
+    /// Upstream sign-in callback
+    ///
+    /// Where an MCP server's or A2A agent's authorization server sends the browser back after a key \
+    /// was signed in. It finishes only in the browser session that started the sign-in.
+    #[utoipa::path(get, path = "/admin/auth/oauth/callback", tag = "Sign-in",
+        params(
+            ("code" = Option<String>, Query), ("state" = Option<String>, Query),
+            ("error" = Option<String>, Query), ("error_description" = Option<String>, Query),
+        ),
+        responses((status = 303, description = "Back to the console's Access page, with `connected` or `connect_error`.")))]
+    fn oauth_callback() {}
+
+    /// Discover OAuth
+    ///
+    /// Finds an MCP server's (RFC 9728) or A2A agent's (its card) authorization server and what its \
+    /// metadata says. With `register`, registers the gateway there as a public client (RFC 7591).
+    #[utoipa::path(post, path = "/admin/api/oauth/discover", tag = "Upstream OAuth", request_body = admin::oauth::DiscoverInput,
+        responses(
+            (status = 200, description = "What was found.", body = oauth::Discovered),
+            (status = 400, description = "Nothing found, or registration refused.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn oauth_discover() {}
+
+    /// List key's upstream sign-ins
+    ///
+    /// The MCP servers and A2A agents the key may use whose keys sign in on their own, and whether it has.
+    #[utoipa::path(get, path = "/admin/api/keys/{id}/connections", tag = "Upstream OAuth", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The upstreams.", body = Vec<admin::oauth::Connection>),
+            (status = 404, description = "No such key.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_connections() {}
+
+    /// Sign key in to upstream
+    ///
+    /// Starts the authorization code flow with PKCE: send the browser to `authorization_url`. The \
+    /// upstream's authorization server sends it back to `/admin/auth/oauth/callback`.
+    #[utoipa::path(post, path = "/admin/api/keys/{id}/connections/{kind}/{upstream}", tag = "Upstream OAuth",
+        params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path)),
+        responses(
+            (status = 200, description = "Where to send the browser.", body = admin::oauth::ConnectStart),
+            (status = 404, description = "No such key, or no such upstream for it that signs keys in.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_connect() {}
+
+    /// Sign key out of upstream
+    ///
+    /// Deletes the key's tokens. Other replicas stop using them within five minutes.
+    #[utoipa::path(delete, path = "/admin/api/keys/{id}/connections/{kind}/{upstream}", tag = "Upstream OAuth",
+        params(("id" = Uuid, Path), ("kind" = String, Path), ("upstream" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Signed out."),
+            (status = 404, description = "The key had not signed in.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_disconnect() {}
 
     /// Get single sign-on settings
     ///

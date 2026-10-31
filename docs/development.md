@@ -27,7 +27,9 @@ docker compose --profile replicas up -d --build  # two more gateway replicas on 
 ```
 
 - The **mock provider** runs on loopback, which the gateway refuses unless allowed: `.env.example` already sets `GATEWAY_UPSTREAM_ALLOWED_NETWORKS=127.0.0.0/8,::1`. It is also a Bedrock guardrail: a Bedrock credential with `http://127.0.0.1:9999` as its endpoint (any API key) and a guardrail on it mask e-mail addresses and the name "Ada Lovelace", flag "lottery" and "casino", and block "ignore previous instructions".
-- The **mock MCP server** answers at `http://127.0.0.1:9998/mcp` with the bearer token `mock-mcp-secret`, as JSON, or as server-sent events with `?sse` in the URL. Its tools are `echo`, `add`, `fail` (a tool error) and `slow`.
+- The **mock MCP server** answers at `http://127.0.0.1:9998/mcp` with the bearer token `mock-mcp-secret`, as JSON, or as server-sent events with `?sse` in the URL. Its tools are `echo`, `add`, `fail` (a tool error), `slow` and `whoami`.
+  - It is also an OAuth authorization server, for trying [upstream sign-ins](upstream-oauth.md). Use `http://localhost:9998/mcp` with **Discover**. Its client for the gateway's own tokens is `gateway-client`, with the secret `gateway-secret`.
+  - It approves sign-ins at once, and `whoami` says which token called. `MOCK_MCP_TOKEN_SECONDS` sets how long its tokens last, to watch them refresh.
 - The **mock A2A agent** has its card at `http://127.0.0.1:9997/.well-known/agent-card.json` and wants the bearer token `mock-a2a-secret`. It speaks A2A 1.0 over JSON-RPC and HTTP+JSON and echoes messages; one containing `fail` fails its task, one containing `ask` waits for input.
 - The **replicas** share Postgres and Valkey with the gateway you run locally, so you can watch configuration changes, rate limits and budgets propagate between instances.
 

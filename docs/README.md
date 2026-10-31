@@ -10,6 +10,7 @@
 - [Guardrails](guardrails.md): mask personal data and block prompt attacks
 - [MCP servers](mcp.md): MCP servers behind the same keys, with the servers' credentials kept in the gateway
 - [A2A agents](a2a.md): A2A agents behind the same keys, with each task bound to its key
+- [Signing in to MCP servers and A2A agents](upstream-oauth.md): OAuth with the gateway's client, or a sign-in per key
 - [Monitoring](monitoring.md): metrics, request and audit logs, OpenTelemetry
 
 **Run it**

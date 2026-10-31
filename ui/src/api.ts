@@ -386,7 +386,46 @@ export interface GuardrailTestResult {
   error?: string;
 }
 
-export type McpAuth = "none" | "bearer" | "header";
+export type McpAuth = "none" | "bearer" | "header" | "oauth" | "oauth_user";
+
+/** An upstream's OAuth client, for `oauth` (client credentials) and `oauth_user` (each key signs in). */
+export interface OAuthConfig {
+  token_url: string;
+  authorization_url?: string;
+  client_id: string;
+  scopes: string[];
+  /** The RFC 8707 resource the tokens are for. */
+  resource?: string;
+  /** The redirect URI the client was registered with. */
+  redirect_uri?: string;
+  token_auth?: "client_secret_basic" | "client_secret_post" | "none";
+}
+
+/** What `POST /oauth/discover` found. */
+export interface OAuthDiscovered {
+  token_url?: string;
+  authorization_url?: string;
+  registration_url?: string;
+  scopes: string[];
+  resource?: string;
+  token_auth_methods: string[];
+  client_id?: string;
+  client_secret?: string;
+  redirect_uri?: string;
+}
+
+/** An upstream a key signs in to on its own (`GET /keys/{id}/connections`). */
+export interface KeyConnection {
+  kind: "mcp" | "a2a";
+  upstream_id: string;
+  name: string;
+  connected: boolean;
+  signed_in_at?: string;
+  expires_at?: string;
+  refreshable: boolean;
+  scope?: string;
+  connected_by?: string;
+}
 
 /** An MCP server the gateway proxies at `/mcp/{name}` (`GET /mcp-servers`). */
 export interface McpServer {
@@ -399,6 +438,7 @@ export interface McpServer {
   auth_header?: string;
   /** Whether a secret is stored; the secret itself is never returned. */
   has_secret: boolean;
+  oauth?: OAuthConfig;
   tags: string[];
   project_ids: string[];
   timeout_secs: number;
@@ -422,6 +462,7 @@ export interface McpServerInput {
   auth_header?: string;
   /** Omitted on update: the stored secret stays. */
   secret?: string;
+  oauth?: OAuthConfig;
   tags: string[];
   project_ids: string[];
   timeout_secs: number;
@@ -452,6 +493,7 @@ export interface A2aAgent {
   auth_header?: string;
   /** Whether a secret is stored; the secret itself is never returned. */
   has_secret: boolean;
+  oauth?: OAuthConfig;
   tags: string[];
   project_ids: string[];
   timeout_secs: number;
@@ -470,6 +512,7 @@ export interface A2aAgentInput {
   auth_header?: string;
   /** Omitted on update: the stored secret stays. */
   secret?: string;
+  oauth?: OAuthConfig;
   tags: string[];
   project_ids: string[];
   timeout_secs: number;

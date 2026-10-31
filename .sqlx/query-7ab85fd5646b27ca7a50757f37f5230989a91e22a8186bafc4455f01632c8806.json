@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message, enabled,\n                created_at, updated_at\n         FROM a2a_agents ORDER BY name",
+  "query": "SELECT id, name, description, url, auth, auth_header, secret, oauth AS \"oauth: Json<OAuthConfig>\", tags, project_ids, timeout_secs,\n                  enabled, allowed_tools, denied_tools, price_per_call, tool_prices AS \"tool_prices: Json<BTreeMap<String, f64>>\", created_at, updated_at\n           FROM mcp_servers WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Uuid",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
+            "table": "mcp_servers",
             "name": "id"
           }
         }
@@ -20,7 +20,7 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
+            "table": "mcp_servers",
             "name": "name"
           }
         }
@@ -31,19 +31,19 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
+            "table": "mcp_servers",
             "name": "description"
           }
         }
       },
       {
         "ordinal": 3,
-        "name": "card_url",
+        "name": "url",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
-            "name": "card_url"
+            "table": "mcp_servers",
+            "name": "url"
           }
         }
       },
@@ -53,7 +53,7 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
+            "table": "mcp_servers",
             "name": "auth"
           }
         }
@@ -64,7 +64,7 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
+            "table": "mcp_servers",
             "name": "auth_header"
           }
         }
@@ -75,52 +75,52 @@
         "type_info": "Bytea",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
+            "table": "mcp_servers",
             "name": "secret"
           }
         }
       },
       {
         "ordinal": 7,
-        "name": "tags",
-        "type_info": "TextArray",
+        "name": "oauth: Json<OAuthConfig>",
+        "type_info": "Jsonb",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
-            "name": "tags"
+            "table": "mcp_servers",
+            "name": "oauth"
           }
         }
       },
       {
         "ordinal": 8,
-        "name": "project_ids",
-        "type_info": "UuidArray",
+        "name": "tags",
+        "type_info": "TextArray",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
-            "name": "project_ids"
+            "table": "mcp_servers",
+            "name": "tags"
           }
         }
       },
       {
         "ordinal": 9,
-        "name": "timeout_secs",
-        "type_info": "Int4",
+        "name": "project_ids",
+        "type_info": "UuidArray",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
-            "name": "timeout_secs"
+            "table": "mcp_servers",
+            "name": "project_ids"
           }
         }
       },
       {
         "ordinal": 10,
-        "name": "price_per_message",
-        "type_info": "Float8",
+        "name": "timeout_secs",
+        "type_info": "Int4",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
-            "name": "price_per_message"
+            "table": "mcp_servers",
+            "name": "timeout_secs"
           }
         }
       },
@@ -130,36 +130,82 @@
         "type_info": "Bool",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
+            "table": "mcp_servers",
             "name": "enabled"
           }
         }
       },
       {
         "ordinal": 12,
-        "name": "created_at",
-        "type_info": "Timestamptz",
+        "name": "allowed_tools",
+        "type_info": "TextArray",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
-            "name": "created_at"
+            "table": "mcp_servers",
+            "name": "allowed_tools"
           }
         }
       },
       {
         "ordinal": 13,
+        "name": "denied_tools",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "denied_tools"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "price_per_call",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "price_per_call"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "tool_prices: Json<BTreeMap<String, f64>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "tool_prices"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "a2a_agents",
+            "table": "mcp_servers",
             "name": "updated_at"
           }
         }
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Uuid"
+      ]
     },
     "nullable": [
       false,
@@ -169,6 +215,10 @@
       false,
       true,
       true,
+      true,
+      false,
+      false,
+      false,
       false,
       false,
       false,
@@ -178,5 +228,5 @@
       false
     ]
   },
-  "hash": "b433cb408142c55b0ec952bb328717d4349d1fd70fe19effd838b895b4ced15d"
+  "hash": "7ab85fd5646b27ca7a50757f37f5230989a91e22a8186bafc4455f01632c8806"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools, denied_tools,\n                  price_per_call, tool_prices AS \"tool_prices: Json<BTreeMap<String, f64>>\", created_at, updated_at\n           FROM mcp_servers ORDER BY name",
+  "query": "SELECT id, name, description, url, auth, auth_header, secret, oauth AS \"oauth: Json<OAuthConfig>\", tags, project_ids, timeout_secs,\n                  enabled, allowed_tools, denied_tools, price_per_call, tool_prices AS \"tool_prices: Json<BTreeMap<String, f64>>\", created_at, updated_at\n           FROM mcp_servers ORDER BY name",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,17 @@
       },
       {
         "ordinal": 7,
+        "name": "oauth: Json<OAuthConfig>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "mcp_servers",
+            "name": "oauth"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "tags",
         "type_info": "TextArray",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "project_ids",
         "type_info": "UuidArray",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "timeout_secs",
         "type_info": "Int4",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -125,7 +136,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "allowed_tools",
         "type_info": "TextArray",
         "origin": {
@@ -136,7 +147,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "denied_tools",
         "type_info": "TextArray",
         "origin": {
@@ -147,7 +158,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "price_per_call",
         "type_info": "Float8",
         "origin": {
@@ -158,7 +169,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "tool_prices: Json<BTreeMap<String, f64>>",
         "type_info": "Jsonb",
         "origin": {
@@ -169,7 +180,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -180,7 +191,7 @@
         }
       },
       {
-        "ordinal": 16,
+        "ordinal": 17,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -202,6 +213,7 @@
       false,
       true,
       true,
+      true,
       false,
       false,
       false,
@@ -214,5 +226,5 @@
       false
     ]
   },
-  "hash": "679a94a3c4914727c970d7e5f7ccefd19675294361a5aabeea4a2ecf97e0f713"
+  "hash": "cda6bde03857490c8acb02488705552d28a0798bba497167b0b1e4d729dd7b43"
 }

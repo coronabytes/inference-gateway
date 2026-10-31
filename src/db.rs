@@ -15,6 +15,7 @@ use crate::{
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailRow},
     a2a::A2aAgentRow,
     mcp::McpServerRow,
+    oauth::OAuthConfig,
     model::{
         AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
         PromptLogging, Route,
@@ -782,8 +783,8 @@ pub async fn delete_guardrail(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
 pub async fn list_mcp_servers(pool: &PgPool) -> sqlx::Result<Vec<McpServerRow>> {
     sqlx::query_as!(
         McpServerRow,
-        r#"SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools, denied_tools,
-                  price_per_call, tool_prices AS "tool_prices: Json<BTreeMap<String, f64>>", created_at, updated_at
+        r#"SELECT id, name, description, url, auth, auth_header, secret, oauth AS "oauth: Json<OAuthConfig>", tags, project_ids, timeout_secs,
+                  enabled, allowed_tools, denied_tools, price_per_call, tool_prices AS "tool_prices: Json<BTreeMap<String, f64>>", created_at, updated_at
            FROM mcp_servers ORDER BY name"#
     )
     .fetch_all(pool)
@@ -793,8 +794,8 @@ pub async fn list_mcp_servers(pool: &PgPool) -> sqlx::Result<Vec<McpServerRow>> 
 pub async fn get_mcp_server(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<McpServerRow>> {
     sqlx::query_as!(
         McpServerRow,
-        r#"SELECT id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools, denied_tools,
-                  price_per_call, tool_prices AS "tool_prices: Json<BTreeMap<String, f64>>", created_at, updated_at
+        r#"SELECT id, name, description, url, auth, auth_header, secret, oauth AS "oauth: Json<OAuthConfig>", tags, project_ids, timeout_secs,
+                  enabled, allowed_tools, denied_tools, price_per_call, tool_prices AS "tool_prices: Json<BTreeMap<String, f64>>", created_at, updated_at
            FROM mcp_servers WHERE id = $1"#,
         id
     )
@@ -805,8 +806,8 @@ pub async fn get_mcp_server(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<McpS
 pub async fn insert_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sqlx::Result<()> {
     sqlx::query!(
         "INSERT INTO mcp_servers (id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools,
-             denied_tools, price_per_call, tool_prices, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())",
+             denied_tools, price_per_call, tool_prices, oauth, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())",
         s.id,
         s.name,
         s.description,
@@ -822,6 +823,7 @@ pub async fn insert_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sql
         &s.denied_tools,
         s.price_per_call,
         &s.tool_prices as &Json<BTreeMap<String, f64>>,
+        &s.oauth as &Option<Json<OAuthConfig>>,
     )
     .execute(db)
     .await?;
@@ -832,7 +834,7 @@ pub async fn update_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sql
     sqlx::query!(
         "UPDATE mcp_servers SET name = $2, description = $3, url = $4, auth = $5, auth_header = $6, secret = $7, tags = $8,
              project_ids = $9, timeout_secs = $10, enabled = $11, allowed_tools = $12, denied_tools = $13, price_per_call = $14,
-             tool_prices = $15, updated_at = now()
+             tool_prices = $15, oauth = $16, updated_at = now()
          WHERE id = $1",
         s.id,
         s.name,
@@ -849,14 +851,19 @@ pub async fn update_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sql
         &s.denied_tools,
         s.price_per_call,
         &s.tool_prices as &Json<BTreeMap<String, f64>>,
+        &s.oauth as &Option<Json<OAuthConfig>>,
     )
     .execute(db)
     .await?;
     Ok(())
 }
 
+/// Also deletes the keys' tokens for it.
 pub async fn delete_mcp_server(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
-    let r = sqlx::query!("DELETE FROM mcp_servers WHERE id = $1", id).execute(pool).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = 'mcp' AND upstream_id = $1", id).execute(&mut *tx).await?;
+    let r = sqlx::query!("DELETE FROM mcp_servers WHERE id = $1", id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(r.rows_affected() > 0)
 }
 
@@ -877,9 +884,9 @@ pub async fn set_mcp_secret(db: impl PgExecutor<'_>, id: Uuid, secret: &[u8]) ->
 pub async fn list_a2a_agents(pool: &PgPool) -> sqlx::Result<Vec<A2aAgentRow>> {
     sqlx::query_as!(
         A2aAgentRow,
-        "SELECT id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message, enabled,
-                created_at, updated_at
-         FROM a2a_agents ORDER BY name"
+        r#"SELECT id, name, description, card_url, auth, auth_header, secret, oauth AS "oauth: Json<OAuthConfig>", tags, project_ids, timeout_secs,
+                  price_per_message, enabled, created_at, updated_at
+           FROM a2a_agents ORDER BY name"#
     )
     .fetch_all(pool)
     .await
@@ -888,9 +895,9 @@ pub async fn list_a2a_agents(pool: &PgPool) -> sqlx::Result<Vec<A2aAgentRow>> {
 pub async fn get_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<A2aAgentRow>> {
     sqlx::query_as!(
         A2aAgentRow,
-        "SELECT id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message, enabled,
-                created_at, updated_at
-         FROM a2a_agents WHERE id = $1",
+        r#"SELECT id, name, description, card_url, auth, auth_header, secret, oauth AS "oauth: Json<OAuthConfig>", tags, project_ids, timeout_secs,
+                  price_per_message, enabled, created_at, updated_at
+           FROM a2a_agents WHERE id = $1"#,
         id
     )
     .fetch_optional(pool)
@@ -900,8 +907,8 @@ pub async fn get_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<A2aAg
 pub async fn insert_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx::Result<()> {
     sqlx::query!(
         "INSERT INTO a2a_agents (id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message,
-             enabled, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())",
+             enabled, oauth, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())",
         a.id,
         a.name,
         a.description,
@@ -914,6 +921,7 @@ pub async fn insert_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx:
         a.timeout_secs,
         a.price_per_message,
         a.enabled,
+        &a.oauth as &Option<Json<OAuthConfig>>,
     )
     .execute(db)
     .await?;
@@ -923,7 +931,7 @@ pub async fn insert_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx:
 pub async fn update_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx::Result<()> {
     sqlx::query!(
         "UPDATE a2a_agents SET name = $2, description = $3, card_url = $4, auth = $5, auth_header = $6, secret = $7, tags = $8,
-             project_ids = $9, timeout_secs = $10, price_per_message = $11, enabled = $12, updated_at = now()
+             project_ids = $9, timeout_secs = $10, price_per_message = $11, enabled = $12, oauth = $13, updated_at = now()
          WHERE id = $1",
         a.id,
         a.name,
@@ -937,15 +945,168 @@ pub async fn update_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx:
         a.timeout_secs,
         a.price_per_message,
         a.enabled,
+        &a.oauth as &Option<Json<OAuthConfig>>,
     )
     .execute(db)
     .await?;
     Ok(())
 }
 
+/// Also deletes the keys' tokens for it.
 pub async fn delete_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
-    let r = sqlx::query!("DELETE FROM a2a_agents WHERE id = $1", id).execute(pool).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = 'a2a' AND upstream_id = $1", id).execute(&mut *tx).await?;
+    let r = sqlx::query!("DELETE FROM a2a_agents WHERE id = $1", id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(r.rows_affected() > 0)
+}
+
+// ---------------------------------------------------------------- upstream OAuth tokens
+
+/// A key's tokens for an `oauth_user` upstream, sealed.
+pub struct OAuthTokenRow {
+    pub access_token: Vec<u8>,
+    pub refresh_token: Option<Vec<u8>>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+pub async fn get_oauth_token(pool: &PgPool, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<Option<OAuthTokenRow>> {
+    sqlx::query_as!(
+        OAuthTokenRow,
+        "SELECT access_token, refresh_token, expires_at FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+        kind,
+        upstream,
+        key
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// The row, locked until the transaction ends: for a refresh.
+pub async fn lock_oauth_token(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<Option<OAuthTokenRow>> {
+    sqlx::query_as!(
+        OAuthTokenRow,
+        "SELECT access_token, refresh_token, expires_at FROM oauth_tokens
+         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 FOR UPDATE",
+        kind,
+        upstream,
+        key
+    )
+    .fetch_optional(db)
+    .await
+}
+
+pub async fn update_oauth_token(
+    db: impl PgExecutor<'_>,
+    kind: &str,
+    upstream: Uuid,
+    key: Uuid,
+    access: &[u8],
+    refresh: Option<&[u8]>,
+    expires_at: Option<DateTime<Utc>>,
+) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET access_token = $4, refresh_token = $5, expires_at = $6, updated_at = now()
+         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+        kind,
+        upstream,
+        key,
+        access,
+        refresh,
+        expires_at
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// A new sign-in: replaces what the key had for the upstream.
+#[allow(clippy::too_many_arguments)]
+pub async fn save_oauth_token(
+    pool: &PgPool,
+    kind: &str,
+    upstream: Uuid,
+    key: Uuid,
+    access: &[u8],
+    refresh: Option<&[u8]>,
+    expires_at: Option<DateTime<Utc>>,
+    scope: Option<&str>,
+    by: &str,
+) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO oauth_tokens (upstream_kind, upstream_id, key_id, access_token, refresh_token, expires_at, scope, connected_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (upstream_kind, upstream_id, key_id) DO UPDATE SET access_token = EXCLUDED.access_token,
+             refresh_token = EXCLUDED.refresh_token, expires_at = EXCLUDED.expires_at, scope = EXCLUDED.scope,
+             connected_by = EXCLUDED.connected_by, created_at = now(), updated_at = now()",
+        kind,
+        upstream,
+        key,
+        access,
+        refresh,
+        expires_at,
+        scope,
+        by
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The upstream refused the token: the next call refreshes it.
+pub async fn expire_oauth_token(pool: &PgPool, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET expires_at = now() WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+        kind,
+        upstream,
+        key
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_oauth_token(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<bool> {
+    let r = sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3", kind, upstream, key)
+        .execute(db)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// A key's sign-ins: (kind, upstream, signed in at, expires at, scope, by whom).
+pub async fn key_connections(
+    pool: &PgPool,
+    key: Uuid,
+) -> sqlx::Result<Vec<(String, Uuid, DateTime<Utc>, Option<DateTime<Utc>>, bool, Option<String>, Option<String>)>> {
+    let rows = sqlx::query!(
+        r#"SELECT upstream_kind, upstream_id, created_at, expires_at, refresh_token IS NOT NULL AS "refreshable!", scope, connected_by
+           FROM oauth_tokens WHERE key_id = $1"#,
+        key
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.created_at, r.expires_at, r.refreshable, r.scope, r.connected_by)).collect())
+}
+
+/// Every sealed token, for `rotate-key`: (kind, upstream, key, access, refresh).
+#[allow(clippy::type_complexity)]
+pub async fn sealed_oauth_tokens(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(String, Uuid, Uuid, Vec<u8>, Option<Vec<u8>>)>> {
+    let rows = sqlx::query!("SELECT upstream_kind, upstream_id, key_id, access_token, refresh_token FROM oauth_tokens FOR UPDATE").fetch_all(db).await?;
+    Ok(rows.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.key_id, r.access_token, r.refresh_token)).collect())
+}
+
+pub async fn set_oauth_token_secrets(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid, access: &[u8], refresh: Option<&[u8]>) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET access_token = $4, refresh_token = $5 WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+        kind,
+        upstream,
+        key,
+        access,
+        refresh
+    )
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 pub async fn sealed_a2a_secrets(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(Uuid, String, Vec<u8>)>> {

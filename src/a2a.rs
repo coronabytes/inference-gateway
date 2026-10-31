@@ -36,6 +36,7 @@ use crate::{
     error::{Dialect, ErrorKind, GatewayError},
     labels::Labels,
     model::VirtualKey,
+    oauth::{Kind, OAuthConfig, UpstreamAuth},
     sse::SseParser,
     state::AppState,
 };
@@ -51,6 +52,8 @@ pub struct A2aAgentRow {
     pub auth_header: Option<String>,
     /// Sealed with the gateway's encryption key.
     pub secret: Option<Vec<u8>>,
+    /// The OAuth client, for `oauth` and `oauth_user`.
+    pub oauth: Option<sqlx::types::Json<OAuthConfig>>,
     pub tags: Vec<String>,
     pub project_ids: Vec<Uuid>,
     pub timeout_secs: i32,
@@ -65,7 +68,7 @@ pub struct A2aAgent {
     pub id: Uuid,
     pub name: String,
     pub card_url: String,
-    auth: Option<(HeaderName, HeaderValue)>,
+    pub auth: UpstreamAuth,
     pub tags: Vec<String>,
     pub project_ids: Vec<Uuid>,
     /// For an answer that is not streamed. Streams last as long as the task they follow.
@@ -76,7 +79,8 @@ pub struct A2aAgent {
 impl A2aAgent {
     pub fn build(row: A2aAgentRow, sb: &SecretBox) -> Result<Self, String> {
         let ctx = |e: String| format!("A2A agent {} ({}): {e}", row.id, row.name);
-        let auth = crate::mcp::auth_header(&row.auth, row.auth_header.as_deref(), row.secret.as_deref(), sb).map_err(ctx)?;
+        let oauth = row.oauth.as_ref().map(|o| &o.0);
+        let auth = UpstreamAuth::build(Kind::A2a, row.id, &row.name, &row.auth, row.auth_header.as_deref(), row.secret.as_deref(), oauth, sb).map_err(ctx)?;
         Ok(Self {
             id: row.id,
             name: row.name,
@@ -236,25 +240,29 @@ pub struct Cards(std::sync::Mutex<HashMap<Uuid, (Arc<A2aAgent>, Instant, Arc<Car
 const CARD_FRESH: Duration = Duration::from_secs(300);
 
 impl Cards {
-    pub async fn get(&self, state: &AppState, agent: &Arc<A2aAgent>) -> Result<Arc<Card>, String> {
+    /// `key`: who asks, for an agent whose keys sign in on their own and whose card needs it.
+    pub async fn get(&self, state: &AppState, agent: &Arc<A2aAgent>, key: Option<Uuid>) -> Result<Arc<Card>, String> {
         if let Some((a, at, card)) = self.0.lock().expect("cards lock").get(&agent.id)
             && Arc::ptr_eq(a, agent)
             && at.elapsed() < CARD_FRESH
         {
             return Ok(card.clone());
         }
-        let card = Arc::new(fetch_card(state, agent).await?);
+        let card = Arc::new(fetch_card(state, agent, key).await?);
         self.0.lock().expect("cards lock").insert(agent.id, (agent.clone(), Instant::now(), card.clone()));
         Ok(card)
     }
 }
 
-/// The agent's card, as the agent serves it to the gateway.
-pub async fn fetch_card(state: &AppState, agent: &A2aAgent) -> Result<Card, String> {
+/// The agent's card, as the agent serves it to the gateway. Where each key signs in on its own,
+/// the card is fetched without credentials (cards are mostly public) unless `key` has signed in.
+pub async fn fetch_card(state: &AppState, agent: &A2aAgent, key: Option<Uuid>) -> Result<Card, String> {
     state.cfg.upstream_policy.check_url(&agent.card_url).map_err(|why| format!("the card's address is not allowed: {why}"))?;
     let mut req = state.http.get(&agent.card_url).header(header::ACCEPT, "application/json").timeout(Duration::from_secs(30));
-    if let Some((h, v)) = &agent.auth {
-        req = req.header(h, v);
+    match agent.auth.header(state, key).await {
+        Ok(Some((h, v))) => req = req.header(h, v),
+        Ok(None) | Err(crate::oauth::AuthError::NotConnected(_)) => {}
+        Err(e) => return Err(e.message()),
     }
     let resp = req.send().await.map_err(|e| format!("the card could not be fetched: {}", GatewayError::from_reqwest(&e).message))?;
     let status = resp.status();
@@ -560,7 +568,7 @@ fn card_error(e: String) -> GatewayError {
 
 /// Where clients reach the gateway, as they called it: the forwarded scheme and host when a proxy
 /// is in front of it.
-fn origin(headers: &HeaderMap, uri: &Uri) -> String {
+pub(crate) fn origin(headers: &HeaderMap, uri: &Uri) -> String {
     let h = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).map(|v| v.split(',').next().unwrap_or(v).trim().to_string());
     let host = h("x-forwarded-host").or_else(|| h("host")).or_else(|| uri.authority().map(|a| a.to_string())).unwrap_or_else(|| "localhost".into());
     let local = host.starts_with("localhost") || host.starts_with("127.") || host.starts_with("[::1]");
@@ -572,7 +580,7 @@ fn origin(headers: &HeaderMap, uri: &Uri) -> String {
 pub async fn card(State(state): State<AppState>, ClientKey(key): ClientKey, Path(name): Path<String>, uri: Uri, headers: HeaderMap) -> Response {
     let result = async {
         let agent = agent(&state, &key, &name)?;
-        let card = state.a2a.get(&state, &agent).await.map_err(card_error)?;
+        let card = state.a2a.get(&state, &agent, Some(key.id)).await.map_err(card_error)?;
         Ok::<_, GatewayError>(axum::Json(card.rewritten(&format!("{}/a2a/{}", origin(&headers, &uri), agent.name))).into_response())
     }
     .await;
@@ -640,7 +648,7 @@ async fn forward(
         Ask::Send { stream, .. } => Some(*stream),
         _ => None,
     };
-    let card = state.a2a.get(state, &agent).await.map_err(card_error)?;
+    let card = state.a2a.get(state, &agent, Some(key.id)).await.map_err(card_error)?;
     let interface = card
         .interface(binding)
         .ok_or_else(|| GatewayError::not_found(format!("the agent offers no {} interface", binding.name())))?;
@@ -683,26 +691,41 @@ async fn forward(
         fail(&mut exchange, &e);
         return Err(e);
     }
-    let mut req = state.http.request(method, &url);
-    for h in FORWARDED {
-        if let Some(v) = headers.get(h) {
+    let send = async |auth: Option<(HeaderName, HeaderValue)>| {
+        let mut req = state.http.request(method.clone(), &url);
+        for h in FORWARDED {
+            if let Some(v) = headers.get(h) {
+                req = req.header(h, v);
+            }
+        }
+        if let Some((h, v)) = auth {
             req = req.header(h, v);
         }
+        // Streams follow their task for as long as it runs.
+        if stream != Some(true) {
+            req = req.timeout(agent.timeout);
+        }
+        if !body.is_empty() {
+            req = req.body(body.clone());
+        }
+        req.send().await.map_err(|e| GatewayError::from_reqwest(&e))
+    };
+    let header = async || agent.auth.header(state, Some(key.id)).await.map_err(crate::oauth::AuthError::into_gateway);
+    let mut resp = match header().await {
+        Ok(auth) => send(auth).await,
+        Err(e) => Err(e),
+    };
+    // A token the agent refuses is renewed, once.
+    if agent.auth.renews() && resp.as_ref().is_ok_and(|r| r.status() == StatusCode::UNAUTHORIZED) {
+        agent.auth.renew(state, Some(key.id)).await;
+        resp = match header().await {
+            Ok(auth) => send(auth).await,
+            Err(e) => Err(e),
+        };
     }
-    if let Some((h, v)) = &agent.auth {
-        req = req.header(h, v);
-    }
-    // Streams follow their task for as long as it runs.
-    if stream != Some(true) {
-        req = req.timeout(agent.timeout);
-    }
-    if !body.is_empty() {
-        req = req.body(body);
-    }
-    let resp = match req.send().await {
+    let resp = match resp {
         Ok(r) => r,
         Err(e) => {
-            let e = GatewayError::from_reqwest(&e);
             fail(&mut exchange, &e);
             return Err(e);
         }
@@ -938,7 +961,7 @@ mod tests {
         let mut snap = crate::registry::Snapshot::default();
         let key = VirtualKey { key_hash: crate::util::sha256(b"sk-gw-a").to_vec(), ..crate::auth::tests::key() };
         snap.keys.insert(crate::util::sha256(b"sk-gw-a"), Arc::new(key));
-        let auth = Some((header::AUTHORIZATION, HeaderValue::from_static("Bearer agent-secret")));
+        let auth = UpstreamAuth::Static(header::AUTHORIZATION, HeaderValue::from_static("Bearer agent-secret"));
         let agent = A2aAgent {
             id: Uuid::now_v7(),
             name: "echo".into(),

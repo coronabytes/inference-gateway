@@ -51,6 +51,21 @@ pub async fn run() -> Result<(), String> {
         }
     }
     println!("A2A agents: {moved} secrets re-encrypted, {kept} already under the current key");
+    let (mut moved, mut kept) = (0usize, 0usize);
+    for (kind, upstream, key, access, refresh) in db::sealed_oauth_tokens(&mut *tx).await.map_err(pg)? {
+        let what = || format!("OAuth tokens of key {key} for {kind} {upstream}");
+        let access_new = sb.reseal(&access).map_err(|e| format!("{}: {e}", what()))?;
+        let refresh_new = refresh.as_deref().map(|r| sb.reseal(r)).transpose().map_err(|e| format!("{}: {e}", what()))?.flatten();
+        if access_new.is_none() && refresh_new.is_none() {
+            kept += 1;
+            continue;
+        }
+        let access = access_new.unwrap_or(access);
+        let refresh = refresh_new.or(refresh);
+        db::set_oauth_token_secrets(&mut *tx, &kind, upstream, key, &access, refresh.as_deref()).await.map_err(pg)?;
+        moved += 1;
+    }
+    println!("upstream sign-ins: {moved} re-encrypted, {kept} already under the current key");
     match db::sealed_oidc_client_secret(&mut *tx).await.map_err(pg)? {
         Some(sealed) => match sb.reseal(&sealed).map_err(|e| format!("OIDC client secret: {e}"))? {
             Some(v) => {

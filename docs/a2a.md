@@ -10,7 +10,9 @@ On **Tools → A2A agents → New A2A agent**:
 
 1. **Name:** the address clients use, `/a2a/travel` for `travel`. It is lowercase letters, digits, `-` and `_`.
 2. **Agent card:** where the agent's card is, such as `https://agent.example.com/.well-known/agent-card.json`. An address without a path gets `/.well-known/agent-card.json`. The card says where the agent's interfaces are.
-3. **Authentication:** how the gateway signs in to the agent, for its card and its messages: a bearer token, an API key in a header of your choice, or none. The secret is stored encrypted and is never shown again.
+3. **Authentication:** how the gateway signs in to the agent, for its card and its messages.
+   - A bearer token, an API key in a header of your choice, or none. The secret is stored encrypted and is never shown again.
+   - **OAuth:** the gateway's own client, or each key signs in to the agent. See [signing in to MCP servers and A2A agents](upstream-oauth.md). When each key signs in, the card is fetched without credentials unless the key asking has signed in.
 4. **Tags** and **projects** decide which keys may use the agent, as for [deployments](access.md#tags).
 5. **Price per message:** USD charged to the key for each message sent, once the agent has answered. The default is 0.
 6. **Timeout:** how long an answer that is not streamed may take. The default is 600 seconds. Streams follow their task for as long as it runs.
