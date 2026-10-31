@@ -111,9 +111,21 @@ Messages takes Anthropic's MCP connector: `mcp_servers: [{"type": "url", "name":
 How a request runs:
 
 - **Rounds:** when the model calls gateway tools, the gateway runs the calls in parallel, gives the model their results, and asks again. This continues until the model answers, for at most 8 rounds, on the same deployment.
-- **What the client gets:** one response, with the text of every round. Calls of the gateway's tools are left out: the client has nothing to do for them. When the model also calls one of the client's own function tools, the response ends there and returns that call, as usual.
+- **What the client gets:** one response, with the text of every round and what the gateway ran, the way the client's API returns MCP calls. The client has nothing to do for them. When the model also calls one of the client's own function tools, the response ends there and returns that call, as usual.
+  - **Responses:** an `mcp_list_tools` item for each server first, then an `mcp_call` item for each call, with its `arguments`, its `output` as text and its `error`, if any. Streamed, they come as `response.output_item.added` and `response.output_item.done`, with the `response.mcp_call.*` events in between.
+  - **Messages:** an `mcp_tool_use` block and an `mcp_tool_result` block for each call, as Anthropic's MCP connector returns them.
+  - **Chat Completions:** no place for them. They are only logged.
+  - **In a later turn:** a client may send these items and blocks back as they came. The model gets them as text, since the tools may not be offered then. A conversation continued with `previous_response_id` keeps them the same way.
 - **Accounting:** the response's usage is the sum of every round. Each tool call is also an entry of its own in the request log (api `mcp`), counted against the key's limits and budgets and charged its price. A limit or budget reached mid-request becomes the tool's error, which the model gets.
-- **Logging:** where the key's prompts are logged, the response keeps what ran (tool, arguments, result) under `x_gateway_not_sent`.
+- **Logging:** where the key's prompts are logged, the response is logged as the client got it. On Chat Completions, what ran is kept under `x_gateway_not_sent.mcp`.
+
+To try it, pick servers under **MCP** in the [playground](#in-the-playground).
+
+## In the playground
+
+The playground (**Models → Playground**) offers the MCP servers the chosen key may use under **MCP**. The chosen servers' tools go with every chat request, and each reply shows what ran before its text: the tools each server offered, and each call, with its arguments and result. Click one to unfold it. On Chat Completions, which has no place for the calls, they are only in the request log.
+
+A server where each key signs in itself is marked **sign in** while the key has not signed in yet. **Sign in** in the warning above the chat starts it, and the sign-in comes back to the playground.
 - **Upstreams:** the request is translated even for a deployment that speaks the client's API, since the gateway drives the rounds. Tool results with images reach models that take images.
 
 ## In the request log

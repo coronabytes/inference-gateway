@@ -9,8 +9,8 @@ use super::{StreamEncoder, sse_event};
 use crate::{
     error::GatewayError,
     ir::{
-        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, Message, Part, Reasoning, Role, StopReason,
-        StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
+        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, McpItem, Message, Part, Reasoning, Role,
+        StopReason, StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
     },
     util::prefixed_id,
 };
@@ -111,7 +111,21 @@ pub fn parse_request(v: &Value) -> Result<ChatRequest, GatewayError> {
                         req.messages.push(Message { role: Role::Assistant, content: vec![Part::Reasoning { text, signature }] });
                     }
                     // A web search the provider ran in an earlier turn: its answer is in the message that follows.
-                    "web_search_call" => {}
+                    // So are the tools a gateway MCP server offered.
+                    "web_search_call" | "mcp_list_tools" => {}
+                    // A gateway MCP tool's call in an earlier turn: the model gets what it did as text,
+                    // since the tool may not be offered now.
+                    "mcp_call" => {
+                        let field = |f: &str| it.get(f).and_then(Value::as_str).unwrap_or_default();
+                        let result = if field("error").is_empty() { field("output") } else { field("error") };
+                        let text = format!(
+                            "[The gateway called the MCP tool {} of {} with {}. Its result: {result}]",
+                            field("name"),
+                            field("server_label"),
+                            field("arguments")
+                        );
+                        req.messages.push(Message { role: Role::Assistant, content: vec![Part::Text { text, cache: false }] });
+                    }
                     other => {
                         return Err(GatewayError::invalid(format!(
                             "input item type '{other}' is not supported for this model's provider"
@@ -248,17 +262,52 @@ fn call_item(id: &str, call_id: &str, name: &str, args: &str, status: &str) -> V
     json!({ "type": "function_call", "id": id, "call_id": call_id, "name": name, "arguments": args, "status": status })
 }
 
+/// A gateway MCP item as OpenAI returns its own: `mcp_list_tools`, or `mcp_call` with the
+/// result as text.
+pub fn mcp_item(item: &McpItem) -> Value {
+    match item {
+        McpItem::Tools { server, tools } => {
+            let tools: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "name": t.get("name"), "description": t.get("description"),
+                        "input_schema": t.get("inputSchema").cloned().unwrap_or_else(|| json!({ "type": "object" })),
+                        "annotations": t.get("annotations"),
+                    })
+                })
+                .collect();
+            json!({ "type": "mcp_list_tools", "id": prefixed_id("mcpl"), "server_label": server, "tools": tools })
+        }
+        McpItem::Call { server, tool, arguments, result } => {
+            let error = match result {
+                Err(e) => Some(e.clone()),
+                Ok(_) => item.is_error().then(|| item.output_text()).flatten(),
+            };
+            json!({
+                "type": "mcp_call", "id": prefixed_id("mcp"), "server_label": server, "name": tool,
+                "arguments": arguments.to_string(), "output": item.output_text(), "error": error,
+                "status": if result.is_ok() { "completed" } else { "failed" }, "approval_request_id": null,
+            })
+        }
+    }
+}
+
 pub fn render_response(r: &ChatResponse, id: &str, model: &str) -> Value {
-    let output: Vec<Value> = r
-        .content
-        .iter()
-        .filter_map(|p| match p {
+    let mut mcp = r.mcp.iter().peekable();
+    let mut output = Vec::new();
+    for (i, p) in r.content.iter().enumerate() {
+        while let Some((_, item)) = mcp.next_if(|(at, _)| *at <= i) {
+            output.push(mcp_item(item));
+        }
+        output.extend(match p {
             Part::Text { text, .. } => Some(message_item(&prefixed_id("msg"), text, "completed")),
             Part::ToolCall { id, name, arguments } => Some(call_item(&prefixed_id("fc"), id, name, arguments, "completed")),
             Part::Reasoning { text, signature } => Some(reasoning_item(&prefixed_id("rs"), text, signature.as_deref())),
             _ => None,
-        })
-        .collect();
+        });
+    }
+    output.extend(mcp.map(|(_, item)| mcp_item(item)));
     let (status, incomplete) = status_of(r.stop_reason);
     envelope(id, model, chrono::Utc::now().timestamp(), status, output, usage_json(&r.usage), incomplete)
 }
@@ -402,6 +451,36 @@ impl StreamEncoder for ResponsesEncoder {
             }
             // The provider's own tools and citations: logged, never sent (see `StreamEvent::ServerTool`).
             StreamEvent::ServerTool { .. } | StreamEvent::Annotation { .. } => {}
+            // Whole when it comes: the call has run.
+            StreamEvent::Mcp { item, .. } => {
+                let oi = self.next_output;
+                self.next_output += 1;
+                let done = mcp_item(item);
+                let id = done["id"].clone();
+                let mut added = done.clone();
+                let at = json!({ "item_id": id, "output_index": oi });
+                match item {
+                    McpItem::Tools { .. } => {
+                        added["tools"] = json!([]);
+                        out.push(self.emit("response.output_item.added", json!({ "output_index": oi, "item": added })));
+                        out.push(self.emit("response.mcp_list_tools.in_progress", at.clone()));
+                        out.push(self.emit("response.mcp_list_tools.completed", at));
+                    }
+                    McpItem::Call { result, .. } => {
+                        for (f, v) in [("arguments", json!("")), ("output", Value::Null), ("error", Value::Null), ("status", json!("in_progress"))] {
+                            added[f] = v;
+                        }
+                        out.push(self.emit("response.output_item.added", json!({ "output_index": oi, "item": added })));
+                        out.push(self.emit("response.mcp_call.in_progress", at.clone()));
+                        let mut args = at.clone();
+                        args["arguments"] = done["arguments"].clone();
+                        out.push(self.emit("response.mcp_call_arguments.done", args));
+                        out.push(self.emit(if result.is_ok() { "response.mcp_call.completed" } else { "response.mcp_call.failed" }, at));
+                    }
+                }
+                out.push(self.emit("response.output_item.done", json!({ "output_index": oi, "item": done.clone() })));
+                self.done.push((oi, done));
+            }
             StreamEvent::BlockStop { index } => {
                 let Some(it) = self.items.remove(index) else { return out };
                 let (id, oi) = (it.id.clone(), it.output_index);

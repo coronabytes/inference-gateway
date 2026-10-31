@@ -361,6 +361,8 @@ const USER_ROUTES: &[(Method, &str)] = &[
     (Method::GET, "/usage/keys"),
     (Method::GET, "/playground/options"),
     (Method::POST, "/playground/{api}"),
+    (Method::POST, "/playground/a2a/{agent}"),
+    (Method::GET, "/playground/a2a/{agent}/card"),
     (Method::GET, "/hub"),
     (Method::GET, "/efforts"),
 ];

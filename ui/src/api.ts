@@ -563,6 +563,14 @@ export interface PlaygroundOptions {
   models: { name: string; mode: Mode; router: boolean; web_search: boolean }[];
   /** Those enforced on the key or its project always apply. */
   guardrails: { name: string; enforced: boolean }[];
+  /** The MCP servers and A2A agents the key may use; `needs_sign_in`: the key signs in itself, and has not yet. */
+  mcp_servers: PlaygroundUpstream[];
+  a2a_agents: PlaygroundUpstream[];
+}
+
+export interface PlaygroundUpstream {
+  name: string;
+  needs_sign_in: boolean;
 }
 
 /** Puts a list filter in a query as `a,b`, with `none` (a value that cannot be an id or a tag) sent as `-`. */

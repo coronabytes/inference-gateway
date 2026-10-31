@@ -58,7 +58,7 @@ use utoipa::{
         paths::list_tags, paths::export_config, paths::import_config, paths::model_hub, paths::model_efforts, paths::set_model_metadata,
         paths::status, paths::metrics, paths::logs, paths::log_labels, paths::log_tools, paths::log_bodies, paths::audit_log, paths::key_usage, paths::cluster,
         paths::get_settings, paths::put_settings,
-        paths::playground, paths::playground_options,
+        paths::playground, paths::playground_a2a, paths::playground_a2a_card, paths::playground_options,
         paths::search_prices, paths::match_price, paths::check_prices, paths::import_prices,
     ),
     modifiers(&SecuritySchemes),
@@ -867,7 +867,7 @@ mod paths {
     /// Starts the authorization code flow with PKCE: send the browser to `authorization_url`. The \
     /// upstream's authorization server sends it back to `/admin/auth/oauth/callback`.
     #[utoipa::path(post, path = "/admin/api/keys/{id}/connections/{kind}/{upstream}", tag = "Upstream OAuth",
-        params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path)),
+        params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path), admin::oauth::ConnectQuery),
         responses(
             (status = 200, description = "Where to send the browser.", body = admin::oauth::ConnectStart),
             (status = 404, description = "No such key, or no such upstream for it that signs keys in.", body = AdminError),
@@ -1718,13 +1718,33 @@ mod paths {
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn playground() {}
 
+    /// Playground: an A2A agent
+    ///
+    /// A JSON-RPC call of an A2A agent as a chosen virtual key, as at `/a2a/{agent}`: logged,
+    /// counted against the key's limits and charged the agent's price.
+    #[utoipa::path(post, path = "/admin/api/playground/a2a/{agent}", tag = "Playground",
+        params(("agent" = String, Path), admin::PlaygroundQuery),
+        request_body = Object,
+        responses((status = 200, description = "The agent's answer, or its event stream.", body = Object)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn playground_a2a() {}
+
+    /// Playground: an A2A agent's card
+    ///
+    /// The agent's card as a chosen virtual key gets it at `/a2a/{agent}/.well-known/agent-card.json`.
+    #[utoipa::path(get, path = "/admin/api/playground/a2a/{agent}/card", tag = "Playground",
+        params(("agent" = String, Path), admin::PlaygroundQuery),
+        responses((status = 200, description = "The agent card, with the gateway's addresses.", body = Object)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn playground_a2a_card() {}
+
     /// Playground options
     ///
-    /// The models a key may call, with their modes, and the guardrails a request may ask for,
-    /// those the key or its project enforce marked.
+    /// The models a key may call, with their modes, the guardrails a request may ask for (those
+    /// the key or its project enforce marked), and the MCP servers and A2A agents it may use.
     #[utoipa::path(get, path = "/admin/api/playground/options", tag = "Playground", params(admin::PlaygroundQuery),
         responses(
-            (status = 200, description = "The key's models and guardrails.", body = admin::PlaygroundOptions),
+            (status = 200, description = "The key's models, guardrails, MCP servers and A2A agents.", body = admin::PlaygroundOptions),
             (status = 404, description = "No such key, or not one of the caller's.", body = AdminError),
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]

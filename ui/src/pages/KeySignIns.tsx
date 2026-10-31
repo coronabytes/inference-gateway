@@ -8,9 +8,10 @@ const KIND_LABEL = { mcp: "MCP server", a2a: "A2A agent" } as const;
 
 /**
  * A key's sign-ins to MCP servers and A2A agents whose keys sign in on their own. Signing in sends
- * the browser to the server's sign-in; it comes back to the Access page.
+ * the browser to the server's sign-in; it comes back to the Access page, or to the playground with
+ * the key chosen (`back`).
  */
-export function KeySignIns({ keyItem: k, onClose }: { keyItem: VirtualKey; onClose: () => void }) {
+export function KeySignIns({ keyItem: k, back, onClose }: { keyItem: Pick<VirtualKey, "id" | "name">; back?: "playground"; onClose: () => void }) {
   const [rows, setRows] = useState<KeyConnection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -31,7 +32,7 @@ export function KeySignIns({ keyItem: k, onClose }: { keyItem: VirtualKey; onClo
   const signIn = async (c: KeyConnection) => {
     setBusy(c.upstream_id);
     try {
-      const { authorization_url } = await api<{ authorization_url: string }>(path(c), { method: "POST" });
+      const { authorization_url } = await api<{ authorization_url: string }>(`${path(c)}${back ? `?back=${back}` : ""}`, { method: "POST" });
       window.location.assign(authorization_url);
     } catch (e) {
       setError((e as Error).message);
@@ -112,7 +113,7 @@ export function KeySignIns({ keyItem: k, onClose }: { keyItem: VirtualKey; onClo
   );
 }
 
-/** How a sign-in that came back to the Access page went, once: `connected` or `connect_error`. */
+/** How a sign-in that came back to the Access page or the playground went, once: `connected` or `connect_error`. */
 export function takeSignInResult(): { tone: "good" | "critical"; message: string } | null {
   const [path, query] = window.location.hash.split("?");
   if (!query) return null;

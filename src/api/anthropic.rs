@@ -1,5 +1,7 @@
 //! Inbound Anthropic Messages API: request parsing and response/stream rendering.
 
+use std::collections::HashMap;
+
 use bytes::Bytes;
 use serde_json::{Value, json};
 
@@ -7,9 +9,10 @@ use super::{StreamEncoder, sse_event};
 use crate::{
     error::{Dialect, GatewayError},
     ir::{
-        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, Message, Part, Reasoning, Role, StopReason,
-        StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
+        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, McpItem, Message, Part, Reasoning, Role,
+        StopReason, StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
     },
+    util::prefixed_id,
 };
 
 fn has_cache(v: &Value) -> bool {
@@ -72,6 +75,21 @@ fn parse_blocks(content: &Value) -> Result<Vec<Part>, GatewayError> {
             }),
             // A web search the provider ran in an earlier turn: its answer is in the text that follows.
             "redacted_thinking" | "server_tool_use" | "web_search_tool_result" => {}
+            // A gateway MCP tool's call in an earlier turn, and its result: the model gets them as
+            // text, since the tool may not be offered now.
+            "mcp_tool_use" => out.push(Part::Text {
+                text: format!(
+                    "[The gateway called the MCP tool {} of {} with {}]",
+                    b["name"].as_str().unwrap_or_default(),
+                    b["server_name"].as_str().unwrap_or_default(),
+                    b.get("input").unwrap_or(&Value::Null)
+                ),
+                cache,
+            }),
+            "mcp_tool_result" => {
+                let text = crate::ir::parts_text(&parse_blocks(b.get("content").unwrap_or(&Value::Null))?);
+                out.push(Part::Text { text: format!("[The MCP tool's result: {text}]"), cache });
+            }
             other => {
                 return Err(GatewayError::invalid(format!(
                     "content block type '{other}' is not supported for this model's provider"
@@ -187,11 +205,38 @@ fn usage_json(u: &Usage) -> Value {
     v
 }
 
+/// A gateway MCP call as Anthropic's MCP connector returns its own: an `mcp_tool_use` block and
+/// an `mcp_tool_result` block. A server's tools have no block.
+fn mcp_blocks(item: &McpItem) -> Vec<Value> {
+    let McpItem::Call { server, tool, arguments, result } = item else { return vec![] };
+    let id = prefixed_id("mcptoolu");
+    let content = match result {
+        Ok(r) => r
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|c| match c.get("type").and_then(Value::as_str) {
+                Some("text") => json!({ "type": "text", "text": c.get("text") }),
+                _ => json!({ "type": "text", "text": c.to_string() }),
+            })
+            .collect(),
+        Err(e) => vec![json!({ "type": "text", "text": e })],
+    };
+    vec![
+        json!({ "type": "mcp_tool_use", "id": id, "name": tool, "server_name": server, "input": arguments }),
+        json!({ "type": "mcp_tool_result", "tool_use_id": id, "is_error": item.is_error(), "content": content }),
+    ]
+}
+
 pub fn render_response(r: &ChatResponse, id: &str, model: &str) -> Value {
-    let content: Vec<Value> = r
-        .content
-        .iter()
-        .filter_map(|p| match p {
+    let mut mcp = r.mcp.iter().peekable();
+    let mut content = Vec::new();
+    for (i, p) in r.content.iter().enumerate() {
+        while let Some((_, item)) = mcp.next_if(|(at, _)| *at <= i) {
+            content.extend(mcp_blocks(item));
+        }
+        content.extend(match p {
             Part::Text { text, .. } => Some(json!({ "type": "text", "text": text })),
             Part::ToolCall { id, name, arguments } => {
                 Some(json!({ "type": "tool_use", "id": id, "name": name, "input": crate::ir::parse_args(arguments) }))
@@ -200,8 +245,9 @@ pub fn render_response(r: &ChatResponse, id: &str, model: &str) -> Value {
                 Some(json!({ "type": "thinking", "thinking": text, "signature": signature.clone().unwrap_or_default() }))
             }
             _ => None,
-        })
-        .collect();
+        });
+    }
+    content.extend(mcp.flat_map(|(_, item)| mcp_blocks(item)));
     json!({
         "id": id,
         "type": "message",
@@ -217,11 +263,18 @@ pub fn render_response(r: &ChatResponse, id: &str, model: &str) -> Value {
 pub struct AnthropicEncoder {
     id: String,
     model: String,
+    /// Block indexes as the client gets them: a gateway MCP call takes two blocks, its tools none.
+    blocks: HashMap<usize, usize>,
+    next: usize,
 }
 
 impl AnthropicEncoder {
     pub fn new(id: String, model: String) -> Self {
-        Self { id, model }
+        Self { id, model, blocks: HashMap::new(), next: 0 }
+    }
+
+    fn at(&self, index: usize) -> usize {
+        self.blocks.get(&index).copied().unwrap_or(index)
     }
 }
 
@@ -246,6 +299,10 @@ impl StreamEncoder for AnthropicEncoder {
         };
         match ev {
             StreamEvent::BlockStart { index, kind } => {
+                let at = self.next;
+                self.next += 1;
+                self.blocks.insert(*index, at);
+                let index = &at;
                 let block = match kind {
                     BlockKind::Text => json!({ "type": "text", "text": "" }),
                     BlockKind::ToolCall { id, name } => json!({ "type": "tool_use", "id": id, "name": name, "input": {} }),
@@ -256,21 +313,32 @@ impl StreamEncoder for AnthropicEncoder {
                     &json!({ "type": "content_block_start", "index": index, "content_block": block }),
                 )]
             }
-            StreamEvent::TextDelta { index, text } => vec![delta(*index, json!({ "type": "text_delta", "text": text }))],
+            StreamEvent::TextDelta { index, text } => vec![delta(self.at(*index), json!({ "type": "text_delta", "text": text }))],
             StreamEvent::ToolArgsDelta { index, json } => {
-                vec![delta(*index, json!({ "type": "input_json_delta", "partial_json": json }))]
+                vec![delta(self.at(*index), json!({ "type": "input_json_delta", "partial_json": json }))]
             }
             StreamEvent::ReasoningDelta { index, text } => {
-                vec![delta(*index, json!({ "type": "thinking_delta", "thinking": text }))]
+                vec![delta(self.at(*index), json!({ "type": "thinking_delta", "thinking": text }))]
             }
             StreamEvent::SignatureDelta { index, signature } => {
-                vec![delta(*index, json!({ "type": "signature_delta", "signature": signature }))]
+                vec![delta(self.at(*index), json!({ "type": "signature_delta", "signature": signature }))]
             }
             StreamEvent::BlockStop { index } => {
-                vec![sse_event("content_block_stop", &json!({ "type": "content_block_stop", "index": index }))]
+                vec![sse_event("content_block_stop", &json!({ "type": "content_block_stop", "index": self.at(*index) }))]
             }
             // The provider's own tools and citations: logged, never sent (see `StreamEvent::ServerTool`).
             StreamEvent::ServerTool { .. } | StreamEvent::Annotation { .. } => vec![],
+            // Whole when it comes: the call has run.
+            StreamEvent::Mcp { item, .. } => {
+                let mut out = Vec::new();
+                for block in mcp_blocks(item) {
+                    let index = self.next;
+                    self.next += 1;
+                    out.push(sse_event("content_block_start", &json!({ "type": "content_block_start", "index": index, "content_block": block })));
+                    out.push(sse_event("content_block_stop", &json!({ "type": "content_block_stop", "index": index })));
+                }
+                out
+            }
             StreamEvent::Finish { stop_reason, usage } => vec![
                 sse_event(
                     "message_delta",

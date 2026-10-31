@@ -37,6 +37,16 @@ The card is the agent's own, with these changes:
 
 Labels in `x-gateway-labels` are logged with each message, as for model requests.
 
+## In the playground
+
+The playground (**Models → Playground**) lists the A2A agents the chosen key may use after its models, under **A2A agents**. Pick one to talk to it as the key, through `/a2a/{name}`. Each message is logged, counted and charged like a client's.
+
+- **The card:** the agent's name, skills and A2A version are shown before the first message. **Agent card** shows all of it, as clients get it.
+- **Messages** go over JSON-RPC, in the A2A version of the agent's JSON-RPC interface, and are streamed when the agent streams. An agent with only HTTP+JSON cannot be tried here.
+- **Replies** show the task's state, its artifacts and its status message, as they stream in.
+- **Conversation:** later messages keep the context. A task waiting for input (`input-required`) is continued by the next message. **New conversation** (in Send's menu) starts a new context.
+- **Show curl** gives the same request against the gateway's `/a2a/{name}`.
+
 ## What the gateway does
 
 - **Messages pass through.** Requests and answers are forwarded as they are, streams included, with the `A2A-Version` and `A2A-Extensions` headers.

@@ -132,6 +132,26 @@ struct Pending {
     actor_kind: String,
     actor_id: Option<Uuid>,
     actor_name: Option<String>,
+    /// The console page to come back to.
+    #[serde(default)]
+    back: Back,
+}
+
+/// The console page a sign-in comes back to: the Access page, or the playground with the key chosen.
+#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Back {
+    #[default]
+    Access,
+    Playground,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ConnectQuery {
+    /// The console page to come back to: `access` (the default) or `playground`.
+    #[param(value_type = Option<String>)]
+    back: Option<Back>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -141,6 +161,7 @@ pub(crate) struct ConnectStart {
 }
 
 /// Starts signing the key in to an upstream: the console sends the browser to the URL this returns.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn connect(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -149,6 +170,7 @@ pub(crate) async fn connect(
     headers: HeaderMap,
     uri: Uri,
     Path((id, kind, upstream)): Path<(Uuid, String, Uuid)>,
+    Query(q): Query<ConnectQuery>,
 ) -> R<Json<ConnectStart>> {
     let key = visible_key(&state, &access, id).await?;
     let kind = Kind::parse(&kind).ok_or_else(AdminError::not_found)?;
@@ -167,6 +189,7 @@ pub(crate) async fn connect(
         actor_kind: actor.kind.to_string(),
         actor_id: actor.id,
         actor_name: actor.name.clone(),
+        back: q.back.unwrap_or_default(),
     };
     session.insert(PENDING_KEY, pending).await.map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(ConnectStart { authorization_url }))
@@ -198,16 +221,22 @@ pub(crate) struct CallbackQuery {
     error_description: Option<String>,
 }
 
-/// Back to the console's Access page, with how the sign-in went.
-fn back(param: &str, message: &str) -> Response {
+/// Back to the console page the sign-in started on, with how it went.
+fn back_to(page: Back, key: Option<Uuid>, param: &str, message: &str) -> Response {
     let q = percent_encoding::utf8_percent_encode(message, percent_encoding::NON_ALPHANUMERIC);
-    Redirect::to(&format!("/#/access?{param}={q}")).into_response()
+    Redirect::to(&match (page, key) {
+        (Back::Playground, Some(key)) => format!("/#/models/playground?key={key}&{param}={q}"),
+        _ => format!("/#/access?{param}={q}"),
+    })
+    .into_response()
 }
 
 /// `GET /admin/auth/oauth/callback`: where the upstream's sign-in comes back to. It finishes only in
 /// the browser session that started it, so a link cannot sign someone's key in to another account.
 pub(crate) async fn callback(State(state): State<AppState>, session: Session, Query(q): Query<CallbackQuery>) -> Response {
     let pending: Option<Pending> = session.remove(PENDING_KEY).await.ok().flatten();
+    let (page, key) = pending.as_ref().map_or((Back::Access, None), |p| (p.back, Some(p.key)));
+    let back = |param: &str, message: &str| back_to(page, key, param, message);
     if let Some(err) = q.error {
         return back("connect_error", &format!("The sign-in was refused: {}", q.error_description.unwrap_or(err)));
     }

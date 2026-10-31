@@ -314,6 +314,10 @@ pub enum StreamEvent {
     ServerTool { block: Value },
     /// A citation the provider attached to the answer, in its own shape. Like `ServerTool`.
     Annotation { annotation: Value },
+    /// What the gateway did with its MCP tools (see `api::mcp_tools`): a whole item of the
+    /// response at block `index`, never started or stopped. Responses and Messages return it,
+    /// Chat Completions has no place for it.
+    Mcp { index: usize, item: McpItem },
     Finish { stop_reason: StopReason, usage: Usage },
 }
 
@@ -323,6 +327,57 @@ impl StreamEvent {
             self,
             Self::TextDelta { .. } | Self::ToolArgsDelta { .. } | Self::ReasoningDelta { .. } | Self::BlockStart { .. }
         )
+    }
+}
+
+/// A gateway MCP server's tools as offered to the model, or a call of one that the gateway ran.
+#[derive(Debug, Clone, PartialEq)]
+pub enum McpItem {
+    /// The tools a server offered, as MCP lists them (`name`, `description`, `inputSchema`).
+    Tools { server: String, tools: Vec<Value> },
+    /// A call the gateway ran: the server's `CallToolResult`, or why there is none.
+    Call { server: String, tool: String, arguments: Value, result: Result<Value, String> },
+}
+
+impl McpItem {
+    /// A call's result as text: its text content, other content as JSON, else the structured
+    /// content. `None` when the call failed.
+    pub fn output_text(&self) -> Option<String> {
+        let McpItem::Call { result: Ok(r), .. } = self else { return None };
+        let parts: Vec<String> = r
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|c| match c.get("type").and_then(Value::as_str) {
+                Some("text") => c.get("text").and_then(Value::as_str).unwrap_or_default().to_string(),
+                _ => c.to_string(),
+            })
+            .collect();
+        if parts.is_empty() && let Some(s) = r.get("structuredContent") {
+            return Some(s.to_string());
+        }
+        Some(parts.join("
+"))
+    }
+
+    /// Whether a call failed, or its tool reported an error.
+    pub fn is_error(&self) -> bool {
+        match self {
+            McpItem::Call { result: Ok(r), .. } => r.get("isError").and_then(Value::as_bool) == Some(true),
+            McpItem::Call { result: Err(_), .. } => true,
+            McpItem::Tools { .. } => false,
+        }
+    }
+
+    /// A call as text for the model in a later turn, since the tool may not be offered then.
+    fn history_text(&self) -> Option<String> {
+        let McpItem::Call { server, tool, arguments, result } = self else { return None };
+        let output = match result {
+            Ok(_) => self.output_text().unwrap_or_default(),
+            Err(e) => e.clone(),
+        };
+        Some(format!("[The gateway called the MCP tool {tool} of {server} with {arguments}. Its result: {output}]"))
     }
 }
 
@@ -336,6 +391,29 @@ pub struct ChatResponse {
     /// the client, only logged.
     pub server_tools: Vec<Value>,
     pub annotations: Vec<Value>,
+    /// The gateway's MCP items, each before the part of `content` at its position.
+    pub mcp: Vec<(usize, McpItem)>,
+}
+
+impl ChatResponse {
+    /// The answer as a later turn's history: its parts, with the gateway's MCP calls as text
+    /// where they ran.
+    pub fn history(&self) -> Vec<Part> {
+        if self.mcp.is_empty() {
+            return self.content.clone();
+        }
+        let mut mcp = self.mcp.iter().peekable();
+        let mut parts = Vec::new();
+        let text = |item: &McpItem| item.history_text().map(|text| Part::Text { text, cache: false });
+        for (i, p) in self.content.iter().enumerate() {
+            while let Some((_, item)) = mcp.next_if(|(at, _)| *at <= i) {
+                parts.extend(text(item));
+            }
+            parts.push(p.clone());
+        }
+        parts.extend(mcp.filter_map(|(_, item)| text(item)));
+        parts
+    }
 }
 
 /// Collects stream events into a [`ChatResponse`].
@@ -344,6 +422,7 @@ pub struct Aggregator {
     blocks: Vec<Option<Part>>,
     server_tools: Vec<Value>,
     annotations: Vec<Value>,
+    mcp: Vec<(usize, McpItem)>,
     pub stop_reason: StopReason,
     pub usage: Usage,
     pub finished: bool,
@@ -387,6 +466,7 @@ impl Aggregator {
             StreamEvent::BlockStop { .. } => {}
             StreamEvent::ServerTool { block } => self.server_tools.push(block.clone()),
             StreamEvent::Annotation { annotation } => self.annotations.push(annotation.clone()),
+            StreamEvent::Mcp { index, item } => self.mcp.push((*index, item.clone())),
             StreamEvent::Finish { stop_reason, usage } => {
                 self.stop_reason = *stop_reason;
                 self.usage = *usage;
@@ -396,6 +476,8 @@ impl Aggregator {
     }
 
     pub fn finish(self) -> ChatResponse {
+        // An item's block index as a position in `content`, which has only the blocks with parts.
+        let mcp = self.mcp.into_iter().map(|(i, item)| (self.blocks.iter().take(i).filter(|b| b.is_some()).count(), item)).collect();
         let content = self
             .blocks
             .into_iter()
@@ -407,7 +489,7 @@ impl Aggregator {
                 p => p,
             })
             .collect();
-        ChatResponse { content, stop_reason: self.stop_reason, usage: self.usage, server_tools: self.server_tools, annotations: self.annotations }
+        ChatResponse { content, stop_reason: self.stop_reason, usage: self.usage, server_tools: self.server_tools, annotations: self.annotations, mcp }
     }
 }
 

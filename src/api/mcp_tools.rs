@@ -5,7 +5,8 @@
 //! use them) are offered to the model as function tools named `{server}__{tool}`. When the model
 //! calls them, the gateway runs the calls, adds their results to the conversation and asks the
 //! model again, until it answers or calls one of the client's own tools. The client sees one
-//! response: the text of every round, and only its own tool calls. What ran is logged with it.
+//! response: the text of every round, and what the gateway ran as its API shows MCP calls (in
+//! Responses and Messages; Chat Completions has no place for them, so they are only logged).
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -16,7 +17,7 @@ use tokio::sync::mpsc;
 use super::Inbound;
 use crate::{
     error::{ErrorKind, GatewayError},
-    ir::{self, Aggregator, BlockKind, ChatRequest, ImageSource, Message, Part, Role, StopReason, StreamEvent, Usage},
+    ir::{self, Aggregator, BlockKind, ChatRequest, ImageSource, McpItem, Message, Part, Role, StopReason, StreamEvent, Usage},
     labels::Labels,
     mcp::{McpServer, ToolsError, hub::{SEPARATOR, run_tool}},
     model::{Deployment, VirtualKey},
@@ -39,6 +40,8 @@ pub struct Toolset {
     /// By the name the model sees: the server, and the tool's own name there.
     by_name: HashMap<String, (Arc<McpServer>, String)>,
     pub defs: Vec<ir::Tool>,
+    /// Each server's tools as it lists them, for the response.
+    listed: Vec<(String, Vec<Value>)>,
 }
 
 impl Toolset {
@@ -148,7 +151,7 @@ fn function_name(server: &str, tool: &str) -> String {
 /// The tools of the servers a request names, as the key may use them.
 pub async fn toolset(state: &AppState, key: &VirtualKey, wanted: Vec<Wanted>) -> Result<Toolset, GatewayError> {
     let snap = state.registry.snapshot();
-    let mut set = Toolset { by_name: HashMap::new(), defs: Vec::new() };
+    let mut set = Toolset { by_name: HashMap::new(), defs: Vec::new(), listed: Vec::new() };
     for w in wanted {
         let server = snap
             .mcp_servers
@@ -162,11 +165,13 @@ pub async fn toolset(state: &AppState, key: &VirtualKey, wanted: Vec<Wanted>) ->
                 GatewayError { upstream: true, ..GatewayError::new(ErrorKind::Upstream, axum::http::StatusCode::BAD_GATEWAY, format!("MCP server '{}': {e}", server.name)) }
             }
         })?;
+        let mut offered = Vec::new();
         for t in listed.iter() {
             let Some(tool) = t.get("name").and_then(Value::as_str) else { continue };
             if !server.allows_tool(tool) || w.allowed.as_ref().is_some_and(|a| !a.iter().any(|x| x == tool)) {
                 continue;
             }
+            offered.push(t.clone());
             let name = function_name(&server.name, tool);
             set.defs.push(ir::Tool {
                 name: name.clone(),
@@ -176,6 +181,7 @@ pub async fn toolset(state: &AppState, key: &VirtualKey, wanted: Vec<Wanted>) ->
             });
             set.by_name.insert(name, (server.clone(), tool.to_string()));
         }
+        set.listed.push((server.name.clone(), offered));
     }
     Ok(set)
 }
@@ -220,8 +226,9 @@ pub struct Caller {
 
 /// Runs a request with gateway MCP tools on `d`: the first round is asked for here, so an
 /// upstream that fails at once can still be failed over; the rounds after it run in their own
-/// task, as the client reads the answer. The events are one response: blocks renumbered, the
-/// gateway's tool calls left out, one `Finish` with every round's usage.
+/// task, as the client reads the answer. The events are one response: the servers' tools first,
+/// blocks renumbered, the gateway's tool calls as [`McpItem`]s once they ran, one `Finish` with
+/// every round's usage.
 pub async fn start(state: &AppState, d: &Arc<Deployment>, ir: ChatRequest, set: Arc<Toolset>, caller: Caller) -> Result<(StreamEvent, EventStream), GatewayError> {
     let mut events = providers::stream_chat(state, d, &ir).await?;
     let first = match events.next().await {
@@ -243,6 +250,13 @@ async fn rounds(state: AppState, d: Arc<Deployment>, mut ir: ChatRequest, set: A
     let send = async |ev: EventResult| tx.send(ev).await.is_ok();
     let mut next_index = 0;
     let mut usage = Usage::default();
+    for (server, tools) in &set.listed {
+        let item = McpItem::Tools { server: server.clone(), tools: tools.clone() };
+        if !send(Ok(StreamEvent::Mcp { index: next_index, item })).await {
+            return;
+        }
+        next_index += 1;
+    }
     for round in 0.. {
         let mut agg = Aggregator::default();
         // This round's block index → the client's, `None` for the gateway's tool calls.
@@ -279,7 +293,7 @@ async fn rounds(state: AppState, d: Arc<Deployment>, mut ir: ChatRequest, set: A
                     stop = stop_reason;
                     break;
                 }
-                ev @ (StreamEvent::ServerTool { .. } | StreamEvent::Annotation { .. }) => Some(ev),
+                ev @ (StreamEvent::ServerTool { .. } | StreamEvent::Annotation { .. } | StreamEvent::Mcp { .. }) => Some(ev),
             };
             if let Some(ev) = out
                 && !send(Ok(ev)).await
@@ -319,22 +333,21 @@ async fn rounds(state: AppState, d: Arc<Deployment>, mut ir: ChatRequest, set: A
         .await;
         let mut parts = Vec::with_capacity(results.len());
         for (id, server, tool, arguments, result) in results {
-            let (content, is_error, logged) = match result {
+            let (content, is_error, result) = match result {
                 Ok(r) => {
                     let (content, is_error) = result_parts(&r);
-                    (content, is_error, json!({ "output": r }))
+                    (content, is_error, Ok(r))
                 }
                 Err(e) => {
                     let message = e.message();
-                    (vec![Part::Text { text: message.clone(), cache: false }], true, json!({ "error": message }))
+                    (vec![Part::Text { text: message.clone(), cache: false }], true, Err(message))
                 }
             };
-            // What ran is logged with the response, never sent: the client's API has no place for it.
-            let mut block = json!({ "type": "mcp_call", "server_label": server.name, "name": tool, "arguments": arguments });
-            block.as_object_mut().expect("object").extend(logged.as_object().expect("object").clone());
-            if !send(Ok(StreamEvent::ServerTool { block })).await {
+            let item = McpItem::Call { server: server.name.clone(), tool, arguments, result };
+            if !send(Ok(StreamEvent::Mcp { index: next_index, item })).await {
                 return;
             }
+            next_index += 1;
             parts.push(Part::ToolResult { call_id: id, content, is_error, cache: false });
         }
         ir.messages.push(Message { role: Role::Assistant, content: answer.content });

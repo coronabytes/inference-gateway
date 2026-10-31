@@ -578,10 +578,15 @@ pub(crate) fn origin(headers: &HeaderMap, uri: &Uri) -> String {
 
 /// `GET /a2a/{agent}/.well-known/agent-card.json`: the agent's card, with the gateway's addresses.
 pub async fn card(State(state): State<AppState>, ClientKey(key): ClientKey, Path(name): Path<String>, uri: Uri, headers: HeaderMap) -> Response {
+    card_for(&state, &key, &name, &uri, &headers).await
+}
+
+/// The agent's card for `key`, with the gateway's addresses. Also the console playground's.
+pub async fn card_for(state: &AppState, key: &Arc<VirtualKey>, name: &str, uri: &Uri, headers: &HeaderMap) -> Response {
     let result = async {
-        let agent = agent(&state, &key, &name)?;
-        let card = state.a2a.get(&state, &agent, Some(key.id)).await.map_err(card_error)?;
-        Ok::<_, GatewayError>(axum::Json(card.rewritten(&format!("{}/a2a/{}", origin(&headers, &uri), agent.name))).into_response())
+        let agent = agent(state, key, name)?;
+        let card = state.a2a.get(state, &agent, Some(key.id)).await.map_err(card_error)?;
+        Ok::<_, GatewayError>(axum::Json(card.rewritten(&format!("{}/a2a/{}", origin(headers, uri), agent.name))).into_response())
     }
     .await;
     result.unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
@@ -589,9 +594,14 @@ pub async fn card(State(state): State<AppState>, ClientKey(key): ClientKey, Path
 
 /// `POST /a2a/{agent}`: the agent's JSON-RPC interface.
 pub async fn jsonrpc(State(state): State<AppState>, ClientKey(key): ClientKey, Path(name): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
+    jsonrpc_for(&state, &key, &name, &headers, body).await
+}
+
+/// A JSON-RPC call of the agent as `key`. Also the console playground's.
+pub async fn jsonrpc_for(state: &AppState, key: &Arc<VirtualKey>, name: &str, headers: &HeaderMap, body: Bytes) -> Response {
     let msg: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let ask = ask_jsonrpc(&msg);
-    forward(&state, &key, &name, Binding::JsonRpc, Method::POST, "", None, &headers, body, ask, msg.get("id").cloned())
+    forward(state, key, name, Binding::JsonRpc, Method::POST, "", None, headers, body, ask, msg.get("id").cloned())
         .await
         .unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
 }

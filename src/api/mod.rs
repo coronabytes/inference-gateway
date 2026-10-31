@@ -465,10 +465,10 @@ pub(crate) async fn run_model(
                 Inbound::Chat => chat::render_response(&r, &format!("chatcmpl-{}", crate::util::random_hex(12)), &model),
             };
             if let Some(c) = tracker.log() {
-                c.response(Logged::Json(logged_response(v.clone(), &r)));
+                c.response(Logged::Json(logged_response(v.clone(), &r, inbound)));
             }
             if let Some(sink) = turn_sink {
-                sink.finish(r.content);
+                sink.finish(r.history());
             }
             Json(v).into_response()
         }
@@ -507,7 +507,7 @@ pub(crate) async fn run_model(
                         Inbound::Responses => responses::render_response(r, &id, &model),
                         Inbound::Chat => chat::render_response(r, &id, &model),
                     };
-                    logged_response(v, r)
+                    logged_response(v, r, inbound)
                 })
             });
             sse_response(Body::from_stream(encode_stream(first, rest, enc, tracker, turn_sink, render)))
@@ -735,12 +735,18 @@ type Render = Box<dyn Fn(&ChatResponse) -> Value + Send>;
 
 /// A translated response as logged: what the client got, and under `x_gateway_not_sent` what
 /// the provider ran itself and cited (web searches, their results, citations), which the
-/// translation has no place for in the client's API.
-fn logged_response(mut v: Value, r: &ChatResponse) -> Value {
-    if (!r.server_tools.is_empty() || !r.annotations.is_empty())
+/// translation has no place for in the client's API, and in Chat Completions the gateway's MCP
+/// calls (as Responses has them).
+fn logged_response(mut v: Value, r: &ChatResponse, inbound: Inbound) -> Value {
+    let mcp: Vec<Value> = if inbound == Inbound::Chat { r.mcp.iter().map(|(_, item)| responses::mcp_item(item)).collect() } else { vec![] };
+    if (!r.server_tools.is_empty() || !r.annotations.is_empty() || !mcp.is_empty())
         && let Some(o) = v.as_object_mut()
     {
-        o.insert("x_gateway_not_sent".into(), json!({ "server_tools": r.server_tools, "annotations": r.annotations }));
+        let mut not_sent = json!({ "server_tools": r.server_tools, "annotations": r.annotations });
+        if !mcp.is_empty() {
+            not_sent["mcp"] = mcp.into();
+        }
+        o.insert("x_gateway_not_sent".into(), not_sent);
     }
     v
 }
@@ -818,7 +824,7 @@ fn encode_stream(
                             c.reassembled(render(&r));
                         }
                         if let Some(sink) = st.sink.take() {
-                            sink.finish(r.content);
+                            sink.finish(r.history());
                         }
                     }
                 }
@@ -1343,12 +1349,75 @@ mod tests {
         };
         let client = chat::render_response(&r, "chatcmpl-1", "m");
         assert!(client.get("x_gateway_not_sent").is_none());
-        let logged = logged_response(client, &r);
+        let logged = logged_response(client, &r, Inbound::Chat);
         assert_eq!(logged["x_gateway_not_sent"]["server_tools"], json!([{ "type": "web_search_call" }]));
         assert_eq!(logged["choices"][0]["message"]["content"], "Hi");
         // Without any, the logged response is what the client got.
         let plain = ChatResponse { content: r.content.clone(), ..Default::default() };
-        assert!(logged_response(chat::render_response(&plain, "c", "m"), &plain).get("x_gateway_not_sent").is_none());
+        assert!(logged_response(chat::render_response(&plain, "c", "m"), &plain, Inbound::Chat).get("x_gateway_not_sent").is_none());
+    }
+
+    /// The gateway's MCP items: Responses and Messages return them in order among the answer's
+    /// parts, streamed or not; Chat Completions only logs them.
+    #[test]
+    fn gateway_mcp_calls_are_returned_where_the_api_has_them() {
+        use crate::ir::{BlockKind, McpItem, StopReason};
+        let tools = McpItem::Tools { server: "docs".into(), tools: vec![json!({ "name": "read", "inputSchema": { "type": "object" } })] };
+        let call = McpItem::Call {
+            server: "docs".into(),
+            tool: "read".into(),
+            arguments: json!({ "path": "a" }),
+            result: Ok(json!({ "content": [{ "type": "text", "text": "A" }] })),
+        };
+        let failed = McpItem::Call { server: "docs".into(), tool: "read".into(), arguments: json!({}), result: Err("budget reached".into()) };
+        // Tools, a call and a failed call, then the answer's text in block 3.
+        let events = [
+            StreamEvent::Mcp { index: 0, item: tools },
+            StreamEvent::Mcp { index: 1, item: call },
+            StreamEvent::Mcp { index: 2, item: failed },
+            StreamEvent::BlockStart { index: 3, kind: BlockKind::Text },
+            StreamEvent::TextDelta { index: 3, text: "Done".into() },
+            StreamEvent::BlockStop { index: 3 },
+            StreamEvent::Finish { stop_reason: StopReason::EndTurn, usage: Usage::default() },
+        ];
+        let mut agg = Aggregator::default();
+        events.iter().for_each(|e| agg.push(e));
+        let r = agg.finish();
+        assert_eq!(r.mcp.iter().map(|(at, _)| *at).collect::<Vec<_>>(), [0, 0, 0]);
+
+        let v = responses::render_response(&r, "resp_1", "m");
+        let types: Vec<&str> = v["output"].as_array().unwrap().iter().map(|o| o["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["mcp_list_tools", "mcp_call", "mcp_call", "message"]);
+        assert_eq!(v["output"][0]["tools"][0]["input_schema"], json!({ "type": "object" }));
+        assert_eq!((v["output"][1]["output"].as_str(), v["output"][1]["arguments"].as_str()), (Some("A"), Some(r#"{"path":"a"}"#)));
+        assert_eq!((v["output"][2]["status"].as_str(), v["output"][2]["error"].as_str()), (Some("failed"), Some("budget reached")));
+
+        let v = anthropic::render_response(&r, "msg_1", "m");
+        let types: Vec<&str> = v["content"].as_array().unwrap().iter().map(|o| o["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["mcp_tool_use", "mcp_tool_result", "mcp_tool_use", "mcp_tool_result", "text"]);
+        assert_eq!(v["content"][1]["tool_use_id"], v["content"][0]["id"]);
+        assert_eq!(v["content"][3]["is_error"], true);
+
+        // Streamed: the same items, and Messages' text block after the two calls' four blocks.
+        let sse = |mut enc: Box<dyn StreamEncoder>| {
+            let mut out = enc.start();
+            events.iter().for_each(|e| out.extend(enc.event(e)));
+            out.iter().map(|b| String::from_utf8_lossy(b).into_owned()).collect::<String>()
+        };
+        let s = sse(Box::new(responses::ResponsesEncoder::new("resp_1".into(), "m".into())));
+        assert!(s.contains("response.mcp_list_tools.completed") && s.contains("response.mcp_call.completed") && s.contains("response.mcp_call.failed"));
+        let s = sse(Box::new(anthropic::AnthropicEncoder::new("msg_1".into(), "m".into())));
+        assert!(s.contains(r#""index":4,"type":"text_delta""#) || s.contains(r#""index":4"#));
+        assert!(s.contains(r#""type":"mcp_tool_use""#));
+        let s = sse(Box::new(chat::ChatEncoder::new("chatcmpl-1".into(), "m".into(), true)));
+        assert!(!s.contains("mcp"));
+
+        let logged = logged_response(chat::render_response(&r, "c", "m"), &r, Inbound::Chat);
+        assert_eq!(logged["x_gateway_not_sent"]["mcp"].as_array().map(Vec::len), Some(3));
+        assert!(logged_response(responses::render_response(&r, "r", "m"), &r, Inbound::Responses).get("x_gateway_not_sent").is_none());
+        // A later turn's history has the calls as text.
+        let history = crate::ir::parts_text(&r.history());
+        assert!(history.contains("read of docs") && history.contains("budget reached") && history.ends_with("Done"));
     }
 
     #[test]
