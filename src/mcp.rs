@@ -42,7 +42,7 @@ use crate::{
     error::{Dialect, ErrorKind, GatewayError},
     labels::Labels,
     model::VirtualKey,
-    oauth::{Kind, OAuthConfig, UpstreamAuth},
+    oauth::{Kind, OAuthConfig, Slot, UpstreamAuth, Who},
     sse::SseParser,
     state::AppState,
 };
@@ -271,7 +271,8 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
         }
         req.send().await.map_err(|e| GatewayError::from_reqwest(&e))
     };
-    let auth = server.auth.header(state, Some(key.id)).await.map_err(|e| {
+    let who = Who { key: key.id, labels: &labels };
+    let auth = server.auth.header(state, Some(who)).await.map_err(|e| {
         let e = e.into_gateway();
         calls.fail(&e);
         e
@@ -279,8 +280,8 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
     let mut resp = send(auth).await;
     // A token the server refuses is renewed, once.
     if server.auth.renews() && resp.as_ref().is_ok_and(|r| r.status() == StatusCode::UNAUTHORIZED) {
-        server.auth.renew(state, Some(key.id)).await;
-        let auth = server.auth.header(state, Some(key.id)).await.map_err(|e| {
+        server.auth.renew(state, Some(who)).await;
+        let auth = server.auth.header(state, Some(who)).await.map_err(|e| {
             let e = e.into_gateway();
             calls.fail(&e);
             e
@@ -702,7 +703,7 @@ async fn close(state: &AppState, server: &McpServer, session: &Session) {
 pub async fn probe(state: &AppState, server: &McpServer) -> Result<Probe, String> {
     let auth = match server.auth.header(state, None).await {
         Ok(a) => a,
-        Err(crate::oauth::AuthError::NotConnected(_)) => {
+        Err(e) if e.not_signed_in() => {
             return Err("each key signs in to this server on its own; sign a key in on the Access page, then call the server with it".into());
         }
         Err(e) => return Err(e.message()),
@@ -798,23 +799,23 @@ async fn rpc(state: &AppState, server: &McpServer, session: &Session, msg: &Valu
         .ok_or_else(|| RpcError::other(format!("{method}: the server's answer has no reply")))
 }
 
-/// The sessions the gateway keeps open with servers for `/mcp`, one per key and server, and the
+/// The sessions the gateway keeps open with servers for `/mcp`, one per server and sign-in, and the
 /// servers' tool lists, both in this replica's memory. A session unused for `SESSION_IDLE` is opened
 /// again; a tool list is fetched again after `TOOLS_FRESH`, or when its server's settings change.
 #[derive(Default)]
 pub struct Upstreams {
-    sessions: std::sync::Mutex<HashMap<(Uuid, Uuid), (Session, Instant)>>,
-    /// By server, and by key where each key signs in on its own.
-    tools: std::sync::Mutex<HashMap<(Uuid, Option<Uuid>), (Arc<McpServer>, Instant, Arc<Vec<Value>>)>>,
+    sessions: std::sync::Mutex<HashMap<(Uuid, Slot), (Session, Instant)>>,
+    /// By server, and by sign-in where keys sign in on their own.
+    tools: std::sync::Mutex<HashMap<(Uuid, Option<Slot>), (Arc<McpServer>, Instant, Arc<Vec<Value>>)>>,
 }
 
 const SESSION_IDLE: Duration = Duration::from_secs(600);
 const TOOLS_FRESH: Duration = Duration::from_secs(60);
 
 impl Upstreams {
-    /// The server's tools as it lists them for `key`, unfiltered.
-    pub async fn tools(&self, state: &AppState, server: &Arc<McpServer>, key: Uuid) -> Result<Arc<Vec<Value>>, ToolsError> {
-        let slot = (server.id, server.auth.per_key().then_some(key));
+    /// The server's tools as it lists them for `who`, unfiltered.
+    pub async fn tools(&self, state: &AppState, server: &Arc<McpServer>, who: Who<'_>) -> Result<Arc<Vec<Value>>, ToolsError> {
+        let slot = (server.id, server.auth.slot(who).map_err(ToolsError::Auth)?);
         if let Some((s, at, tools)) = self.tools.lock().expect("tools lock").get(&slot)
             && Arc::ptr_eq(s, server)
             && at.elapsed() < TOOLS_FRESH
@@ -823,7 +824,7 @@ impl Upstreams {
         }
         let mut renewed = false;
         let listed = loop {
-            let auth = server.auth.header(state, Some(key)).await.map_err(ToolsError::Auth)?;
+            let auth = server.auth.header(state, Some(who)).await.map_err(ToolsError::Auth)?;
             let result = match open(state, server, auth).await {
                 Ok((session, _)) => {
                     let listed = tools(state, server, &session).await;
@@ -834,7 +835,7 @@ impl Upstreams {
             };
             match result {
                 Err(RpcError { status: Some(401), .. }) if server.auth.renews() && !renewed => {
-                    server.auth.renew(state, Some(key)).await;
+                    server.auth.renew(state, Some(who)).await;
                     renewed = true;
                 }
                 other => break other.map_err(|e| ToolsError::Failed(e.message))?,
@@ -845,10 +846,10 @@ impl Upstreams {
         Ok(listed)
     }
 
-    /// Sends a request for `key` and returns the server's reply, in the key's session with the
+    /// Sends a request for `who` and returns the server's reply, in its session with the
     /// server, which is opened when there is none or the server forgot it.
-    pub async fn call(&self, state: &AppState, key: Uuid, server: &McpServer, msg: &Value) -> Result<Value, String> {
-        let slot = (key, server.id);
+    pub async fn call(&self, state: &AppState, who: Who<'_>, server: &McpServer, msg: &Value) -> Result<Value, String> {
+        let slot = (server.id, server.auth.slot(who).map_err(|e| e.message())?.unwrap_or_else(|| Slot::key(who.key)));
         let cached = {
             let mut sessions = self.sessions.lock().expect("sessions lock");
             sessions.retain(|_, (_, used)| used.elapsed() < SESSION_IDLE);
@@ -856,7 +857,7 @@ impl Upstreams {
         };
         let reused = cached.is_some();
         // The token may have been renewed since the session was opened.
-        let auth = server.auth.header(state, Some(key)).await.map_err(|e| e.message())?;
+        let auth = server.auth.header(state, Some(who)).await.map_err(|e| e.message())?;
         let mut session = match cached {
             Some(s) => Session { auth: auth.clone(), ..s },
             None => open(state, server, auth).await.map_err(|e| e.message)?.0,
@@ -867,9 +868,9 @@ impl Upstreams {
         let refused = matches!(result, Err(RpcError { status: Some(401), .. })) && server.auth.renews();
         if (reused && matches!(result, Err(RpcError { status: Some(404), .. }))) || refused {
             if refused {
-                server.auth.renew(state, Some(key)).await;
+                server.auth.renew(state, Some(who)).await;
             }
-            let auth = server.auth.header(state, Some(key)).await.map_err(|e| e.message())?;
+            let auth = server.auth.header(state, Some(who)).await.map_err(|e| e.message())?;
             session = open(state, server, auth).await.map_err(|e| e.message)?.0;
             result = rpc(state, server, &session, msg).await;
         }

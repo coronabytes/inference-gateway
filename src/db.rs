@@ -1143,54 +1143,60 @@ pub async fn delete_tool_router(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
 
 // ---------------------------------------------------------------- upstream OAuth tokens
 
-/// A key's tokens for an `oauth_user` upstream, sealed.
+/// A sign-in to an `oauth_user` upstream: the upstream, the key, and the labels the upstream tells
+/// the key's sign-ins apart by (`tenant=…,user=…`; empty when the key signs in once).
+#[derive(Debug, Clone, Copy)]
+pub struct SignInRef<'a> {
+    pub kind: &'a str,
+    pub upstream: Uuid,
+    pub key: Uuid,
+    pub labels: &'a str,
+}
+
+/// A sign-in's tokens, sealed.
 pub struct OAuthTokenRow {
     pub access_token: Vec<u8>,
     pub refresh_token: Option<Vec<u8>>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-pub async fn get_oauth_token(pool: &PgPool, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<Option<OAuthTokenRow>> {
+pub async fn get_oauth_token(pool: &PgPool, s: SignInRef<'_>) -> sqlx::Result<Option<OAuthTokenRow>> {
     sqlx::query_as!(
         OAuthTokenRow,
-        "SELECT access_token, refresh_token, expires_at FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
-        kind,
-        upstream,
-        key
+        "SELECT access_token, refresh_token, expires_at FROM oauth_tokens
+         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels
     )
     .fetch_optional(pool)
     .await
 }
 
 /// The row, locked until the transaction ends: for a refresh.
-pub async fn lock_oauth_token(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<Option<OAuthTokenRow>> {
+pub async fn lock_oauth_token(db: impl PgExecutor<'_>, s: SignInRef<'_>) -> sqlx::Result<Option<OAuthTokenRow>> {
     sqlx::query_as!(
         OAuthTokenRow,
         "SELECT access_token, refresh_token, expires_at FROM oauth_tokens
-         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 FOR UPDATE",
-        kind,
-        upstream,
-        key
+         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4 FOR UPDATE",
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels
     )
     .fetch_optional(db)
     .await
 }
 
-pub async fn update_oauth_token(
-    db: impl PgExecutor<'_>,
-    kind: &str,
-    upstream: Uuid,
-    key: Uuid,
-    access: &[u8],
-    refresh: Option<&[u8]>,
-    expires_at: Option<DateTime<Utc>>,
-) -> sqlx::Result<()> {
+pub async fn update_oauth_token(db: impl PgExecutor<'_>, s: SignInRef<'_>, access: &[u8], refresh: Option<&[u8]>, expires_at: Option<DateTime<Utc>>) -> sqlx::Result<()> {
     sqlx::query!(
-        "UPDATE oauth_tokens SET access_token = $4, refresh_token = $5, expires_at = $6, updated_at = now()
-         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
-        kind,
-        upstream,
-        key,
+        "UPDATE oauth_tokens SET access_token = $5, refresh_token = $6, expires_at = $7, updated_at = now(), last_used_at = now()
+         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels,
         access,
         refresh,
         expires_at
@@ -1200,13 +1206,10 @@ pub async fn update_oauth_token(
     Ok(())
 }
 
-/// A new sign-in: replaces what the key had for the upstream.
-#[allow(clippy::too_many_arguments)]
+/// A new sign-in: replaces what was there for the same key and labels.
 pub async fn save_oauth_token(
     pool: &PgPool,
-    kind: &str,
-    upstream: Uuid,
-    key: Uuid,
+    s: SignInRef<'_>,
     access: &[u8],
     refresh: Option<&[u8]>,
     expires_at: Option<DateTime<Utc>>,
@@ -1214,14 +1217,15 @@ pub async fn save_oauth_token(
     by: &str,
 ) -> sqlx::Result<()> {
     sqlx::query!(
-        "INSERT INTO oauth_tokens (upstream_kind, upstream_id, key_id, access_token, refresh_token, expires_at, scope, connected_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (upstream_kind, upstream_id, key_id) DO UPDATE SET access_token = EXCLUDED.access_token,
+        "INSERT INTO oauth_tokens (upstream_kind, upstream_id, key_id, labels, access_token, refresh_token, expires_at, scope, connected_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (upstream_kind, upstream_id, key_id, labels) DO UPDATE SET access_token = EXCLUDED.access_token,
              refresh_token = EXCLUDED.refresh_token, expires_at = EXCLUDED.expires_at, scope = EXCLUDED.scope,
-             connected_by = EXCLUDED.connected_by, created_at = now(), updated_at = now()",
-        kind,
-        upstream,
-        key,
+             connected_by = EXCLUDED.connected_by, created_at = now(), updated_at = now(), last_used_at = now()",
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels,
         access,
         refresh,
         expires_at,
@@ -1234,53 +1238,162 @@ pub async fn save_oauth_token(
 }
 
 /// The upstream refused the token: the next call refreshes it.
-pub async fn expire_oauth_token(pool: &PgPool, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<()> {
+pub async fn expire_oauth_token(pool: &PgPool, s: SignInRef<'_>) -> sqlx::Result<()> {
     sqlx::query!(
-        "UPDATE oauth_tokens SET expires_at = now() WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
-        kind,
-        upstream,
-        key
+        "UPDATE oauth_tokens SET expires_at = now() WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels
     )
     .execute(pool)
     .await?;
     Ok(())
 }
 
-pub async fn delete_oauth_token(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<bool> {
-    let r = sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3", kind, upstream, key)
-        .execute(db)
-        .await?;
+pub async fn delete_oauth_token(db: impl PgExecutor<'_>, s: SignInRef<'_>) -> sqlx::Result<bool> {
+    let r = sqlx::query!(
+        "DELETE FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels
+    )
+    .execute(db)
+    .await?;
     Ok(r.rows_affected() > 0)
 }
 
-/// A key's sign-ins: (kind, upstream, signed in at, expires at, scope, by whom).
-pub async fn key_connections(
-    pool: &PgPool,
-    key: Uuid,
-) -> sqlx::Result<Vec<(String, Uuid, DateTime<Utc>, Option<DateTime<Utc>>, bool, Option<String>, Option<String>)>> {
-    let rows = sqlx::query!(
-        r#"SELECT upstream_kind, upstream_id, created_at, expires_at, refresh_token IS NOT NULL AS "refreshable!", scope, connected_by
-           FROM oauth_tokens WHERE key_id = $1"#,
+/// Every sign-in to an upstream, of every key: when it starts telling sign-ins apart differently.
+pub async fn delete_upstream_oauth_tokens(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid) -> sqlx::Result<u64> {
+    Ok(sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2", kind, upstream).execute(db).await?.rows_affected())
+}
+
+/// A key's sign-in to an upstream, for the console.
+pub struct KeySignIn {
+    pub upstream_kind: String,
+    pub upstream_id: Uuid,
+    pub labels: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub refreshable: bool,
+    pub scope: Option<String>,
+    pub connected_by: Option<String>,
+    pub last_used_at: DateTime<Utc>,
+}
+
+/// A key's sign-ins of the whole key (no labels), and how many sign-ins it has per upstream.
+pub async fn key_connections(pool: &PgPool, key: Uuid) -> sqlx::Result<(Vec<KeySignIn>, Vec<(String, Uuid, i64)>)> {
+    let own = sqlx::query_as!(
+        KeySignIn,
+        r#"SELECT upstream_kind, upstream_id, labels, created_at, expires_at, refresh_token IS NOT NULL AS "refreshable!", scope, connected_by, last_used_at
+           FROM oauth_tokens WHERE key_id = $1 AND labels = ''"#,
         key
     )
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.created_at, r.expires_at, r.refreshable, r.scope, r.connected_by)).collect())
+    let counts = sqlx::query!(
+        r#"SELECT upstream_kind, upstream_id, count(*) AS "n!" FROM oauth_tokens WHERE key_id = $1 AND labels <> '' GROUP BY upstream_kind, upstream_id"#,
+        key
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok((own, counts.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.n)).collect()))
 }
 
-/// Every sealed token, for `rotate-key`: (kind, upstream, key, access, refresh).
-#[allow(clippy::type_complexity)]
-pub async fn sealed_oauth_tokens(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(String, Uuid, Uuid, Vec<u8>, Option<Vec<u8>>)>> {
-    let rows = sqlx::query!("SELECT upstream_kind, upstream_id, key_id, access_token, refresh_token FROM oauth_tokens FOR UPDATE").fetch_all(db).await?;
-    Ok(rows.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.key_id, r.access_token, r.refresh_token)).collect())
-}
-
-pub async fn set_oauth_token_secrets(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid, access: &[u8], refresh: Option<&[u8]>) -> sqlx::Result<()> {
-    sqlx::query!(
-        "UPDATE oauth_tokens SET access_token = $4, refresh_token = $5 WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+/// A key's sign-ins to an upstream by labels, newest first: those with every `key=value` pair in
+/// `having`, and how many there are in all.
+pub async fn sign_ins(pool: &PgPool, kind: &str, upstream: Uuid, key: Uuid, having: &[String], limit: i64, offset: i64) -> sqlx::Result<(Vec<KeySignIn>, i64)> {
+    let rows = sqlx::query_as!(
+        KeySignIn,
+        r#"SELECT upstream_kind, upstream_id, labels, created_at, expires_at, refresh_token IS NOT NULL AS "refreshable!", scope, connected_by, last_used_at
+           FROM oauth_tokens
+           WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels <> '' AND string_to_array(labels, ',') @> $4
+           ORDER BY created_at DESC, labels LIMIT $5 OFFSET $6"#,
         kind,
         upstream,
         key,
+        having,
+        limit,
+        offset
+    )
+    .fetch_all(pool)
+    .await?;
+    let total = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "n!" FROM oauth_tokens
+           WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels <> '' AND string_to_array(labels, ',') @> $4"#,
+        kind,
+        upstream,
+        key,
+        having
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok((rows, total))
+}
+
+/// One sign-in, for the console and the API.
+pub async fn get_sign_in(pool: &PgPool, s: SignInRef<'_>) -> sqlx::Result<Option<KeySignIn>> {
+    sqlx::query_as!(
+        KeySignIn,
+        r#"SELECT upstream_kind, upstream_id, labels, created_at, expires_at, refresh_token IS NOT NULL AS "refreshable!", scope, connected_by, last_used_at
+           FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4"#,
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// The sign-in was used just now.
+pub async fn touch_oauth_token(pool: &PgPool, s: SignInRef<'_>) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET last_used_at = now() WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Deletes sign-ins unused for longer than their upstream keeps them (`sign_in_retention_days`,
+/// 7 when not set), and those that cannot be used again: their access token expired, and they
+/// have no refresh token. Returns how many went.
+pub async fn prune_sign_ins(pool: &PgPool, default_days: i32) -> sqlx::Result<u64> {
+    let unused = sqlx::query!(
+        "DELETE FROM oauth_tokens t
+         WHERE t.last_used_at < now() - make_interval(days => COALESCE(
+             (SELECT (s.oauth->>'sign_in_retention_days')::int FROM mcp_servers s WHERE t.upstream_kind = 'mcp' AND s.id = t.upstream_id),
+             (SELECT (a.oauth->>'sign_in_retention_days')::int FROM a2a_agents a WHERE t.upstream_kind = 'a2a' AND a.id = t.upstream_id),
+             $1))",
+        default_days
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    let dead = sqlx::query!("DELETE FROM oauth_tokens WHERE refresh_token IS NULL AND expires_at < now()").execute(pool).await?.rows_affected();
+    Ok(unused + dead)
+}
+
+/// Every sealed token, for `rotate-key`: (kind, upstream, key, labels, access, refresh).
+#[allow(clippy::type_complexity)]
+pub async fn sealed_oauth_tokens(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(String, Uuid, Uuid, String, Vec<u8>, Option<Vec<u8>>)>> {
+    let rows = sqlx::query!("SELECT upstream_kind, upstream_id, key_id, labels, access_token, refresh_token FROM oauth_tokens FOR UPDATE").fetch_all(db).await?;
+    Ok(rows.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.key_id, r.labels, r.access_token, r.refresh_token)).collect())
+}
+
+pub async fn set_oauth_token_secrets(db: impl PgExecutor<'_>, s: SignInRef<'_>, access: &[u8], refresh: Option<&[u8]>) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET access_token = $5, refresh_token = $6 WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
+        s.kind,
+        s.upstream,
+        s.key,
+        s.labels,
         access,
         refresh
     )

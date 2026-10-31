@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE oauth_tokens SET last_used_at = now() WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3cca4d84675eded658d5c10608ae82ef7e6227c8121cff8eded522f0ccaa4fd7"
+}

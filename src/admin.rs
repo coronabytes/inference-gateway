@@ -72,6 +72,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/connect/{id}", get(connect::get_request).post(connect::approve))
         .route("/connect/{id}/deny", post(connect::deny))
         .route("/keys/{id}/connections/{kind}/{upstream}", post(oauth::connect).delete(oauth::disconnect))
+        .route("/keys/{id}/connections/{kind}/{upstream}/sign-ins", get(oauth::list_sign_ins))
         .route("/a2a-agents", get(a2a::list_a2a_agents).post(a2a::create_a2a_agent))
         .route("/a2a-agents/{id}", axum::routing::put(a2a::update_a2a_agent).delete(a2a::delete_a2a_agent))
         .route("/a2a-agents/{id}/test", post(a2a::test_a2a_agent))
@@ -2766,23 +2767,25 @@ async fn playground_options(State(state): State<AppState>, Extension(access): Ex
     let project = key.project_id.and_then(|p| snap.projects.get(&p));
     let enforced = |id: Uuid| key.guardrail_ids.contains(&id) || project.is_some_and(|p| p.guardrail_ids.contains(&id));
     let guardrails = snap.guardrails.values().map(|g| PlaygroundGuardrail { name: g.row.name.clone(), enforced: enforced(g.row.id) }).collect();
-    let signed_in = db::key_connections(&state.db, key.id).await?;
-    let upstream = |kind: crate::oauth::Kind, id: Uuid, name: &str, per_key: bool| PlaygroundUpstream {
+    let (signed_in, _) = db::key_connections(&state.db, key.id).await?;
+    // Only the key's own sign-in is asked for here; one per tenant or user is asked for by the call
+    // that needs it, with a link.
+    let upstream = |kind: crate::oauth::Kind, id: Uuid, name: &str, auth: &crate::oauth::UpstreamAuth| PlaygroundUpstream {
         name: name.to_string(),
-        needs_sign_in: per_key && !signed_in.iter().any(|r| r.0 == kind.as_str() && r.1 == id),
+        needs_sign_in: auth.per_key() && auth.sign_in_by().is_empty() && !signed_in.iter().any(|r| r.upstream_kind == kind.as_str() && r.upstream_id == id),
         router: false,
     };
     let mut mcp_servers: Vec<PlaygroundUpstream> = snap
         .mcp_servers
         .values()
         .filter(|s| s.allows(key))
-        .map(|s| upstream(crate::oauth::Kind::Mcp, s.id, &s.name, s.auth.per_key()))
+        .map(|s| upstream(crate::oauth::Kind::Mcp, s.id, &s.name, &s.auth))
         .collect();
     let mut a2a_agents: Vec<PlaygroundUpstream> = snap
         .a2a_agents
         .values()
         .filter(|a| a.allows(key))
-        .map(|a| upstream(crate::oauth::Kind::A2a, a.id, &a.name, a.auth.per_key()))
+        .map(|a| upstream(crate::oauth::Kind::A2a, a.id, &a.name, &a.auth))
         .collect();
     // Tool routers with a route the key may use.
     mcp_servers.extend(

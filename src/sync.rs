@@ -122,5 +122,12 @@ pub async fn run_maintenance(state: AppState) {
             }
             Err(e) => tracing::warn!(error = %e, "log pruning failed"),
         }
+        // Sign-ins to MCP servers and A2A agents unused for longer than their upstream keeps them.
+        // Replicas that hold one in memory stop using it within five minutes.
+        match crate::db::prune_sign_ins(&state.db, crate::oauth::SIGN_IN_RETENTION_DAYS as i32).await {
+            Ok(n) if n > 0 => tracing::info!(deleted = n, "removed unused upstream sign-ins"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "removing unused upstream sign-ins failed"),
+        }
     }
 }

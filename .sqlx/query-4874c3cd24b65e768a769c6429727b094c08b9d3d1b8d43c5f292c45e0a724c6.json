@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT access_token, refresh_token, expires_at FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+  "query": "SELECT access_token, refresh_token, expires_at FROM oauth_tokens\n         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
   "describe": {
     "columns": [
       {
@@ -41,7 +41,8 @@
       "Left": [
         "Text",
         "Uuid",
-        "Uuid"
+        "Uuid",
+        "Text"
       ]
     },
     "nullable": [
@@ -50,5 +51,5 @@
       true
     ]
   },
-  "hash": "b483a90f4ce0b387153958b28373566e5e235004ae9d2c7772dbe39473a6ce4e"
+  "hash": "4874c3cd24b65e768a769c6429727b094c08b9d3d1b8d43c5f292c45e0a724c6"
 }

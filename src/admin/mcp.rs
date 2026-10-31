@@ -230,6 +230,20 @@ fn check_oauth(state: &AppState, auth: McpAuth, oauth: Option<OAuthConfig>) -> R
             None => Ok(None),
         }
     };
+    if !crate::oauth::valid_sign_in_by(&o.sign_in_by) {
+        return Err(AdminError::bad_request("sign-ins are per key, per tenant ([\"tenant\"]) or per tenant and user ([\"tenant\", \"user\"])"));
+    }
+    if auth != McpAuth::OAuthUser && !o.sign_in_by.is_empty() {
+        return Err(AdminError::bad_request("only servers that keys sign in to on their own keep sign-ins per tenant or user"));
+    }
+    let range = crate::oauth::SIGN_IN_RETENTION_RANGE;
+    match o.sign_in_retention_days {
+        Some(d) if !range.contains(&d) => {
+            return Err(AdminError::bad_request(format!("unused sign-ins are kept {} to {} days", range.start(), range.end())));
+        }
+        Some(_) if auth != McpAuth::OAuthUser => return Err(AdminError::bad_request("only servers that keys sign in to on their own keep sign-ins")),
+        _ => {}
+    }
     Ok(OAuthConfig {
         token_url,
         authorization_url,
@@ -238,6 +252,8 @@ fn check_oauth(state: &AppState, auth: McpAuth, oauth: Option<OAuthConfig>) -> R
         resource: url(o.resource, "resource")?,
         redirect_uri: url(o.redirect_uri, "redirect URI")?,
         token_auth: o.token_auth,
+        sign_in_by: o.sign_in_by,
+        sign_in_retention_days: o.sign_in_retention_days,
     })
 }
 
@@ -378,12 +394,16 @@ pub(crate) async fn update_mcp_server(
     let before = view(existing.clone());
     let row = row(&state, i, Some(&existing)).await?;
     db::update_mcp_server(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    let dropped = super::oauth::drop_stale_sign_ins(&state, crate::oauth::Kind::Mcp, id, (&existing.auth, existing.oauth.as_deref()), (&row.auth, row.oauth.as_deref())).await?;
     broadcast_reload(&state, "MCP server updated").await;
     tracing::info!(mcp_server = %id, "MCP server updated");
     let v = view(row);
     let mut changes = audit::changes(&before, &v);
     if secret_changed {
         changes.insert("secret".into(), "replaced".into());
+    }
+    if dropped > 0 {
+        changes.insert("sign_ins".into(), format!("{dropped} removed").into());
     }
     if !changes.is_empty() {
         audit::Event::new("mcp_server", "update").on(id, &v.name).details(changes.into()).record(&state, &actor).await;

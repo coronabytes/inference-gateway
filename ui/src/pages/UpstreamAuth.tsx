@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { api, type McpAuth, type OAuthConfig, type OAuthDiscovered } from "../api";
-import { Banner, Button, Select, TextInput } from "../components/controls";
+import { api, type McpAuth, type OAuthConfig, type OAuthDiscovered, type SignInBy } from "../api";
+import { Banner, Button, Segmented, Select, TextInput } from "../components/controls";
 import { Section } from "../components/ui";
 
 /** How the gateway signs in to an MCP server or an A2A agent, as the forms edit it. */
@@ -15,6 +15,10 @@ export interface AuthState {
   resource: string;
   redirectUri: string;
   tokenAuth: "" | NonNullable<OAuthConfig["token_auth"]>;
+  /** For `oauth_user`: what a key's sign-ins are kept per: the key, each tenant, or each tenant's user. */
+  signInBy: SignInPer;
+  /** For `oauth_user`: days a sign-in is kept unused, as typed. */
+  retentionDays: string;
   /** No client yet, but the authorization server offers registration: the gateway registers on save. */
   registerOnSave: boolean;
 }
@@ -26,6 +30,28 @@ export const AUTH_LABEL: Record<McpAuth, string> = {
   oauth: "OAuth: the gateway's client",
   oauth_user: "OAuth: each key signs in",
 };
+
+/** What a key's sign-ins to an `oauth_user` upstream are kept per, as the form picks it. */
+export type SignInPer = "key" | "tenant" | "user";
+
+const SIGN_IN_BY: Record<Exclude<SignInPer, "key">, SignInBy> = { tenant: ["tenant"], user: ["tenant", "user"] };
+
+export const SIGN_IN_PER_LABEL: Record<SignInPer, string> = { key: "Key", tenant: "Tenant", user: "Tenant and user" };
+
+/** The form's choice for a stored `sign_in_by`. */
+export function signInPer(by?: SignInBy): SignInPer {
+  return by?.length === 2 ? "user" : by?.length === 1 ? "tenant" : "key";
+}
+
+/** Days a sign-in is kept unused when the upstream does not say, and the range it may say. */
+const SIGN_IN_RETENTION_DAYS = 7;
+const RETENTION = { min: 1, max: 90 };
+
+/** Why the typed retention would be refused, or null. */
+function retentionError(days: string): string | null {
+  const n = Number(days.trim());
+  return Number.isInteger(n) && n >= RETENTION.min && n <= RETENTION.max ? null : `Between ${RETENTION.min} and ${RETENTION.max} days.`;
+}
 
 /** The form's state for an upstream's stored auth. */
 export function authState(from?: { auth: McpAuth; auth_header?: string; oauth?: OAuthConfig }): AuthState {
@@ -41,6 +67,8 @@ export function authState(from?: { auth: McpAuth; auth_header?: string; oauth?: 
     resource: o?.resource ?? "",
     redirectUri: o?.redirect_uri ?? "",
     tokenAuth: o?.token_auth ?? "",
+    signInBy: signInPer(o?.sign_in_by),
+    retentionDays: String(o?.sign_in_retention_days ?? SIGN_IN_RETENTION_DAYS),
     registerOnSave: false,
   };
 }
@@ -55,7 +83,7 @@ export function authMissing(s: AuthState, keepsSecret: boolean): boolean {
   if ((s.auth === "bearer" || s.auth === "header") && !s.secret.trim() && !keepsSecret) return true;
   if (isOAuth(s.auth) && (!s.tokenUrl.trim() || (!s.clientId.trim() && !(s.auth === "oauth_user" && s.registerOnSave)))) return true;
   if (s.auth === "oauth" && s.tokenAuth !== "none" && !s.secret.trim() && !keepsSecret) return true;
-  return s.auth === "oauth_user" && !s.authorizationUrl.trim();
+  return s.auth === "oauth_user" && (!s.authorizationUrl.trim() || retentionError(s.retentionDays) != null);
 }
 
 /** The auth as the admin API takes it. */
@@ -74,6 +102,8 @@ export function authInput(s: AuthState) {
         resource: t(s.resource),
         redirect_uri: s.auth === "oauth_user" ? t(s.redirectUri) : undefined,
         token_auth: s.tokenAuth || undefined,
+        sign_in_by: s.auth === "oauth_user" && s.signInBy !== "key" ? SIGN_IN_BY[s.signInBy] : undefined,
+        sign_in_retention_days: s.auth === "oauth_user" ? Number(s.retentionDays.trim()) : undefined,
       } satisfies OAuthConfig,
     }),
   };
@@ -131,6 +161,8 @@ function clientNote(d: OAuthDiscovered, s: AuthState): string {
  * from: the MCP server's URL, or the agent's card. `urlField` renders that field, first, with the
  * Discover button to put at its end. With `auto` (a new MCP server), the form looks for the
  * server's OAuth as its URL is typed and picks it, until the authentication is chosen by hand.
+ * `savedSignInPer`: what a saved upstream whose keys sign in keeps their sign-ins per, so the form
+ * can warn that changing it removes them.
  */
 export function AuthFields({
   kind,
@@ -140,6 +172,7 @@ export function AuthFields({
   onChange,
   keepsSecret,
   auto = false,
+  savedSignInPer,
 }: {
   kind: "mcp" | "a2a";
   url: string;
@@ -148,6 +181,7 @@ export function AuthFields({
   onChange: (s: AuthState) => void;
   keepsSecret: boolean;
   auto?: boolean;
+  savedSignInPer?: SignInPer;
 }) {
   const [found, setFound] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -325,6 +359,47 @@ export function AuthFields({
         }}
         options={(Object.keys(AUTH_LABEL) as McpAuth[]).map((value) => ({ value, label: AUTH_LABEL[value] }))}
       />
+      {s.auth === "oauth_user" && (
+        <Segmented
+          caption="Sign in per"
+          hint={
+            <ul className="hint-list">
+              <li>
+                <strong>Key</strong>: each virtual key signs in once, on the Access page.
+              </li>
+              <li>
+                <strong>Tenant</strong> or <strong>Tenant and user</strong>: for an application that serves many tenants with one key. Each tenant, or each user of a tenant, signs in
+                on their own, told apart by the request's labels <code>tenant</code> and <code>user</code> (<code>x-gateway-labels: tenant=…,user=…</code>). A request without
+                them is refused.
+              </li>
+              <li>
+                Those who have not signed in get a sign-in link: in the error, as a sign-in tool in chat requests, or from <code>POST /v1/oauth/sign-ins</code>.
+              </li>
+              <li>
+                The gateway trusts the labels: whoever holds the key can act as any tenant or user. Keep such a key on the application's server, which sets the labels from its
+                own sign-in.
+              </li>
+            </ul>
+          }
+          value={s.signInBy}
+          onChange={(v) => set({ signInBy: v })}
+          options={(Object.keys(SIGN_IN_PER_LABEL) as SignInPer[]).map((value) => ({ value, label: SIGN_IN_PER_LABEL[value] }))}
+        />
+      )}
+      {s.auth === "oauth_user" && (
+        <TextInput
+          caption="Keep unused sign-ins"
+          hint={`Days a sign-in is kept without being used, ${RETENTION.min} to ${RETENTION.max}. Then it is deleted, and whoever signed in is asked to sign in again on their next request.`}
+          inputMode="numeric"
+          value={s.retentionDays}
+          onChange={(e) => set({ retentionDays: e.target.value })}
+          placeholder="days"
+          note={retentionError(s.retentionDays)}
+        />
+      )}
+      {s.auth === "oauth_user" && savedSignInPer && s.signInBy !== savedSignInPer && (
+        <Banner tone="warning">Saving signs everyone out of the {what}: the sign-ins kept so far are per {SIGN_IN_PER_LABEL[savedSignInPer].toLowerCase()}.</Banner>
+      )}
       {s.auth === "header" && (
         <TextInput
           caption="Header"

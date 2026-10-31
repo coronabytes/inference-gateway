@@ -29,7 +29,7 @@ use crate::{
     error::{Dialect, GatewayError},
     labels::Labels,
     model::VirtualKey,
-    oauth::AuthError,
+    oauth::Who,
     state::AppState,
 };
 
@@ -107,16 +107,16 @@ impl ServerHandler for Hub {
     }
 
     async fn list_tools(&self, _request: Option<PaginatedRequestParams>, ctx: RequestContext<RoleServer>) -> Result<ListToolsResult, ErrorData> {
-        let Caller { state, key, .. } = caller(&ctx)?;
+        let Caller { state, key, labels } = caller(&ctx)?;
         let servers = servers(&state, &key);
-        let lists = futures::future::join_all(servers.iter().map(|s| state.mcp.tools(&state, s, key.id))).await;
+        let lists = futures::future::join_all(servers.iter().map(|s| state.mcp.tools(&state, s, Who { key: key.id, labels: &labels }))).await;
         let mut tools = Vec::new();
         for (server, listed) in servers.iter().zip(lists) {
             // A server that cannot be reached leaves its tools out, rather than failing the others',
             // and so does one the key has not signed in to yet.
             let listed = match listed {
                 Ok(l) => l,
-                Err(ToolsError::Auth(AuthError::NotConnected(_))) => continue,
+                Err(ToolsError::Auth(e)) if e.not_signed_in() => continue,
                 Err(ToolsError::Auth(e)) => {
                     tracing::warn!(server = %server.name, error = %e.message(), "MCP server's tools left out of /mcp");
                     continue;
@@ -216,7 +216,7 @@ pub(crate) async fn run_tool(
         calls.fail(&e);
         return Err(ToolError::Gateway(e));
     }
-    let reply = match state.mcp.call(state, key.id, server, &msg).await {
+    let reply = match state.mcp.call(state, Who { key: key.id, labels }, server, &msg).await {
         Ok(r) => r,
         Err(e) => {
             calls.fail_status(502, e.clone());

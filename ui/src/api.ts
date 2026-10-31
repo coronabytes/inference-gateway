@@ -388,6 +388,9 @@ export interface GuardrailTestResult {
 
 export type McpAuth = "none" | "bearer" | "header" | "oauth" | "oauth_user";
 
+/** The request labels an `oauth_user` upstream tells a key's sign-ins apart by: one per tenant, or per tenant and user. */
+export type SignInBy = [] | ["tenant"] | ["tenant", "user"];
+
 /** An upstream's OAuth client, for `oauth` (client credentials) and `oauth_user` (each key signs in). */
 export interface OAuthConfig {
   token_url: string;
@@ -399,6 +402,10 @@ export interface OAuthConfig {
   /** The redirect URI the client was registered with. */
   redirect_uri?: string;
   token_auth?: "client_secret_basic" | "client_secret_post" | "none";
+  /** For `oauth_user`: the request labels that tell a key's sign-ins apart. Empty or absent: the key signs in once. */
+  sign_in_by?: SignInBy;
+  /** For `oauth_user`: days a sign-in is kept unused before it is deleted, 1 to 90 (7 when absent). */
+  sign_in_retention_days?: number;
 }
 
 /** What `POST /oauth/discover` found. */
@@ -455,6 +462,25 @@ export interface KeyConnection {
   name: string;
   connected: boolean;
   signed_in_at?: string;
+  /** When the key's sign-in was last used, at most an hour off. */
+  last_used_at?: string;
+  expires_at?: string;
+  refreshable: boolean;
+  scope?: string;
+  connected_by?: string;
+  /** The request labels that tell the key's sign-ins apart; absent where the key signs in once. */
+  sign_in_by?: SignInBy;
+  /** How many sign-ins the key has by those labels. */
+  sign_ins?: number;
+}
+
+/** One of a key's sign-ins per tenant or user (`GET /keys/{id}/connections/{kind}/{upstream}/sign-ins`). */
+export interface SignIn {
+  /** `tenant=…,user=…`. */
+  labels: string;
+  signed_in_at: string;
+  /** When it was last used, at most an hour off. */
+  last_used_at: string;
   expires_at?: string;
   refreshable: boolean;
   scope?: string;
