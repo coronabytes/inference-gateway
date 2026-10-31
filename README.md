@@ -19,6 +19,7 @@ Single Rust service · distroless, locked-down container image · Postgres + Val
 - **Auto routing.** One model name that picks the best model for each request.
 - **Guardrails.** Mask personal data and block prompt attacks with Bedrock Guardrails, Model Armor or Mistral moderation.
 - **MCP gateway.** MCP servers behind the same virtual keys, one by one or all in one endpoint, with their credentials kept in the gateway, tool filters, and every tool call logged and priced.
+- **A2A gateway.** A2A agents (1.0 and 0.3) behind the same keys, with rewritten agent cards, tasks bound to their key, and every message logged and priced.
 - **Cost and usage.** Metrics and a request log by model, key, project and your own labels. OpenTelemetry export.
 - **Admin console.** Web UI with single sign-on, playground and model catalog.
 - **Scales out.** Stateless replicas; configuration changes apply everywhere without restarts.
@@ -102,7 +103,7 @@ For a full stack with Postgres, Valkey and several replicas, see [Running in pro
 | [Providers](docs/providers.md) · [Models](docs/models.md) | Connect providers, add models, routing and pricing |
 | [Access control](docs/access.md) | Keys, budgets, projects and tags |
 | [Auto routers](docs/auto-routers.md) · [Guardrails](docs/guardrails.md) | Smart routing and prompt screening |
-| [MCP servers](docs/mcp.md) | MCP servers behind the gateway's keys |
+| [MCP servers](docs/mcp.md) · [A2A agents](docs/a2a.md) | MCP servers and A2A agents behind the gateway's keys |
 | [Monitoring](docs/monitoring.md) | Metrics, logs and OpenTelemetry |
 | [Production](docs/production.md) · [Configuration](docs/configuration.md) | Deployment, every variable and setting |
 | [Single sign-on](docs/single-sign-on.md) · [Security](docs/security.md) | OIDC, roles, data protection |

@@ -37,7 +37,7 @@ Admin and inference + admin keys stay outside projects. A key in a project is an
 
 ## Tags
 
-Tags are labels you put on deployments, auto routers and [MCP servers](mcp.md), such as `eu`, `anthropic`, `cheap` or `expensive`. Keys pick from the tags in use; new tags are only created on models and MCP servers.
+Tags are labels you put on deployments, auto routers, [MCP servers](mcp.md) and [A2A agents](a2a.md), such as `eu`, `anthropic`, `cheap` or `expensive`. Keys pick from the tags in use; new tags are only created on models, MCP servers and A2A agents.
 
 - A key **without tags** can use every model (except deployments dedicated to other projects, below).
 - A key **with tags** can use untagged deployments and every deployment whose tags it **all** holds. A deployment tagged `eu` and `expensive` needs a key with both tags.

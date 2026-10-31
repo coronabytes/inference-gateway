@@ -36,6 +36,8 @@ pub struct Snapshot {
     pub guardrails: BTreeMap<String, Arc<crate::guardrails::Active>>,
     /// Enabled MCP servers by name, ready to call.
     pub mcp_servers: HashMap<String, Arc<crate::mcp::McpServer>>,
+    /// Enabled A2A agents by name, ready to call.
+    pub a2a_agents: HashMap<String, Arc<crate::a2a::A2aAgent>>,
     pub loaded_at: Option<DateTime<Utc>>,
     pub errors: Vec<String>,
 }
@@ -66,7 +68,7 @@ impl Registry {
     }
 
     pub async fn reload(&self, pool: &sqlx::PgPool, cfg: &Config) -> Result<(), sqlx::Error> {
-        let (rows, creds, keys, routers, aliases, projects, guardrails, mcp_servers) = tokio::try_join!(
+        let (rows, creds, keys, routers, aliases, projects, guardrails, mcp_servers, a2a_agents) = tokio::try_join!(
             db::list_deployments(pool),
             db::list_credentials(pool),
             db::list_keys(pool),
@@ -74,7 +76,8 @@ impl Registry {
             db::list_aliases(pool),
             db::list_project_rows(pool),
             db::list_guardrails(pool),
-            db::list_mcp_servers(pool)
+            db::list_mcp_servers(pool),
+            db::list_a2a_agents(pool)
         )?;
         // Decrypt each credential once, however many deployments share it.
         let creds: HashMap<Uuid, Result<ResolvedCredential, String>> =
@@ -167,6 +170,17 @@ impl Registry {
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "skipping misconfigured MCP server");
+                    snap.errors.push(e);
+                }
+            }
+        }
+        for a in a2a_agents.into_iter().filter(|a| a.enabled) {
+            match crate::a2a::A2aAgent::build(a, &cfg.secret_box) {
+                Ok(a) => {
+                    snap.a2a_agents.insert(a.name.clone(), Arc::new(a));
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "skipping misconfigured A2A agent");
                     snap.errors.push(e);
                 }
             }

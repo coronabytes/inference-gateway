@@ -40,6 +40,17 @@ pub async fn run() -> Result<(), String> {
         }
     }
     println!("MCP servers: {moved} secrets re-encrypted, {kept} already under the current key");
+    let (mut moved, mut kept) = (0usize, 0usize);
+    for (id, name, sealed) in db::sealed_a2a_secrets(&mut *tx).await.map_err(pg)? {
+        match sb.reseal(&sealed).map_err(|e| format!("A2A agent '{name}' ({id}): {e}"))? {
+            Some(v) => {
+                db::set_a2a_secret(&mut *tx, id, &v).await.map_err(pg)?;
+                moved += 1;
+            }
+            None => kept += 1,
+        }
+    }
+    println!("A2A agents: {moved} secrets re-encrypted, {kept} already under the current key");
     match db::sealed_oidc_client_secret(&mut *tx).await.map_err(pg)? {
         Some(sealed) => match sb.reseal(&sealed).map_err(|e| format!("OIDC client secret: {e}"))? {
             Some(v) => {

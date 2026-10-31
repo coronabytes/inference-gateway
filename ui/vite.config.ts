@@ -10,6 +10,7 @@ export default defineConfig({
       "/admin/api": gateway,
       "/v1": gateway,
       "/mcp": gateway,
+      "/a2a": gateway,
       "/admin/openapi.json": gateway,
       "/admin/docs": gateway,
     },

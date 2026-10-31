@@ -13,6 +13,7 @@ use crate::{
     accounting::RequestRecord,
     capture::Stored,
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailRow},
+    a2a::A2aAgentRow,
     mcp::McpServerRow,
     model::{
         AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
@@ -871,6 +872,94 @@ pub async fn set_mcp_secret(db: impl PgExecutor<'_>, id: Uuid, secret: &[u8]) ->
     Ok(())
 }
 
+// ---------------------------------------------------------------- A2A agents
+
+pub async fn list_a2a_agents(pool: &PgPool) -> sqlx::Result<Vec<A2aAgentRow>> {
+    sqlx::query_as!(
+        A2aAgentRow,
+        "SELECT id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message, enabled,
+                created_at, updated_at
+         FROM a2a_agents ORDER BY name"
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<A2aAgentRow>> {
+    sqlx::query_as!(
+        A2aAgentRow,
+        "SELECT id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message, enabled,
+                created_at, updated_at
+         FROM a2a_agents WHERE id = $1",
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn insert_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO a2a_agents (id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message,
+             enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())",
+        a.id,
+        a.name,
+        a.description,
+        a.card_url,
+        a.auth,
+        a.auth_header,
+        a.secret,
+        &a.tags,
+        &a.project_ids,
+        a.timeout_secs,
+        a.price_per_message,
+        a.enabled,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE a2a_agents SET name = $2, description = $3, card_url = $4, auth = $5, auth_header = $6, secret = $7, tags = $8,
+             project_ids = $9, timeout_secs = $10, price_per_message = $11, enabled = $12, updated_at = now()
+         WHERE id = $1",
+        a.id,
+        a.name,
+        a.description,
+        a.card_url,
+        a.auth,
+        a.auth_header,
+        a.secret,
+        &a.tags,
+        &a.project_ids,
+        a.timeout_secs,
+        a.price_per_message,
+        a.enabled,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
+    let r = sqlx::query!("DELETE FROM a2a_agents WHERE id = $1", id).execute(pool).await?;
+    Ok(r.rows_affected() > 0)
+}
+
+pub async fn sealed_a2a_secrets(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(Uuid, String, Vec<u8>)>> {
+    let rows = sqlx::query!(r#"SELECT id, name, secret AS "secret!" FROM a2a_agents WHERE secret IS NOT NULL FOR UPDATE"#)
+        .fetch_all(db)
+        .await?;
+    Ok(rows.into_iter().map(|r| (r.id, r.name, r.secret)).collect())
+}
+
+pub async fn set_a2a_secret(db: impl PgExecutor<'_>, id: Uuid, secret: &[u8]) -> sqlx::Result<()> {
+    sqlx::query!("UPDATE a2a_agents SET secret = $1 WHERE id = $2", secret, id).execute(db).await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------- model metadata
 
 /// Every model's metadata, by public model name.
@@ -1254,6 +1343,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
     let mut search_costs = Vec::with_capacity(batch.len());
     let mut bodies = Vec::with_capacity(batch.len());
     let mut mcp_tools = Vec::with_capacity(batch.len());
+    let mut task_states = Vec::with_capacity(batch.len());
+    let mut context_ids = Vec::with_capacity(batch.len());
     for r in batch {
         ids.push(r.id);
         ts.push(r.ts);
@@ -1282,6 +1373,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         search_costs.push(r.search_cost_usd);
         bodies.push(r.bodies_status.map(str::to_string));
         mcp_tools.push(r.tool.clone());
+        task_states.push(r.task_state.clone());
+        context_ids.push(r.context_id.clone());
     }
 
     let mut tx = pool.begin().await?;
@@ -1291,11 +1384,11 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         "INSERT INTO request_logs (id, ts, key_id, model_name, deployment_id, provider, api, stream,
              status_code, latency_ms, ttft_ms, input_tokens, output_tokens, cache_read_tokens,
              cache_write_tokens, cost_usd, attempts, error, parent_id, project_id, labels, guardrails, guardrail_cost_usd,
-             searches, search_cost_usd, bodies, tool)
+             searches, search_cost_usd, bodies, tool, task_state, context_id)
          SELECT * FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::text[], $5::uuid[],
              $6::text[], $7::text[], $8::bool[], $9::int[], $10::int[], $11::int[], $12::bigint[],
              $13::bigint[], $14::bigint[], $15::bigint[], $16::float8[], $17::int[], $18::text[], $19::uuid[],
-             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[], $26::text[], $27::text[])",
+             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[], $26::text[], $27::text[], $28::text[], $29::text[])",
         &ids,
         &ts,
         &key_ids as _,
@@ -1323,6 +1416,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         &search_costs,
         &bodies as _,
         &mcp_tools as _,
+        &task_states as _,
+        &context_ids as _,
     )
     .execute(&mut *tx)
     .await?;
@@ -1433,6 +1528,10 @@ pub struct LogRow {
     pub tool_calls: Option<Vec<String>>,
     /// The tool an MCP call (api `mcp`) called, on the server named by `model_name`.
     pub tool: Option<String>,
+    /// A message to an A2A agent (api `a2a`): the state its task was left in, such as `completed`.
+    pub task_state: Option<String>,
+    /// A message to an A2A agent: its context, shared by a conversation's messages.
+    pub context_id: Option<String>,
     pub api: String,
     pub stream: bool,
     pub status_code: i32,
@@ -1506,7 +1605,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)
@@ -1556,7 +1655,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
@@ -1583,7 +1682,7 @@ async fn logs_by_id(pool: &PgPool, ids: &[Uuid], body_days: u32) -> sqlx::Result
         r#"SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS "key_name?", l.model_name,
                   l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)

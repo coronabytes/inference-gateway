@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS \"key_name?\", l.model_name,\n                  l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l\n           WHERE l.id = ANY($1)",
+  "query": "SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS \"key_name?\", l.model_name,\n                  l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l\n           WHERE l.id = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -286,24 +286,46 @@
       },
       {
         "ordinal": 26,
+        "name": "task_state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "task_state"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
+        "name": "context_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "context_id"
+          }
+        }
+      },
+      {
+        "ordinal": 28,
         "name": "upstream_model?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 27,
+        "ordinal": 29,
         "name": "credential_name?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 28,
+        "ordinal": 30,
         "name": "tool_calls?",
         "type_info": "TextArray",
         "origin": "Expression"
       },
       {
-        "ordinal": 29,
+        "ordinal": 31,
         "name": "bodies?",
         "type_info": "Text",
         "origin": "Expression"
@@ -342,11 +364,13 @@
       false,
       false,
       true,
+      true,
+      true,
       null,
       null,
       null,
       null
     ]
   },
-  "hash": "1201583fc6c927dbeaab15804a7822ff62fdec3416abb311244515dfa3aeeeab"
+  "hash": "937f729becf88dffbb68c883bcc3f01ee27e6d0c04d079f35d332c47c8fd8453"
 }

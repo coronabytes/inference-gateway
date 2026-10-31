@@ -657,8 +657,8 @@ function KeyForm({
               caption="Tags"
               hint={
                 allowedTags.length
-                  ? "This key can use deployments, routers and MCP servers without tags, and those whose tags are all selected here."
-                  : "No tags selected: this key can use every model and MCP server, except those limited to other projects."
+                  ? "This key can use deployments, routers, MCP servers and A2A agents without tags, and those whose tags are all selected here."
+                  : "No tags selected: this key can use every model, MCP server and A2A agent, except those limited to other projects."
               }
               options={tags}
               value={allowedTags}

@@ -120,26 +120,23 @@ fn enabled() -> bool {
 }
 
 /// Headers the gateway sets itself, or forwards from the client, which the secret cannot go in.
-const RESERVED_HEADERS: &[&str] = &[
-    "host", "content-type", "content-length", "accept", "connection", "transfer-encoding", "user-agent", "mcp-session-id", "mcp-protocol-version",
-    "last-event-id",
-];
+const RESERVED_HEADERS: &[&str] = &["host", "content-type", "content-length", "accept", "connection", "transfer-encoding", "user-agent"];
 
-/// Checks an input and builds the row it describes; `existing` keeps its secret when none is given.
-async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow>) -> R<McpServerRow> {
-    let name = i.name.trim().to_string();
-    let slug = |s: &str| {
-        (1..=64).contains(&s.len())
-            && s.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-            && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
-            // `__` separates server and tool in the names /mcp lists.
-            && !s.contains(SEPARATOR)
-    };
-    if !slug(&name) {
-        return Err(AdminError::bad_request("the name is 1-64 lowercase letters, digits, - and _ (not __), starting with a letter or digit"));
+/// A name clients call an upstream by, in a path: 1-64 lowercase letters, digits, `-` and `_`.
+pub(super) fn check_name(name: &str, what: &str) -> R<String> {
+    let name = name.trim();
+    let ok = (1..=64).contains(&name.len())
+        && name.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
+    if !ok {
+        return Err(AdminError::bad_request(format!("the {what}'s name is 1-64 lowercase letters, digits, - and _, starting with a letter or digit")));
     }
-    let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
-    let url = i.url.trim().to_string();
+    Ok(name.to_string())
+}
+
+/// An upstream's URL: http(s), without credentials, to an address the gateway may reach.
+pub(super) fn check_url(state: &AppState, url: &str) -> R<String> {
+    let url = url.trim().to_string();
     let parsed = reqwest::Url::parse(&url).map_err(|_| AdminError::bad_request("the URL is not valid"))?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(AdminError::bad_request("the URL must start with https:// or http://"));
@@ -148,23 +145,36 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
         return Err(AdminError::bad_request("put credentials in the authentication, not in the URL"));
     }
     state.cfg.upstream_policy.check_url(&url).map_err(|why| AdminError::bad_request(format!("the URL is not allowed: {why}")))?;
-    let auth_header = match i.auth {
+    Ok(url)
+}
+
+/// How the gateway signs in to an upstream: the header name, for `header` auth, and the sealed
+/// secret, which is `existing`'s when no new one is given. `reserved` are headers the gateway sets.
+pub(super) fn check_auth(
+    state: &AppState,
+    auth: McpAuth,
+    header: Option<&str>,
+    secret: Option<&str>,
+    existing: Option<&[u8]>,
+    reserved: &[&str],
+) -> R<(Option<String>, Option<Vec<u8>>)> {
+    let auth_header = match auth {
         McpAuth::Header => {
-            let h = i.auth_header.as_deref().map(str::trim).unwrap_or_default().to_ascii_lowercase();
+            let h = header.map(str::trim).unwrap_or_default().to_ascii_lowercase();
             if HeaderName::try_from(h.as_str()).is_err() || h.is_empty() {
                 return Err(AdminError::bad_request("the header name is required, such as x-api-key"));
             }
-            if RESERVED_HEADERS.contains(&h.as_str()) {
+            if RESERVED_HEADERS.contains(&h.as_str()) || reserved.contains(&h.as_str()) {
                 return Err(AdminError::bad_request(format!("the gateway sets {h} itself; the secret goes in another header")));
             }
             Some(h)
         }
-        _ if i.auth_header.as_deref().is_some_and(|h| !h.trim().is_empty()) => {
+        _ if header.is_some_and(|h| !h.trim().is_empty()) => {
             return Err(AdminError::bad_request("a header name only applies to header authentication"));
         }
         _ => None,
     };
-    let secret = match (i.auth, i.secret.as_deref().map(str::trim)) {
+    let secret = match (auth, secret.map(str::trim)) {
         (McpAuth::None, _) => None,
         (_, Some(s)) if !s.is_empty() => {
             if HeaderValue::from_str(s).is_err() {
@@ -172,14 +182,13 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
             }
             Some(state.cfg.secret_box.seal(s.as_bytes()))
         }
-        _ => Some(
-            existing
-                .and_then(|e| e.secret.clone())
-                .ok_or_else(|| AdminError::bad_request("the secret is required for this authentication"))?,
-        ),
+        _ => Some(existing.map(<[u8]>::to_vec).ok_or_else(|| AdminError::bad_request("the secret is required for this authentication"))?),
     };
-    let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;
-    let mut project_ids = i.project_ids;
+    Ok((auth_header, secret))
+}
+
+/// Projects, sorted and deduplicated, each of which must exist.
+pub(super) async fn check_projects(state: &AppState, mut project_ids: Vec<Uuid>) -> R<Vec<Uuid>> {
     project_ids.sort();
     project_ids.dedup();
     for p in &project_ids {
@@ -187,6 +196,23 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
             return Err(AdminError::bad_request(format!("no project {p}")));
         }
     }
+    Ok(project_ids)
+}
+
+/// Checks an input and builds the row it describes; `existing` keeps its secret when none is given.
+async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow>) -> R<McpServerRow> {
+    let name = check_name(&i.name, "server")?;
+    // `__` separates server and tool in the names /mcp lists.
+    if name.contains(SEPARATOR) {
+        return Err(AdminError::bad_request(format!("the server's name cannot contain {SEPARATOR}")));
+    }
+    let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
+    let url = check_url(state, &i.url)?;
+    let reserved = ["mcp-session-id", "mcp-protocol-version", "last-event-id", "mcp-method", "mcp-name"];
+    let (auth_header, secret) =
+        check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), existing.and_then(|e| e.secret.as_deref()), &reserved)?;
+    let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;
+    let project_ids = check_projects(state, i.project_ids).await?;
     let timeout_secs = i.timeout_secs.unwrap_or(existing.map_or(300, |e| e.timeout_secs));
     if !(1..=3600).contains(&timeout_secs) {
         return Err(AdminError::bad_request("the timeout is 1 to 3600 seconds"));

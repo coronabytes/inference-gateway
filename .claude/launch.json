@@ -18,6 +18,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["dev/mock-mcp.mjs"],
       "port": 9998
+    },
+    {
+      "name": "mock-a2a",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dev/mock-a2a.mjs"],
+      "port": 9997
     }
   ]
 }

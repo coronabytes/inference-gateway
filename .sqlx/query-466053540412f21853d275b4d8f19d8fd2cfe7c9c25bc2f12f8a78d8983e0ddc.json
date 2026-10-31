@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE a2a_agents SET name = $2, description = $3, card_url = $4, auth = $5, auth_header = $6, secret = $7, tags = $8,\n             project_ids = $9, timeout_secs = $10, price_per_message = $11, enabled = $12, updated_at = now()\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bytea",
+        "TextArray",
+        "UuidArray",
+        "Int4",
+        "Float8",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "466053540412f21853d275b4d8f19d8fd2cfe7c9c25bc2f12f8a78d8983e0ddc"
+}

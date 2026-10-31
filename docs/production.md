@@ -167,7 +167,7 @@ Nothing stops while the key changes: the gateway reads with both keys and writes
    docker run --rm --env-file gateway.env ghcr.io/coronabytes/inference-gateway:1.0 rotate-key
    ```
 
-   This re-encrypts provider secrets, MCP server secrets, the OIDC client secret and conversation state, skips what is already under the new key, and writes nothing if a stored secret cannot be read with either key. It is safe to run again.
+   This re-encrypts provider secrets, MCP server and A2A agent secrets, the OIDC client secret and conversation state, skips what is already under the new key, and writes nothing if a stored secret cannot be read with either key. It is safe to run again.
 4. Remove `GATEWAY_PREVIOUS_ENCRYPTION_KEY` and restart.
 
 ## Checklist

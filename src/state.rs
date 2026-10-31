@@ -21,6 +21,8 @@ pub struct Inner {
     pub records: mpsc::Sender<RequestRecord>,
     /// The gateway's sessions with MCP servers, and their tool lists, for `/mcp`.
     pub mcp: crate::mcp::Upstreams,
+    /// A2A agents' cards, for `/a2a`.
+    pub a2a: crate::a2a::Cards,
     /// Memory for logged prompts and responses until they are written.
     pub bodies: crate::capture::Budget,
     pub started: Instant,
@@ -98,6 +100,7 @@ fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Send
         http: reqwest::Client::new(),
         records,
         mcp: crate::mcp::Upstreams::default(),
+        a2a: crate::a2a::Cards::default(),
         bodies: crate::capture::Budget::new(1 << 20),
         started: Instant::now(),
         started_at: chrono::Utc::now(),

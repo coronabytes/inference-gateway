@@ -1,3 +1,4 @@
+mod a2a;
 mod accounting;
 mod admin;
 mod admin_auth;
@@ -151,6 +152,7 @@ async fn run() -> Result<(), String> {
         http,
         records: tx,
         mcp: mcp::Upstreams::default(),
+        a2a: a2a::Cards::default(),
         bodies: capture::Budget::new(prompt_log_buffer),
         started: Instant::now(),
         started_at: chrono::Utc::now(),
@@ -184,7 +186,10 @@ async fn run() -> Result<(), String> {
         .route("/v1/models", get(api::models::list_models))
         .route("/v1/models-extended", get(api::models::list_models_extended))
         .route("/mcp", post(mcp::hub::hub).get(mcp::hub::hub).delete(mcp::hub::hub))
-        .route("/mcp/{server}", post(mcp::proxy).get(mcp::proxy).delete(mcp::proxy));
+        .route("/mcp/{server}", post(mcp::proxy).get(mcp::proxy).delete(mcp::proxy))
+        .route("/a2a/{agent}", post(a2a::jsonrpc))
+        .route("/a2a/{agent}/.well-known/agent-card.json", get(a2a::card))
+        .route("/a2a/{agent}/rest/{*path}", get(a2a::rest).post(a2a::rest).delete(a2a::rest));
     if let Some(signals) = telemetry::describe() {
         tracing::info!(%signals, "exporting OpenTelemetry");
     }

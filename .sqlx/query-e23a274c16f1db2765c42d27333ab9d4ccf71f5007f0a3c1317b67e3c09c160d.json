@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", b.tool_calls AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n                LEFT JOIN request_bodies b ON b.id = l.id\n           WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)\n             AND ($3::uuid IS NULL OR l.key_id = $3)\n             AND (NOT $4 OR l.status_code >= 400)\n             AND ($5::timestamptz IS NULL OR l.ts >= $5)\n             AND ($6::timestamptz IS NULL OR l.ts < $6)\n             AND ($7::uuid[] IS NULL OR l.project_id = ANY($7))\n             AND ($8::jsonb IS NULL OR l.labels @> $8)\n             AND (NOT $9 OR (l.key_id IS NOT NULL AND k.id IS NULL))\n             AND (NOT $10 OR b.id IS NOT NULL)\n             AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))\n             AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text] OR l.tool = $12)\n             AND ($14::text[] IS NULL OR l.guardrails->>'action' = ANY($14))\n           ORDER BY l.ts DESC LIMIT $1",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", b.tool_calls AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n                LEFT JOIN request_bodies b ON b.id = l.id\n           WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)\n             AND ($3::uuid IS NULL OR l.key_id = $3)\n             AND (NOT $4 OR l.status_code >= 400)\n             AND ($5::timestamptz IS NULL OR l.ts >= $5)\n             AND ($6::timestamptz IS NULL OR l.ts < $6)\n             AND ($7::uuid[] IS NULL OR l.project_id = ANY($7))\n             AND ($8::jsonb IS NULL OR l.labels @> $8)\n             AND (NOT $9 OR (l.key_id IS NOT NULL AND k.id IS NULL))\n             AND (NOT $10 OR b.id IS NOT NULL)\n             AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))\n             AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text] OR l.tool = $12)\n             AND ($14::text[] IS NULL OR l.guardrails->>'action' = ANY($14))\n           ORDER BY l.ts DESC LIMIT $1",
   "describe": {
     "columns": [
       {
@@ -291,18 +291,40 @@
       },
       {
         "ordinal": 26,
+        "name": "task_state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "task_state"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
+        "name": "context_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "context_id"
+          }
+        }
+      },
+      {
+        "ordinal": 28,
         "name": "upstream_model?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 27,
+        "ordinal": 29,
         "name": "credential_name?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 28,
+        "ordinal": 30,
         "name": "tool_calls?",
         "type_info": "TextArray",
         "origin": {
@@ -313,7 +335,7 @@
         }
       },
       {
-        "ordinal": 29,
+        "ordinal": 31,
         "name": "bodies?",
         "type_info": "Text",
         "origin": "Expression"
@@ -364,11 +386,13 @@
       false,
       false,
       true,
+      true,
+      true,
       null,
       null,
       false,
       null
     ]
   },
-  "hash": "ff2e1d963e73d5f862e0e6eca8c17f9f507ea49b6a6f10edbaa5e6eedf4633c0"
+  "hash": "e23a274c16f1db2765c42d27333ab9d4ccf71f5007f0a3c1317b67e3c09c160d"
 }

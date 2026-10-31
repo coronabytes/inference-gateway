@@ -120,21 +120,8 @@ pub struct McpServer {
 
 impl McpServer {
     pub fn build(row: McpServerRow, sb: &SecretBox) -> Result<Self, String> {
-        let ctx = |e: &str| format!("MCP server {} ({}): {e}", row.id, row.name);
-        let auth = McpAuth::parse(&row.auth).ok_or_else(|| ctx("unknown auth"))?;
-        let secret = match &row.secret {
-            Some(sealed) => Some(String::from_utf8(sb.open(sealed).map_err(|e| ctx(&e))?).map_err(|_| ctx("corrupt secret"))?),
-            None => None,
-        };
-        let auth = match (auth, secret) {
-            (McpAuth::None, _) => None,
-            (_, None) => return Err(ctx("its secret is missing")),
-            (McpAuth::Bearer, Some(s)) => Some((header::AUTHORIZATION, sensitive(&format!("Bearer {s}")).ok_or_else(|| ctx("the secret is not a valid header value"))?)),
-            (McpAuth::Header, Some(s)) => {
-                let name = row.auth_header.as_deref().and_then(|h| HeaderName::try_from(h).ok()).ok_or_else(|| ctx("invalid auth header"))?;
-                Some((name, sensitive(&s).ok_or_else(|| ctx("the secret is not a valid header value"))?))
-            }
-        };
+        let ctx = |e: String| format!("MCP server {} ({}): {e}", row.id, row.name);
+        let auth = auth_header(&row.auth, row.auth_header.as_deref(), row.secret.as_deref(), sb).map_err(ctx)?;
         Ok(Self {
             id: row.id,
             name: row.name,
@@ -165,12 +152,36 @@ impl McpServer {
         self.tool_prices.get(tool).copied().unwrap_or(self.price_per_call)
     }
 
-    /// As for deployments: a server limited to projects is only for keys in one of them, and a key
-    /// with tags may use what carries no tag it lacks.
     pub fn allows(&self, key: &VirtualKey) -> bool {
-        let in_project = self.project_ids.is_empty() || key.project_id.is_some_and(|p| self.project_ids.contains(&p));
-        in_project && key.holds_all(&self.tags)
+        open_to(key, &self.project_ids, &self.tags)
     }
+}
+
+/// As for deployments: an upstream limited to projects is only for keys in one of them, and a key
+/// with tags may use what carries no tag it lacks.
+pub fn open_to(key: &VirtualKey, project_ids: &[Uuid], tags: &[String]) -> bool {
+    let in_project = project_ids.is_empty() || key.project_id.is_some_and(|p| project_ids.contains(&p));
+    in_project && key.holds_all(tags)
+}
+
+/// The header carrying the gateway's secret for an upstream (an MCP server, an A2A agent), from its
+/// stored `auth`, header name and sealed secret.
+pub fn auth_header(auth: &str, header: Option<&str>, sealed: Option<&[u8]>, sb: &SecretBox) -> Result<Option<(HeaderName, HeaderValue)>, String> {
+    let auth = McpAuth::parse(auth).ok_or("unknown auth")?;
+    let secret = match sealed {
+        Some(sealed) => Some(String::from_utf8(sb.open(sealed)?).map_err(|_| "corrupt secret")?),
+        None => None,
+    };
+    let invalid = || "the secret is not a valid header value".to_string();
+    Ok(match (auth, secret) {
+        (McpAuth::None, _) => None,
+        (_, None) => return Err("its secret is missing".into()),
+        (McpAuth::Bearer, Some(s)) => Some((header::AUTHORIZATION, sensitive(&format!("Bearer {s}")).ok_or_else(invalid)?)),
+        (McpAuth::Header, Some(s)) => {
+            let name = header.and_then(|h| HeaderName::try_from(h).ok()).ok_or("invalid auth header")?;
+            Some((name, sensitive(&s).ok_or_else(invalid)?))
+        }
+    })
 }
 
 fn sensitive(v: &str) -> Option<HeaderValue> {

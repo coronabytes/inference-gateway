@@ -442,6 +442,53 @@ export interface McpServerTestResult {
   error?: string;
 }
 
+/** An A2A agent the gateway proxies at `/a2a/{name}` (`GET /a2a-agents`). */
+export interface A2aAgent {
+  id: string;
+  name: string;
+  description?: string;
+  card_url: string;
+  auth: McpAuth;
+  auth_header?: string;
+  /** Whether a secret is stored; the secret itself is never returned. */
+  has_secret: boolean;
+  tags: string[];
+  project_ids: string[];
+  timeout_secs: number;
+  /** USD per message sent to the agent. */
+  price_per_message: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface A2aAgentInput {
+  name: string;
+  description?: string;
+  card_url: string;
+  auth: McpAuth;
+  auth_header?: string;
+  /** Omitted on update: the stored secret stays. */
+  secret?: string;
+  tags: string[];
+  project_ids: string[];
+  timeout_secs: number;
+  price_per_message: number;
+  enabled: boolean;
+}
+
+/** What `POST /a2a-agents/{id}/test` answers: the agent's card, as far as the gateway proxies it. */
+export interface A2aAgentTestResult {
+  ok: boolean;
+  latency_ms: number;
+  name?: string;
+  description?: string;
+  version?: string;
+  interfaces?: { binding: "JSONRPC" | "HTTP+JSON"; version: string; url: string }[];
+  skills?: { name: string; description?: string }[];
+  error?: string;
+}
+
 export interface CredentialInput {
   name: string;
   provider?: Provider;
@@ -737,6 +784,10 @@ export interface LogRow {
   tool_calls: string[] | null;
   /** The tool an MCP call (api `mcp`) called, on the server named by `model_name`. */
   tool: string | null;
+  /** A message to an A2A agent (api `a2a`): the state its task was left in, such as `completed`. */
+  task_state: string | null;
+  /** A message to an A2A agent: its context, shared by a conversation's messages. */
+  context_id: string | null;
   api: string;
   stream: boolean;
   status_code: number;

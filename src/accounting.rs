@@ -63,6 +63,9 @@ pub struct RequestRecord {
     pub bodies_status: Option<&'static str>,
     /// The tool an MCP call called (see `mcp`).
     pub tool: Option<String>,
+    /// A message to an A2A agent: the state its task was left in, and its context (see `a2a`).
+    pub task_state: Option<String>,
+    pub context_id: Option<String>,
 }
 
 /// A logged request's bodies on their way to the writer. They are never copied: a clone of a
@@ -133,6 +136,8 @@ pub struct Tracker {
     tool: Option<String>,
     /// A price per call (an MCP tool's), in USD, on top of what the usage costs.
     charge_usd: f64,
+    task_state: Option<String>,
+    context_id: Option<String>,
 }
 
 /// Rough tokens for a number of bytes of text, for when a provider reports no usage. About four
@@ -189,6 +194,8 @@ impl Tracker {
             capture: None,
             tool: None,
             charge_usd: 0.0,
+            task_state: None,
+            context_id: None,
         }
     }
 
@@ -203,6 +210,12 @@ impl Tracker {
     /// The tool an MCP call calls.
     pub fn tool(&mut self, name: &str) {
         self.tool = Some(crate::util::truncate(name, 200));
+    }
+
+    /// The state an A2A agent's task was left in, and its context.
+    pub fn task(&mut self, state: Option<&str>, context: Option<&str>) {
+        self.task_state = state.map(|s| crate::util::truncate(s, 40));
+        self.context_id = context.map(|c| crate::util::truncate(c, 200));
     }
 
     /// Charges a price per call, in USD, on top of the usage.
@@ -359,6 +372,8 @@ impl Drop for Tracker {
             bodies: Logged(self.capture.take()),
             bodies_status: None,
             tool: self.tool.take(),
+            task_state: self.task_state.take(),
+            context_id: self.context_id.take(),
         };
         telemetry::end_call(&self.cx, &rec, self.deployment.as_ref().map(|d| d.upstream_model.as_str()));
         if let Some((parent, decides_status)) = self.parent.take() {
@@ -502,6 +517,8 @@ impl Drop for Rollup {
             bodies: Logged(s.capture),
             bodies_status: None,
             tool: None,
+            task_state: None,
+            context_id: None,
         };
         telemetry::end_call(&self.cx, &rec, None);
         if self.tx.try_send(rec).is_err() {

@@ -90,6 +90,15 @@ function RequestDetails({ r, routed }: { r: LogRow; routed: boolean }) {
               {r.stream && <span className="muted"> · streamed</span>}
             </td>
           </tr>
+          {(r.task_state || r.context_id) && (
+            <tr>
+              <th>Task</th>
+              <td>
+                {r.task_state ?? "–"}
+                {r.context_id && <span className="muted mono"> · context {r.context_id}</span>}
+              </td>
+            </tr>
+          )}
           <tr>
             <th>Deployment</th>
             <td>
@@ -350,7 +359,7 @@ export function RequestLog() {
                         <td>
                           <ToolList tools={r.tool ? [r.tool] : r.tool_calls} onPick={setTool} />
                         </td>
-                        <td>{r.provider ?? (r.api === "mcp" ? "MCP" : "–")}</td>
+                        <td>{r.provider ?? (r.api === "mcp" ? "MCP" : r.api === "a2a" ? "A2A" : "–")}</td>
                         <td className="num">{ms(r.latency_ms)}</td>
                         <td className="num">{ms(r.ttft_ms)}</td>
                         <td className="num">

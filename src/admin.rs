@@ -35,6 +35,7 @@ use crate::{
     sync::broadcast_reload,
 };
 
+pub(crate) mod a2a;
 pub(crate) mod guardrails;
 pub(crate) mod hub;
 pub(crate) mod mcp;
@@ -61,6 +62,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/mcp-servers", get(mcp::list_mcp_servers).post(mcp::create_mcp_server))
         .route("/mcp-servers/{id}", axum::routing::put(mcp::update_mcp_server).delete(mcp::delete_mcp_server))
         .route("/mcp-servers/{id}/test", post(mcp::test_mcp_server))
+        .route("/a2a-agents", get(a2a::list_a2a_agents).post(a2a::create_a2a_agent))
+        .route("/a2a-agents/{id}", axum::routing::put(a2a::update_a2a_agent).delete(a2a::delete_a2a_agent))
+        .route("/a2a-agents/{id}/test", post(a2a::test_a2a_agent))
         .route("/routers", get(list_routers).post(create_router))
         .route("/routers/{id}", axum::routing::put(update_router).delete(delete_router))
         .route("/aliases", get(list_aliases).post(create_alias))
@@ -1641,11 +1645,19 @@ fn check_budget(limit: Option<f64>, period: Option<&str>) -> R<()> {
     }
 }
 
-/// Every tag on a deployment, router or MCP server, with how many of each carry it.
+/// Every tag on a deployment, router, MCP server or A2A agent, with how many deployments, routers
+/// and MCP servers or agents carry it.
 async fn known_tags(state: &AppState) -> R<BTreeMap<String, (usize, usize, usize)>> {
-    let (deployments, routers, servers) =
-        tokio::try_join!(db::list_deployments(&state.db), db::list_routers(&state.db), db::list_mcp_servers(&state.db))?;
+    let (deployments, routers, servers, agents) = tokio::try_join!(
+        db::list_deployments(&state.db),
+        db::list_routers(&state.db),
+        db::list_mcp_servers(&state.db),
+        db::list_a2a_agents(&state.db)
+    )?;
     let mut tags: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+    for t in agents.into_iter().flat_map(|a| a.tags) {
+        tags.entry(t).or_default().2 += 1;
+    }
     for t in deployments.into_iter().flat_map(|d| d.tags) {
         tags.entry(t).or_default().0 += 1;
     }
@@ -1677,7 +1689,7 @@ async fn key_tags(state: &AppState, wanted: Vec<String>, held: &[String]) -> R<V
     let tags = normalize_tags(wanted).map_err(AdminError::bad_request)?;
     let known = known_tags(state).await?;
     if let Some(t) = tags.iter().find(|t| !known.contains_key(*t) && !held.contains(t)) {
-        return Err(AdminError::bad_request(format!("no deployment, router or MCP server has the tag '{t}'; add tags on the Models or Tools page")));
+        return Err(AdminError::bad_request(format!("no deployment, router, MCP server or A2A agent has the tag '{t}'; add tags on the Models or Tools page")));
     }
     Ok(tags)
 }
@@ -2107,6 +2119,11 @@ async fn delete_project(State(state): State<AppState>, Extension(actor): Extensi
         db::list_mcp_servers(&state.db).await?.into_iter().filter(|s| s.project_ids.contains(&id)).map(|s| s.name).collect();
     if !servers.is_empty() {
         return Err(AdminError::conflict(format!("MCP servers {} are limited to this project; remove it from them first", servers.join(", "))));
+    }
+    let agents: Vec<String> =
+        db::list_a2a_agents(&state.db).await?.into_iter().filter(|a| a.project_ids.contains(&id)).map(|a| a.name).collect();
+    if !agents.is_empty() {
+        return Err(AdminError::conflict(format!("A2A agents {} are limited to this project; remove it from them first", agents.join(", "))));
     }
     let keys = db::delete_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     // Replicas reload their keys so the deleted ones stop working there too.

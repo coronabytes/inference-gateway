@@ -37,12 +37,14 @@ use utoipa::{
         paths::chat_completions, paths::responses, paths::messages, paths::count_tokens, paths::embeddings,
         paths::rerank, paths::decisions, paths::systemone, paths::list_models, paths::list_models_extended,
         paths::mcp_hub_post, paths::mcp_hub_get, paths::mcp_hub_delete, paths::mcp_post, paths::mcp_get, paths::mcp_delete,
+        paths::a2a_card, paths::a2a_jsonrpc, paths::a2a_rest_post, paths::a2a_rest_get, paths::a2a_rest_delete,
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
         paths::get_oidc_settings, paths::put_oidc_settings, paths::test_oidc_settings, paths::list_admins, paths::delete_admin, paths::set_admin_projects,
         paths::list_credentials, paths::create_credential, paths::update_credential, paths::delete_credential, paths::foundry_deployments, paths::bedrock_models, paths::aws_regions,
         paths::list_guardrails, paths::create_guardrail, paths::update_guardrail, paths::delete_guardrail, paths::test_guardrail,
         paths::guardrail_prices,
+        paths::list_a2a_agents, paths::create_a2a_agent, paths::update_a2a_agent, paths::delete_a2a_agent, paths::test_a2a_agent,
         paths::list_mcp_servers, paths::create_mcp_server, paths::update_mcp_server, paths::delete_mcp_server, paths::test_mcp_server,
         paths::list_deployments, paths::create_deployment, paths::get_deployment, paths::update_deployment,
         paths::delete_deployment, paths::test_deployment, paths::clear_cooldown,
@@ -69,6 +71,7 @@ use utoipa::{
         (name = "Model aliases", description = "Model names that serve another model, which they follow when it is renamed."),
         (name = "Guardrails", description = "Provider guardrails that mask or block what prompts and responses must not contain."),
         (name = "MCP", description = "MCP servers behind the gateway: one key for every server, the servers' credentials kept in the gateway."),
+        (name = "A2A", description = "A2A agents behind the gateway: one key for every agent, the agents' credentials kept in the gateway."),
         (name = "Virtual keys", description = "Keys for apps and people, with limits, budgets and access tags, and the projects that group them."),
         (name = "Configuration", description = "Tags, and exporting and importing the configuration."),
         (name = "Model hub", description = "The models a key may use, with their limits, prices and guardrails, and the models' metadata."),
@@ -410,7 +413,7 @@ mod schemas {
         deployments: usize,
         /// Auto routers carrying the tag.
         routers: usize,
-        /// MCP servers carrying the tag.
+        /// MCP servers and A2A agents carrying the tag.
         mcp_servers: usize,
         /// Keys holding the tag (for a user, their projects' keys).
         keys: usize,
@@ -616,6 +619,76 @@ mod paths {
     fn list_models_extended() {}
 
     const MCP_SESSION: &str = "The session the server opened, as the gateway handed it out with `initialize`'s answer. It only works \n        with the key that opened it; an unknown one is answered with `404`, after which the client starts a new session.";
+
+    const A2A_STATES: &str = "Each message is an entry in the request log (api `a2a`) with the state its task was left in, counts against \
+        the key's limits and budgets, and is charged the agent's price. Tasks belong to the key whose message created them: \
+        calls about another key's task are answered as for an unknown task.";
+
+    /// A2A: agent card
+    ///
+    /// The agent's card as the agent serves it, with the gateway's addresses as its interfaces (the newest \
+    /// JSON-RPC and HTTP+JSON ones) and the virtual key as its security.
+    #[utoipa::path(get, path = "/a2a/{agent}/.well-known/agent-card.json", tag = "A2A", params(("agent" = String, Path)),
+        responses(
+            (status = 200, description = "The agent card.", body = Object),
+            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+            (status = 404, description = "No such agent for this key.", body = OpenAiError),
+            (status = 502, description = "The agent's card could not be fetched or read.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_card() {}
+
+    /// A2A: JSON-RPC
+    ///
+    /// The agent's JSON-RPC interface, in A2A 1.0 (`SendMessage`, …) or 0.3 (`message/send`, …), as the card \
+    /// says. Listing tasks and the extended card are not offered.
+    #[utoipa::path(post, path = "/a2a/{agent}", tag = "A2A", params(("agent" = String, Path),
+            ("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
+        request_body(content = Object, content_type = "application/json"),
+        responses(
+            (status = 200, description = A2A_STATES, content((Object = "application/json"), (String = "text/event-stream"))),
+            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+            (status = 404, description = "No such agent for this key.", body = OpenAiError),
+            (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = OpenAiError),
+            (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_jsonrpc() {}
+
+    /// A2A: HTTP+JSON
+    ///
+    /// The agent's HTTP+JSON interface: `path` as the A2A specification has it, such as `message:send` or \
+    /// `tasks/{id}`.
+    #[utoipa::path(post, path = "/a2a/{agent}/rest/{*path}", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path),
+            ("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
+        request_body(content = Object, content_type = "application/json"),
+        responses(
+            (status = 200, description = A2A_STATES, content((Object = "application/json"), (String = "text/event-stream"))),
+            (status = 403, description = "Listing tasks or the extended card, which are not offered.", body = OpenAiError),
+            (status = 404, description = "No such agent for this key, or another key's task.", body = OpenAiError),
+            (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = OpenAiError),
+            (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_rest_post() {}
+
+    /// A2A: HTTP+JSON, read
+    #[utoipa::path(get, path = "/a2a/{agent}/rest/{*path}", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path)),
+        responses(
+            (status = 200, description = "The agent's answer.", content((Object = "application/json"), (String = "text/event-stream"))),
+            (status = 404, description = "No such agent for this key, or another key's task.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_rest_get() {}
+
+    /// A2A: HTTP+JSON, delete
+    #[utoipa::path(delete, path = "/a2a/{agent}/rest/{*path}", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path)),
+        responses(
+            (status = 200, description = "The agent's answer."),
+            (status = 404, description = "No such agent for this key, or another key's task.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_rest_delete() {}
 
     /// MCP: every server
     ///
@@ -896,6 +969,61 @@ mod paths {
         responses((status = 200, description = "The regions.", body = Vec<crate::aws::AwsRegion>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn aws_regions() {}
+
+    // ------------------------------------------------------------ A2A agents
+
+    /// List A2A agents
+    #[utoipa::path(get, path = "/admin/api/a2a-agents", tag = "A2A",
+        responses((status = 200, description = "The A2A agents.", body = Vec<admin::a2a::A2aAgentView>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn list_a2a_agents() {}
+
+    /// Create A2A agent
+    ///
+    /// An agent, found by its card, proxied at `/a2a/{name}`.
+    #[utoipa::path(post, path = "/admin/api/a2a-agents", tag = "A2A", request_body = admin::a2a::A2aAgentInput,
+        responses(
+            (status = 201, description = "The new A2A agent.", body = admin::a2a::A2aAgentView),
+            (status = 400, description = "Invalid A2A agent.", body = AdminError),
+            (status = 409, description = "The name is taken.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn create_a2a_agent() {}
+
+    /// Update A2A agent
+    ///
+    /// Without a secret, the stored secret stays.
+    #[utoipa::path(put, path = "/admin/api/a2a-agents/{id}", tag = "A2A", params(("id" = Uuid, Path)),
+        request_body = admin::a2a::A2aAgentInput,
+        responses(
+            (status = 200, description = "The A2A agent.", body = admin::a2a::A2aAgentView),
+            (status = 400, description = "Invalid A2A agent.", body = AdminError),
+            (status = 404, description = "No such A2A agent.", body = AdminError),
+            (status = 409, description = "The name is taken.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn update_a2a_agent() {}
+
+    /// Delete A2A agent
+    #[utoipa::path(delete, path = "/admin/api/a2a-agents/{id}", tag = "A2A", params(("id" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Deleted."),
+            (status = 404, description = "No such A2A agent.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn delete_a2a_agent() {}
+
+    /// Test A2A agent
+    ///
+    /// Fetches the agent's card, also while the agent is disabled, and says what the gateway proxies of it. \
+    /// No message is sent.
+    #[utoipa::path(post, path = "/admin/api/a2a-agents/{id}/test", tag = "A2A", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The card, or why it could not be used with `ok: false`.", body = admin::a2a::A2aAgentTestResult),
+            (status = 404, description = "No such A2A agent.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn test_a2a_agent() {}
 
     // ------------------------------------------------------------ MCP servers
 

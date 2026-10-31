@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO a2a_agents (id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message,\n             enabled, created_at, updated_at)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bytea",
+        "TextArray",
+        "UuidArray",
+        "Int4",
+        "Float8",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1556f2d82b5854736a08307caf0c031ce2ab17b70f4ac46fe4d9ba1231e0e87e"
+}
