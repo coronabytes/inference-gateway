@@ -8,7 +8,8 @@
 //!
 //! Both send the RFC 8707 `resource` when one is set, as MCP asks of its clients. Discovery finds an
 //! upstream's authorization server (RFC 9728 for MCP servers, the agent card for A2A agents, then
-//! RFC 8414 or OpenID metadata) and can register the gateway there as a public client (RFC 7591).
+//! RFC 8414 or OpenID metadata) and gets the gateway a public client there: its client ID metadata
+//! document (CIMD) where the server takes one, else dynamic client registration (RFC 7591).
 
 use std::{
     collections::HashMap,
@@ -440,10 +441,26 @@ pub struct Discovered {
     pub resource: Option<String>,
     /// Ways the token URL takes clients to authenticate.
     pub token_auth_methods: Vec<String>,
-    /// From dynamic client registration, when asked for and offered.
+    /// Whether the authorization server takes client ID metadata documents as client IDs.
+    pub client_metadata_documents: bool,
+    /// The gateway's client there, when discovery got it one (see `client`).
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     pub redirect_uri: Option<String>,
+    /// How the gateway got `client_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<ClientSource>,
+}
+
+/// How discovery got the gateway a client at an authorization server.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientSource {
+    /// Its client ID is the URL of the gateway's client ID metadata document, which the server
+    /// fetches when a key signs in. Nothing is registered.
+    MetadataDocument,
+    /// Dynamic client registration (RFC 7591).
+    Registered,
 }
 
 /// A small JSON document from an address an upstream gave.
@@ -513,6 +530,7 @@ async fn server_metadata(state: &AppState, issuer: &str, found: &mut Discovered)
                 found.authorization_url = found.authorization_url.take().or(s("authorization_endpoint"));
                 found.registration_url = s("registration_endpoint");
                 found.token_auth_methods = list("token_endpoint_auth_methods_supported");
+                found.client_metadata_documents = m.get("client_id_metadata_document_supported").and_then(Value::as_bool).unwrap_or(false);
                 if found.scopes.is_empty() {
                     found.scopes = list("scopes_supported");
                 }
@@ -525,9 +543,18 @@ async fn server_metadata(state: &AppState, issuer: &str, found: &mut Discovered)
 }
 
 /// Finds an upstream's authorization server: for an MCP server from its protected resource
-/// metadata, for an A2A agent from the OAuth 2 scheme on its card. With `register`, registers the
-/// gateway as a public client with `redirect_uri`, where the server offers registration.
-pub async fn discover(state: &AppState, kind: Kind, url: &str, register: bool, redirect_uri: &str) -> Result<Discovered, String> {
+/// metadata, for an A2A agent from the OAuth 2 scheme on its card. Then gets the gateway a public
+/// client with `redirect_uri` there: `metadata_document` (the URL of the gateway's client ID
+/// metadata document) as its client ID where the server takes one, else, with `register`, a client
+/// registered where the server offers registration.
+pub async fn discover(
+    state: &AppState,
+    kind: Kind,
+    url: &str,
+    metadata_document: Option<&str>,
+    register: bool,
+    redirect_uri: &str,
+) -> Result<Discovered, String> {
     let mut found = Discovered::default();
     let issuer = match kind {
         Kind::Mcp => {
@@ -570,6 +597,7 @@ pub async fn discover(state: &AppState, kind: Kind, url: &str, register: bool, r
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
                     .unwrap_or_default();
+                found.client_metadata_documents = m.get("client_id_metadata_document_supported").and_then(Value::as_bool).unwrap_or(false);
                 found.token_url = found.token_url.take().or(s(&m, "token_endpoint"));
                 found.authorization_url = found.authorization_url.take().or(s(&m, "authorization_endpoint"));
             }
@@ -582,7 +610,13 @@ pub async fn discover(state: &AppState, kind: Kind, url: &str, register: bool, r
     if found.token_url.is_none() {
         return Err("no token URL found".into());
     }
-    if register && let Some(reg) = found.registration_url.clone() {
+    if let Some(doc) = metadata_document
+        && found.client_metadata_documents
+    {
+        found.client_id = Some(doc.to_string());
+        found.redirect_uri = Some(redirect_uri.to_string());
+        found.client = Some(ClientSource::MetadataDocument);
+    } else if register && let Some(reg) = found.registration_url.clone() {
         state.cfg.upstream_policy.check_url(&reg).map_err(|why| format!("the registration URL is not allowed: {why}"))?;
         let body = json!({
             "client_name": "Inference Gateway",
@@ -600,6 +634,7 @@ pub async fn discover(state: &AppState, kind: Kind, url: &str, register: bool, r
         found.client_id = v.get("client_id").and_then(Value::as_str).map(str::to_string);
         found.client_secret = v.get("client_secret").and_then(Value::as_str).map(str::to_string);
         found.redirect_uri = Some(redirect_uri.to_string());
+        found.client = Some(ClientSource::Registered);
     }
     Ok(found)
 }

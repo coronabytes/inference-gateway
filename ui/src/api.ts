@@ -409,9 +409,13 @@ export interface OAuthDiscovered {
   scopes: string[];
   resource?: string;
   token_auth_methods: string[];
+  /** The authorization server takes client ID metadata documents (CIMD) as client IDs. */
+  client_metadata_documents: boolean;
   client_id?: string;
   client_secret?: string;
   redirect_uri?: string;
+  /** How the gateway got `client_id`: its metadata document's URL, or registration. */
+  client?: "metadata_document" | "registered";
 }
 
 /** An upstream a key signs in to on its own (`GET /keys/{id}/connections`). */

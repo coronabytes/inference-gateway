@@ -4,7 +4,7 @@ import { Button, MenuButton, MultiSelect, PageActions, TextInput, Toggle } from 
 import { TagEditor, TagList } from "../components/Tags";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, ms, usd } from "../format";
-import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState } from "./UpstreamAuth";
+import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState, withClient } from "./UpstreamAuth";
 
 
 /** Where clients find an agent's card through the gateway. */
@@ -230,7 +230,7 @@ function AgentForm({
         name: name.trim(),
         description: description.trim() || undefined,
         card_url: url.trim(),
-        ...authInput(auth),
+        ...authInput(await withClient("a2a", url, auth)),
         tags,
         project_ids: projectIds,
         timeout_secs: timeoutSecs,
@@ -271,16 +271,25 @@ function AgentForm({
           autoFocus
         />
         <TextInput caption="Description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="optional" />
-        <TextInput
-          caption="Agent card"
-          hint="The address of the agent's card. The agent's address alone gets /.well-known/agent-card.json. The card says where the agent's interfaces are; the gateway proxies the newest JSON-RPC and HTTP+JSON ones, in A2A 1.0 or 0.3."
-          mono
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://agent.example.com/.well-known/agent-card.json"
-          required
+        <AuthFields
+          kind="a2a"
+          url={url}
+          urlField={(discover) => (
+            <TextInput
+              caption="Agent card"
+              hint="The address of the agent's card. The agent's address alone gets /.well-known/agent-card.json. The card says where the agent's interfaces are; the gateway proxies the newest JSON-RPC and HTTP+JSON ones, in A2A 1.0 or 0.3."
+              mono
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://agent.example.com/.well-known/agent-card.json"
+              required
+              action={discover}
+            />
+          )}
+          value={auth}
+          onChange={setAuth}
+          keepsSecret={keepsSecret}
         />
-        <AuthFields kind="a2a" url={url} value={auth} onChange={setAuth} keepsSecret={keepsSecret} />
         <TagEditor
           caption="Tags"
           hint={

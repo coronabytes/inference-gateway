@@ -57,7 +57,8 @@ const SECRET = {
 /**
  * A single-line text input. `secret` masks the value (API keys, client secrets). `onClear` adds an
  * × at the end of the pill, named `clearLabel` (default "Clear {caption}"), for example to clear
- * the value or remove a stored secret.
+ * the value or remove a stored secret. `action` goes at the end of the pill too: a small button that
+ * acts on the value, such as Discover after a URL.
  */
 export function TextInput({
   caption,
@@ -66,6 +67,7 @@ export function TextInput({
   secret,
   onClear,
   clearLabel,
+  action,
   className,
   ...props
 }: Omit<ComponentProps<"input">, "children"> & {
@@ -75,12 +77,14 @@ export function TextInput({
   secret?: boolean;
   onClear?: () => void;
   clearLabel?: string;
+  action?: ReactNode;
 }) {
   return (
     <WithHint hint={hint} className={className}>
       <label className={cx("control", props.disabled && "disabled")}>
         <Caption>{caption}</Caption>
         <Input {...props} {...(secret && { ...SECRET, type: "text" })} className={cx((mono || secret) && "mono", secret && "secret-input")} />
+        {action && <span className="control-action">{action}</span>}
         {onClear && (
           <button type="button" className="control-clear" aria-label={clearLabel ?? `Clear ${caption}`} title={clearLabel ?? "Clear"} disabled={props.disabled} onClick={onClear}>
             ×

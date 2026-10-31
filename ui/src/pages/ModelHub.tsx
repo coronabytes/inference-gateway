@@ -4,7 +4,7 @@ import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, TextArea, T
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
 import { VendorLogo } from "../components/VendorLogo";
-import { Badge, BracesIcon, CopyIcon, DetailsIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, PlayIcon, ReasoningIcon, TilesIcon, TokenPrices } from "../components/ui";
+import { Badge, BracesIcon, DetailsIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, PlayIcon, ReasoningIcon, TilesIcon, TokenPrices } from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
@@ -207,8 +207,6 @@ export function ModelHub() {
   const [editing, setEditing] = useState<HubModel | null>(null);
   const [curl, setCurl] = useState<CurlRequest | null>(null);
   const [view, setView] = useState<View>(initialView);
-  // The model whose details are open in a dialog, in the tile view.
-  const [details, setDetails] = useState<HubModel | null>(null);
 
   const pickView = (v: View) => {
     try {
@@ -487,7 +485,7 @@ export function ModelHub() {
         ) : (
           <div className="hub-tiles">
             {visible.map((m) => (
-              <ModelTile key={m.name} model={m} keyId={keyId} caps={capFilter} onCap={toggleCap} onEdit={() => setEditing(m)} onDetails={() => setDetails(m)} />
+              <ModelTile key={m.name} model={m} keyId={keyId} caps={capFilter} onCap={toggleCap} onEdit={() => setEditing(m)} />
             ))}
           </div>
         )
@@ -594,11 +592,6 @@ export function ModelHub() {
           </table>
         </div>
       )}
-      {details && (
-        <Modal title={displayName(details)} size="wide" onClose={() => setDetails(null)} footer={<Button onClick={() => setDetails(null)}>Close</Button>}>
-          <HubDetails model={details} options={priceOptions(details)} />
-        </Modal>
-      )}
       {editing && (
         <MetadataForm
           model={editing}
@@ -617,16 +610,31 @@ export function ModelHub() {
 /** A price for a tile: "$3", "$0.8–3". */
 const dollars = (values: number[]) => (values.length ? `$${range(values)}` : "–");
 
-/** The prices a tile shows, by the model's mode: per 1M tokens, or per 1K searches for rerank. */
-function tilePrices(m: HubModel): { label: string; value: string; unit: string }[] {
+/** A tile's prices on one line, by the model's mode: input and output per 1M tokens, input alone
+ *  for embeddings, per 1K searches for rerank. The cached input price is in the tooltip. */
+function TilePrice({ model: m }: { model: HubModel }) {
   const ps = m.deployments.map((d) => d.prices);
-  if (m.mode === "rerank") return [{ label: "Searches", value: dollars(ps.map((p) => p.per_k_searches)), unit: "1K" }];
-  if (m.mode === "embedding") return [{ label: "Input", value: dollars(ps.map((p) => p.input)), unit: "1M" }];
-  return [
-    { label: "Input", value: dollars(ps.map((p) => p.input)), unit: "1M" },
-    { label: "Output", value: dollars(ps.map((p) => p.output)), unit: "1M" },
-    { label: "Cached", value: dollars(ps.map((p) => p.cache_read)), unit: "1M" },
-  ];
+  const of = (pick: (p: HubPrices) => number | undefined) => dollars(ps.map(pick).filter((v): v is number => v != null));
+  if (m.mode === "rerank") {
+    return (
+      <div className="hub-tile-price small">
+        <span className="mono">{of((p) => p.per_k_searches)}</span> / 1K searches
+      </div>
+    );
+  }
+  const cached = m.mode === "embedding" ? "–" : of((p) => p.cache_read);
+  return (
+    <div className="hub-tile-price small" title={cached !== "–" ? `Cached input ${cached} / 1M` : undefined}>
+      <span className="mono">{of((p) => p.input)}</span> in
+      {m.mode !== "embedding" && (
+        <>
+          {" · "}
+          <span className="mono">{of((p) => p.output)}</span> out
+        </>
+      )}{" "}
+      / 1M
+    </div>
+  );
 }
 
 /** A success rate: "100%", "99.95%", "87.5%". */
@@ -644,28 +652,38 @@ function hourTone(requests: number, errors: number): string {
 
 const NO_HOURS: [number, number][] = Array.from({ length: 24 }, () => [0, 0]);
 
-/** The last 24 hours as one bar per hour, coloured by its errors, with the success rate. */
-function StatusBar({ stats }: { stats?: HubStats }) {
+/** The last 24 hours as one bar per hour, coloured by its errors. */
+function HourBar({ stats }: { stats?: HubStats }) {
   const hour = 3_600_000;
   const now = Math.floor(Date.now() / hour) * hour;
   const hours = stats?.hours ?? NO_HOURS;
   const time = (i: number) => new Date(now - (hours.length - 1 - i) * hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
+    <span className="status-bar" role="img" aria-label={stats?.requests ? `${stats.errors} of ${stats.requests} requests failed in the last 24 hours` : "No requests in the last 24 hours"}>
+      {hours.map(([requests, errors], i) => (
+        <span
+          key={i}
+          className={`status-hour ${hourTone(requests, errors)}`}
+          title={requests ? `${time(i)}: ${requests.toLocaleString()} requests, ${errors.toLocaleString()} failed` : `${time(i)}: no requests`}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** The hour bar with the success rate above it. */
+function StatusBar({ stats }: { stats?: HubStats }) {
+  return (
     <div className="hub-status">
       <span className="hub-stat-label">Status</span>
       <span className="hub-stat-value">{stats?.requests ? percent(stats.requests - stats.errors, stats.requests) : "–"}</span>
-      <span className="status-bar" role="img" aria-label={stats?.requests ? `${stats.errors} of ${stats.requests} requests failed in the last 24 hours` : "No requests in the last 24 hours"}>
-        {hours.map(([requests, errors], i) => (
-          <span
-            key={i}
-            className={`status-hour ${hourTone(requests, errors)}`}
-            title={requests ? `${time(i)}: ${requests.toLocaleString()} requests, ${errors.toLocaleString()} failed` : `${time(i)}: no requests`}
-          />
-        ))}
-      </span>
+      <HourBar stats={stats} />
     </div>
   );
 }
+
+/** Output tokens per second: "239 t/s", "42.5 t/s". */
+const speed = (tps?: number) => (tps != null ? `${tps.toFixed(tps >= 100 ? 0 : 1)} t/s` : undefined);
 
 /** How a model ran in the last 24 hours: its status bar, latency and, for chat models, speed. In the list,
  *  `speedSlot` keeps the speed's place for other models so the columns line up from row to row. */
@@ -681,7 +699,7 @@ function ModelStats({ model: m, speedSlot }: { model: HubModel; speedSlot?: bool
       {m.mode === "chat" ? (
         <div className="hub-stat" title="Output tokens per second while generating, in the last 24 hours">
           <span className="hub-stat-label">Speed</span>
-          <span className="hub-stat-value">{s?.tokens_per_second != null ? `${s.tokens_per_second.toFixed(s.tokens_per_second >= 100 ? 0 : 1)} t/s` : "–"}</span>
+          <span className="hub-stat-value">{speed(s?.tokens_per_second) ?? "–"}</span>
         </div>
       ) : (
         speedSlot && <div className="hub-stat" aria-hidden="true" />
@@ -690,14 +708,14 @@ function ModelStats({ model: m, speedSlot }: { model: HubModel; speedSlot?: bool
   );
 }
 
-/** A model as a card: who makes it, what it is for and can do, what it costs, and how it ran today. */
+/** A model as a card: who makes it (its logo, which edits it), what it is for and can do, what it
+ *  costs, and how it ran today. */
 function ModelTile({
   model: m,
   keyId,
   caps,
   onCap,
   onEdit,
-  onDetails,
 }: {
   model: HubModel;
   /** The hub's key, to try the model as. */
@@ -705,66 +723,58 @@ function ModelTile({
   caps: string[];
   onCap: (path: string) => void;
   onEdit: () => void;
-  onDetails: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
   const vendor = m.vendor ?? "";
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(m.name);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // The browser refused; the name is on the card to copy by hand.
-    }
-  };
+  const name = displayName(m);
+  const s = m.stats;
   return (
     <article className="card hub-tile">
       <div className="hub-tile-head">
-        <VendorLogo vendor={vendor} fallback={m.name} />
+        <button type="button" className="hub-tile-edit" aria-label={`Edit ${name}`} title={vendor ? `${vendor}: edit the model` : "Edit the model"} onClick={onEdit}>
+          <VendorLogo vendor={vendor} fallback={m.name} />
+        </button>
         <div className="hub-tile-title">
-          <div className="hub-name clip" title={displayName(m)}>
-            {displayName(m)}
+          <div className="hub-name clip" title={name === m.name ? name : `${name} (${m.name})`}>
+            {name}
           </div>
-          <div className="muted small clip">
-            <Vendor model={m} />
-            {m.metadata.display_name && <span className="mono"> · {m.name}</span>}
-          </div>
+          {capabilitiesOf(m).length > 0 && <CapabilityIcons m={m} picked={caps} onPick={onCap} />}
         </div>
         <div className="hub-tile-actions">
           <PlayButton model={m.name} keyId={keyId} />
-          <IconButton label={copied ? "Copied" : `Copy the model name ${m.name}`} title={copied ? "Copied" : "Copy the model name"} onClick={copy}>
-            <CopyIcon />
-          </IconButton>
-          <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={onEdit}>
-            <EditIcon />
-          </IconButton>
-          <IconButton label={`Details of ${m.name}`} title="Details" onClick={onDetails}>
-            <DetailsIcon />
-          </IconButton>
         </div>
       </div>
       {m.metadata.description && <p className="hub-tile-description">{m.metadata.description}</p>}
       <div className="hub-tile-facts small">
-        <Badge tone="neutral">{m.kind === "router" ? "router" : m.mode}</Badge>
-        {m.target && <Badge tone="neutral">alias</Badge>}
-        {m.max_input_tokens != null && <span title={`${m.max_input_tokens.toLocaleString()} input tokens`}>{compact(m.max_input_tokens)} context</span>}
-        {m.max_output_tokens != null && <span title={`${m.max_output_tokens.toLocaleString()} output tokens`}>{compact(m.max_output_tokens)} out</span>}
-        <CapabilityIcons m={m} picked={caps} onPick={onCap} />
+        {/* Most models chat: only the others say what they are. */}
+        {(m.kind === "router" || m.mode !== "chat") && <Badge tone="neutral">{m.kind === "router" ? "router" : m.mode}</Badge>}
+        {m.target && (
+          <span>
+            alias of <span className="mono">{m.target}</span>
+          </span>
+        )}
+        {m.max_input_tokens != null && (
+          <span
+            title={`${m.max_input_tokens.toLocaleString()} input tokens${m.max_output_tokens != null ? `, ${m.max_output_tokens.toLocaleString()} output tokens` : ""}`}
+          >
+            {compact(m.max_input_tokens)} context
+          </span>
+        )}
+        <TagList tags={m.tags} />
       </div>
-      {m.tags.length > 0 && <TagList tags={m.tags} />}
-      <dl className="hub-tile-prices">
-        {tilePrices(m).map((p) => (
-          <div key={p.label}>
-            <dt className="muted small">{p.label}</dt>
-            <dd>
-              <span className="mono">{p.value}</span> <span className="muted small">/ {p.unit}</span>
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <TilePrice model={m} />
       <div className="hub-tile-foot">
-        <ModelStats model={m} />
+        {s?.requests ? (
+          <>
+            <HourBar stats={s} />
+            <span className="hub-tile-stats mono small" title="Success rate, median latency and output speed in the last 24 hours">
+              {[percent(s.requests - s.errors, s.requests), s.p50_latency_ms != null && ms(s.p50_latency_ms), m.mode === "chat" && speed(s.tokens_per_second)]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </>
+        ) : (
+          <span className="muted small">No requests in 24h</span>
+        )}
       </div>
     </article>
   );
