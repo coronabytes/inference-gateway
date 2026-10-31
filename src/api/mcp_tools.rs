@@ -25,6 +25,7 @@ use crate::{
         router::{self, ToolRoute},
     },
     model::{Deployment, VirtualKey},
+    oauth::{AuthError, Who},
     providers::{self, EventResult, EventStream},
     state::AppState,
 };
@@ -49,11 +50,17 @@ pub struct Toolset {
     pub defs: Vec<ir::Tool>,
     /// Each server's tools as it lists them, for the response.
     listed: Vec<(String, Vec<Value>)>,
+    /// Servers whose tools need the request's tenant or user to sign in first, by the name of the
+    /// tool offered in their place: the server, and what calling it answers (a sign-in link).
+    sign_ins: HashMap<String, (Arc<McpServer>, String)>,
 }
+
+/// The tool offered for a server the request's tenant or user has not signed in to yet.
+const SIGN_IN_TOOL: &str = "sign_in";
 
 impl Toolset {
     fn has(&self, name: &str) -> bool {
-        self.by_name.contains_key(name)
+        self.by_name.contains_key(name) || self.sign_ins.contains_key(name)
     }
 }
 
@@ -220,9 +227,9 @@ pub async fn route(state: &AppState, key: &Arc<VirtualKey>, labels: &Labels, raw
 }
 
 /// The tools of the servers a request names, as the key may use them.
-pub async fn toolset(state: &AppState, key: &VirtualKey, wanted: Vec<Wanted>) -> Result<Toolset, GatewayError> {
+pub async fn toolset(state: &AppState, key: &VirtualKey, labels: &Labels, wanted: Vec<Wanted>) -> Result<Toolset, GatewayError> {
     let snap = state.registry.snapshot();
-    let mut set = Toolset { by_name: HashMap::new(), defs: Vec::new(), listed: Vec::new() };
+    let mut set = Toolset { by_name: HashMap::new(), defs: Vec::new(), listed: Vec::new(), sign_ins: HashMap::new() };
     for w in wanted {
         let found = snap
             .mcp_servers
@@ -231,9 +238,26 @@ pub async fn toolset(state: &AppState, key: &VirtualKey, wanted: Vec<Wanted>) ->
             .cloned()
             .ok_or_else(|| GatewayError::not_found(format!("no MCP server '{}' that this key may use", w.server)));
         let found = match found {
-            Ok(s) => Ok((s.clone(), state.mcp.tools(state, &s, key.id).await)),
+            Ok(s) => Ok((s.clone(), state.mcp.tools(state, &s, Who { key: key.id, labels }).await)),
             Err(e) => Err(e),
         };
+        // A tenant or user who has not signed in yet gets a tool that hands them the sign-in link,
+        // so the model can pass it on, instead of the request failing.
+        if let Ok((server, Err(ToolsError::Auth(e @ AuthError::NotConnected { link: Some(_), .. })))) = &found {
+            let name = function_name(&server.name, SIGN_IN_TOOL);
+            set.defs.push(ir::Tool {
+                name: name.clone(),
+                description: Some(format!(
+                    "The tools of '{}' need the user to sign in there first. Returns a link for the user to open; show it to them, and use the tools once they have signed in.",
+                    server.name
+                )),
+                parameters: json!({ "type": "object", "properties": {} }),
+                cache: false,
+            });
+            set.sign_ins.insert(name, (server.clone(), e.message()));
+            set.listed.push((server.name.clone(), Vec::new()));
+            continue;
+        }
         let (server, listed) = match found.and_then(|(server, listed)| {
             let listed = listed.map_err(|e| match e {
                 ToolsError::Auth(e) => e.into_gateway(),
@@ -412,11 +436,18 @@ async fn rounds(state: AppState, d: Arc<Deployment>, mut ir: ChatRequest, set: A
             return;
         }
         let results = futures::future::join_all(calls.iter().map(|(id, name, arguments)| {
-            let (server, tool) = set.by_name[name].clone();
+            let sign_in = set.sign_ins.get(name).cloned();
+            let (server, tool) = match &sign_in {
+                Some((server, _)) => (server.clone(), SIGN_IN_TOOL.to_string()),
+                None => set.by_name[name].clone(),
+            };
             let (state, caller) = (state.clone(), caller.clone());
             let arguments = ir::parse_args(arguments);
             async move {
-                let result = run_tool(&state, &caller.key, &caller.labels, &server, &tool, arguments.clone(), None).await;
+                let result = match sign_in {
+                    Some((_, link)) => Ok(json!({ "content": [{ "type": "text", "text": link }] })),
+                    None => run_tool(&state, &caller.key, &caller.labels, &server, &tool, arguments.clone(), None).await,
+                };
                 (id.clone(), server, tool, arguments, result)
             }
         }))

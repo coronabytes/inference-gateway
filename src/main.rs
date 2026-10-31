@@ -189,6 +189,9 @@ async fn run() -> Result<(), String> {
         .route("/rerank", post(api::rerank::rerank))
         .route("/v1/models", get(api::models::list_models))
         .route("/v1/models-extended", get(api::models::list_models_extended))
+        // Sign-ins of tenants and users to MCP servers and A2A agents (see `api::sign_ins`).
+        .route("/v1/oauth/sign-ins", get(api::sign_ins::list).post(api::sign_ins::link))
+        .route("/v1/oauth/sign-ins/{kind}/{name}", axum::routing::delete(api::sign_ins::sign_out))
         .route("/mcp", post(mcp::hub::hub).get(mcp::hub::hub).delete(mcp::hub::hub))
         .route("/mcp/{server}", post(mcp::proxy).get(mcp::proxy).delete(mcp::proxy))
         .route("/a2a/{agent}", post(a2a::jsonrpc))

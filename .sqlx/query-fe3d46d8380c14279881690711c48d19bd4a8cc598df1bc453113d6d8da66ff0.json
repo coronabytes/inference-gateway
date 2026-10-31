@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT upstream_kind, upstream_id, created_at, expires_at, refresh_token IS NOT NULL AS \"refreshable!\", scope, connected_by\n           FROM oauth_tokens WHERE key_id = $1",
+  "query": "SELECT upstream_kind, upstream_id, labels, created_at, expires_at, refresh_token IS NOT NULL AS \"refreshable!\", scope, connected_by, last_used_at\n           FROM oauth_tokens\n           WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels <> '' AND string_to_array(labels, ',') @> $4\n           ORDER BY created_at DESC, labels LIMIT $5 OFFSET $6",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,17 @@
       },
       {
         "ordinal": 2,
+        "name": "labels",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "labels"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "expires_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -48,13 +59,13 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "refreshable!",
         "type_info": "Bool",
         "origin": "Expression"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "scope",
         "type_info": "Text",
         "origin": {
@@ -65,7 +76,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "connected_by",
         "type_info": "Text",
         "origin": {
@@ -74,22 +85,40 @@
             "name": "connected_by"
           }
         }
+      },
+      {
+        "ordinal": 8,
+        "name": "last_used_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "last_used_at"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "Uuid",
+        "Uuid",
+        "TextArray",
+        "Int8",
+        "Int8"
       ]
     },
     "nullable": [
       false,
       false,
       false,
+      false,
       true,
       null,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "2d7fb65bea9f1cb318ea2384262deaa37b342978ac15bc0c6d3e351f3c39868e"
+  "hash": "fe3d46d8380c14279881690711c48d19bd4a8cc598df1bc453113d6d8da66ff0"
 }

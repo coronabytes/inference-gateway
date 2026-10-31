@@ -42,7 +42,8 @@ use utoipa::{
         paths::a2a_card, paths::a2a_jsonrpc, paths::a2a_rest_post, paths::a2a_rest_get, paths::a2a_rest_delete,
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
-        paths::oauth_callback, paths::oauth_client_metadata, paths::oauth_discover, paths::key_connections, paths::key_connect, paths::key_disconnect,
+        paths::oauth_callback, paths::oauth_client_metadata, paths::oauth_sign_in_link, paths::oauth_discover, paths::key_connections, paths::key_sign_ins,
+        paths::key_connect, paths::key_disconnect, paths::list_sign_ins, paths::sign_in_link, paths::sign_out,
         paths::get_oidc_settings, paths::put_oidc_settings, paths::test_oidc_settings, paths::list_admins, paths::delete_admin, paths::set_admin_projects,
         paths::list_credentials, paths::create_credential, paths::update_credential, paths::delete_credential, paths::foundry_deployments, paths::bedrock_models, paths::aws_regions,
         paths::list_guardrails, paths::create_guardrail, paths::update_guardrail, paths::delete_guardrail, paths::test_guardrail,
@@ -474,7 +475,7 @@ mod schemas {
 #[allow(dead_code)]
 mod paths {
     use super::schemas::*;
-    use crate::{admin, admin_auth, budget, db, model, oauth};
+    use crate::{admin, admin_auth, api, budget, db, model, oauth};
 
     // ------------------------------------------------------------ inference
 
@@ -966,15 +967,79 @@ mod paths {
 
     /// Sign key out of upstream
     ///
-    /// Deletes the key's tokens. Other replicas stop using them within five minutes.
+    /// Deletes the key's tokens, or with `labels` those of one of its sign-ins per tenant or user.
+    /// Other replicas stop using them within five minutes.
     #[utoipa::path(delete, path = "/admin/api/keys/{id}/connections/{kind}/{upstream}", tag = "Upstream OAuth",
-        params(("id" = Uuid, Path), ("kind" = String, Path), ("upstream" = Uuid, Path)),
+        params(("id" = Uuid, Path), ("kind" = String, Path), ("upstream" = Uuid, Path), admin::oauth::DisconnectQuery),
         responses(
             (status = 204, description = "Signed out."),
             (status = 404, description = "The key had not signed in.", body = AdminError),
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn key_disconnect() {}
+
+    /// List key's sign-ins per tenant or user
+    ///
+    /// For an upstream that keeps a sign-in per tenant or user (`sign_in_by`): the key's sign-ins,
+    /// newest first, filtered by labels.
+    #[utoipa::path(get, path = "/admin/api/keys/{id}/connections/{kind}/{upstream}/sign-ins", tag = "Upstream OAuth",
+        params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path), admin::oauth::SignInsQuery),
+        responses(
+            (status = 200, description = "The sign-ins.", body = admin::oauth::SignIns),
+            (status = 404, description = "No such key.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_sign_ins() {}
+
+    /// Follow a sign-in link
+    ///
+    /// A link from `POST /v1/oauth/sign-ins`, or from an error that a tenant or user has not signed
+    /// in: redirects to the upstream's sign-in, which comes back to `/admin/auth/oauth/callback` in
+    /// the same browser. Links work for 15 minutes.
+    #[utoipa::path(get, path = "/admin/auth/oauth/sign-in/{ticket}", tag = "Upstream OAuth", params(("ticket" = String, Path)),
+        responses(
+            (status = 303, description = "To the upstream's sign-in."),
+            (status = 404, description = "The link no longer works: the key, the upstream or how it keeps sign-ins changed."),
+            (status = 410, description = "The link has expired."),
+        ))]
+    fn oauth_sign_in_link() {}
+
+    /// List tenant's or user's sign-ins
+    ///
+    /// The MCP servers and A2A agents the key may use that keep a sign-in per tenant or user, and
+    /// whether the tenant or user in the request's `x-gateway-labels` has signed in to each.
+    #[utoipa::path(get, path = "/v1/oauth/sign-ins", tag = "Upstream OAuth",
+        responses(
+            (status = 200, description = "The upstreams.", body = api::sign_ins::SignInList),
+            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn list_sign_ins() {}
+
+    /// Get a sign-in link
+    ///
+    /// A link that signs the tenant or user in the request's `x-gateway-labels` in to the upstream,
+    /// to hand to them. It works for 15 minutes, and only in the browser that opens it.
+    #[utoipa::path(post, path = "/v1/oauth/sign-ins", tag = "Upstream OAuth", request_body = api::sign_ins::LinkInput,
+        responses(
+            (status = 200, description = "The link.", body = api::sign_ins::Link),
+            (status = 400, description = "The request lacks a label the upstream keeps sign-ins by.", body = OpenAiError),
+            (status = 404, description = "No such upstream for this key that keeps a sign-in per tenant or user.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn sign_in_link() {}
+
+    /// Sign tenant or user out
+    ///
+    /// Deletes the sign-in of the tenant or user in the request's `x-gateway-labels`.
+    #[utoipa::path(delete, path = "/v1/oauth/sign-ins/{kind}/{name}", tag = "Upstream OAuth",
+        params(("kind" = String, Path, description = "`mcp` or `a2a`."), ("name" = String, Path)),
+        responses(
+            (status = 204, description = "Signed out."),
+            (status = 404, description = "They had not signed in.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn sign_out() {}
 
     /// List key's connected apps
     ///

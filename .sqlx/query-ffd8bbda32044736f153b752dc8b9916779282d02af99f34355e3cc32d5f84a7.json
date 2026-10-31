@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) AS \"n!\" FROM oauth_tokens\n           WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels <> '' AND string_to_array(labels, ',') @> $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "n!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ffd8bbda32044736f153b752dc8b9916779282d02af99f34355e3cc32d5f84a7"
+}

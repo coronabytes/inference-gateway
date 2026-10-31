@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_tokens t\n         WHERE t.last_used_at < now() - make_interval(days => COALESCE(\n             (SELECT (s.oauth->>'sign_in_retention_days')::int FROM mcp_servers s WHERE t.upstream_kind = 'mcp' AND s.id = t.upstream_id),\n             (SELECT (a.oauth->>'sign_in_retention_days')::int FROM a2a_agents a WHERE t.upstream_kind = 'a2a' AND a.id = t.upstream_id),\n             $1))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f254b23039cec557ed8815c9b7f3e3bb63cdabc9104772ad55502938eb215c96"
+}

@@ -4,7 +4,7 @@ import { Button, MenuButton, MultiSelect, PageActions, Segmented, Switch, TextIn
 import { TagEditor, TagList } from "../components/Tags";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, ms, usd } from "../format";
-import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState, withClient } from "./UpstreamAuth";
+import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState, signInPer, withClient } from "./UpstreamAuth";
 
 
 /** Where clients reach one server through the gateway, or every server with no name. */
@@ -299,6 +299,7 @@ function McpServerForm({
         />
         <TextInput caption="Description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="optional" />
         <AuthFields
+          savedSignInPer={initial?.auth === "oauth_user" ? signInPer(initial.oauth?.sign_in_by) : undefined}
           kind="mcp"
           url={url}
           urlField={(discover) => (

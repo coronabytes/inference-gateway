@@ -521,6 +521,7 @@ pub fn browser_routes() -> Router<AppState> {
         .route("/oidc/callback", get(callback))
         .route("/oauth/callback", get(crate::admin::oauth::callback))
         .route("/oauth/client.json", get(crate::admin::oauth::client_metadata))
+        .route("/oauth/sign-in/{ticket}", get(crate::admin::oauth::sign_in_link))
 }
 
 /// Who is signed in, what they may do, and how the sign-in screen should look. Works signed out.

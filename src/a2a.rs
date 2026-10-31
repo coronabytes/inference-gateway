@@ -36,7 +36,7 @@ use crate::{
     error::{Dialect, ErrorKind, GatewayError},
     labels::Labels,
     model::VirtualKey,
-    oauth::{Kind, OAuthConfig, UpstreamAuth},
+    oauth::{Kind, OAuthConfig, UpstreamAuth, Who},
     sse::SseParser,
     state::AppState,
 };
@@ -240,28 +240,29 @@ pub struct Cards(std::sync::Mutex<HashMap<Uuid, (Arc<A2aAgent>, Instant, Arc<Car
 const CARD_FRESH: Duration = Duration::from_secs(300);
 
 impl Cards {
-    /// `key`: who asks, for an agent whose keys sign in on their own and whose card needs it.
-    pub async fn get(&self, state: &AppState, agent: &Arc<A2aAgent>, key: Option<Uuid>) -> Result<Arc<Card>, String> {
+    /// `who`: who asks, for an agent whose keys sign in on their own and whose card needs it.
+    pub async fn get(&self, state: &AppState, agent: &Arc<A2aAgent>, who: Option<Who<'_>>) -> Result<Arc<Card>, String> {
         if let Some((a, at, card)) = self.0.lock().expect("cards lock").get(&agent.id)
             && Arc::ptr_eq(a, agent)
             && at.elapsed() < CARD_FRESH
         {
             return Ok(card.clone());
         }
-        let card = Arc::new(fetch_card(state, agent, key).await?);
+        let card = Arc::new(fetch_card(state, agent, who).await?);
         self.0.lock().expect("cards lock").insert(agent.id, (agent.clone(), Instant::now(), card.clone()));
         Ok(card)
     }
 }
 
 /// The agent's card, as the agent serves it to the gateway. Where each key signs in on its own,
-/// the card is fetched without credentials (cards are mostly public) unless `key` has signed in.
-pub async fn fetch_card(state: &AppState, agent: &A2aAgent, key: Option<Uuid>) -> Result<Card, String> {
+/// the card is fetched without credentials (cards are mostly public) unless `who` has signed in.
+pub async fn fetch_card(state: &AppState, agent: &A2aAgent, who: Option<Who<'_>>) -> Result<Card, String> {
     state.cfg.upstream_policy.check_url(&agent.card_url).map_err(|why| format!("the card's address is not allowed: {why}"))?;
     let mut req = state.http.get(&agent.card_url).header(header::ACCEPT, "application/json").timeout(Duration::from_secs(30));
-    match agent.auth.header(state, key).await {
+    match agent.auth.header(state, who).await {
         Ok(Some((h, v))) => req = req.header(h, v),
-        Ok(None) | Err(crate::oauth::AuthError::NotConnected(_)) => {}
+        Ok(None) => {}
+        Err(e) if e.not_signed_in() => {}
         Err(e) => return Err(e.message()),
     }
     let resp = req.send().await.map_err(|e| format!("the card could not be fetched: {}", GatewayError::from_reqwest(&e).message))?;
@@ -585,7 +586,8 @@ pub async fn card(State(state): State<AppState>, ClientKey(key): ClientKey, Path
 pub async fn card_for(state: &AppState, key: &Arc<VirtualKey>, name: &str, uri: &Uri, headers: &HeaderMap) -> Response {
     let result = async {
         let agent = agent(state, key, name)?;
-        let card = state.a2a.get(state, &agent, Some(key.id)).await.map_err(card_error)?;
+        let labels = Labels::from_headers(headers).unwrap_or_default();
+        let card = state.a2a.get(state, &agent, Some(Who { key: key.id, labels: &labels })).await.map_err(card_error)?;
         Ok::<_, GatewayError>(axum::Json(card.rewritten(&format!("{}/a2a/{}", origin(headers, uri), agent.name))).into_response())
     }
     .await;
@@ -658,7 +660,7 @@ async fn forward(
         Ask::Send { stream, .. } => Some(*stream),
         _ => None,
     };
-    let card = state.a2a.get(state, &agent, Some(key.id)).await.map_err(card_error)?;
+    let card = state.a2a.get(state, &agent, Some(Who { key: key.id, labels: &labels })).await.map_err(card_error)?;
     let interface = card
         .interface(binding)
         .ok_or_else(|| GatewayError::not_found(format!("the agent offers no {} interface", binding.name())))?;
@@ -720,14 +722,14 @@ async fn forward(
         }
         req.send().await.map_err(|e| GatewayError::from_reqwest(&e))
     };
-    let header = async || agent.auth.header(state, Some(key.id)).await.map_err(crate::oauth::AuthError::into_gateway);
+    let header = async || agent.auth.header(state, Some(Who { key: key.id, labels: &labels })).await.map_err(crate::oauth::AuthError::into_gateway);
     let mut resp = match header().await {
         Ok(auth) => send(auth).await,
         Err(e) => Err(e),
     };
     // A token the agent refuses is renewed, once.
     if agent.auth.renews() && resp.as_ref().is_ok_and(|r| r.status() == StatusCode::UNAUTHORIZED) {
-        agent.auth.renew(state, Some(key.id)).await;
+        agent.auth.renew(state, Some(Who { key: key.id, labels: &labels })).await;
         resp = match header().await {
             Ok(auth) => send(auth).await,
             Err(e) => Err(e),

@@ -52,7 +52,7 @@ pub async fn run() -> Result<(), String> {
     }
     println!("A2A agents: {moved} secrets re-encrypted, {kept} already under the current key");
     let (mut moved, mut kept) = (0usize, 0usize);
-    for (kind, upstream, key, access, refresh) in db::sealed_oauth_tokens(&mut *tx).await.map_err(pg)? {
+    for (kind, upstream, key, labels, access, refresh) in db::sealed_oauth_tokens(&mut *tx).await.map_err(pg)? {
         let what = || format!("OAuth tokens of key {key} for {kind} {upstream}");
         let access_new = sb.reseal(&access).map_err(|e| format!("{}: {e}", what()))?;
         let refresh_new = refresh.as_deref().map(|r| sb.reseal(r)).transpose().map_err(|e| format!("{}: {e}", what()))?.flatten();
@@ -62,7 +62,8 @@ pub async fn run() -> Result<(), String> {
         }
         let access = access_new.unwrap_or(access);
         let refresh = refresh_new.or(refresh);
-        db::set_oauth_token_secrets(&mut *tx, &kind, upstream, key, &access, refresh.as_deref()).await.map_err(pg)?;
+        let s = db::SignInRef { kind: &kind, upstream, key, labels: &labels };
+        db::set_oauth_token_secrets(&mut *tx, s, &access, refresh.as_deref()).await.map_err(pg)?;
         moved += 1;
     }
     println!("upstream sign-ins: {moved} re-encrypted, {kept} already under the current key");
