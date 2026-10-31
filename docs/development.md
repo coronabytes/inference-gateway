@@ -23,6 +23,7 @@ Debug builds serve no console of their own: Vite's dev server proxies the API to
 node dev/mock-upstream.mjs                       # fake OpenAI/Anthropic provider on :9999
 node dev/mock-mcp.mjs                            # fake MCP server on :9998
 node dev/mock-a2a.mjs                            # fake A2A agent on :9997
+node dev/mock-mcp-client.mjs                     # fake MCP client signing in with OAuth, on :9996
 docker compose --profile replicas up -d --build  # two more gateway replicas on :8081 and :8082
 ```
 
@@ -31,6 +32,7 @@ docker compose --profile replicas up -d --build  # two more gateway replicas on 
   - It is also an OAuth authorization server, for trying [upstream sign-ins](upstream-oauth.md). Use `http://localhost:9998/mcp` with **Discover**. Its client for the gateway's own tokens is `gateway-client`, with the secret `gateway-secret`.
   - It approves sign-ins at once, and `whoami` says which token called. `MOCK_MCP_TOKEN_SECONDS` sets how long its tokens last, to watch them refresh.
 - The **mock A2A agent** has its card at `http://127.0.0.1:9997/.well-known/agent-card.json` and wants the bearer token `mock-a2a-secret`. It speaks A2A 1.0 over JSON-RPC and HTTP+JSON and echoes messages; one containing `fail` fails its task, one containing `ask` waits for input.
+- The **mock MCP client** signs in to the gateway's MCP endpoints with OAuth, as Claude or ChatGPT would ([OAuth for MCP clients](mcp.md#sign-in-with-oauth-claude-chatgpt)). It serves its own client ID metadata document at `http://127.0.0.1:9996/client.json`. Open `http://127.0.0.1:9996` and click **Connect**: it finds the gateway's sign-in from the `401` of `/mcp`, sends you to the console to approve it, then lists the tools, refreshes its token and checks that the old tokens no longer work. It goes to the console's address, `http://localhost:5173` (Vite passes `/.well-known` and `/oauth` on to the gateway); `GATEWAY_URL` and `MCP_PATH` change that.
 - The **replicas** share Postgres and Valkey with the gateway you run locally, so you can watch configuration changes, rate limits and budgets propagate between instances.
 
 ## Tests

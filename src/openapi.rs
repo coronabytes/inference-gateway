@@ -37,6 +37,8 @@ use utoipa::{
         paths::chat_completions, paths::responses, paths::messages, paths::count_tokens, paths::embeddings,
         paths::rerank, paths::decisions, paths::systemone, paths::list_models, paths::list_models_extended,
         paths::mcp_hub_post, paths::mcp_hub_get, paths::mcp_hub_delete, paths::mcp_post, paths::mcp_get, paths::mcp_delete,
+        paths::oauth_resource, paths::oauth_resource_hub, paths::oauth_resource_server, paths::oauth_metadata, paths::oauth_authorize,
+        paths::oauth_token, paths::oauth_revoke,
         paths::a2a_card, paths::a2a_jsonrpc, paths::a2a_rest_post, paths::a2a_rest_get, paths::a2a_rest_delete,
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
@@ -47,6 +49,7 @@ use utoipa::{
         paths::guardrail_prices,
         paths::list_a2a_agents, paths::create_a2a_agent, paths::update_a2a_agent, paths::delete_a2a_agent, paths::test_a2a_agent,
         paths::list_tool_routers, paths::create_tool_router, paths::update_tool_router, paths::delete_tool_router,
+        paths::key_apps, paths::key_revoke_app, paths::connect_request, paths::connect_approve, paths::connect_deny,
         paths::list_mcp_servers, paths::create_mcp_server, paths::update_mcp_server, paths::delete_mcp_server, paths::test_mcp_server,
         paths::list_deployments, paths::create_deployment, paths::get_deployment, paths::update_deployment,
         paths::delete_deployment, paths::test_deployment, paths::clear_cooldown,
@@ -75,6 +78,7 @@ use utoipa::{
         (name = "MCP", description = "MCP servers behind the gateway: one key for every server, the servers' credentials kept in the gateway."),
         (name = "Upstream OAuth", description = "Signing the gateway, or each key, in to MCP servers and A2A agents with OAuth."),
         (name = "A2A", description = "A2A agents behind the gateway: one key for every agent, the agents' credentials kept in the gateway."),
+        (name = "MCP client sign-in", description = "MCP clients (such as Claude or ChatGPT) signed in to the gateway with OAuth, each as a virtual key."),
         (name = "Tool routers", description = "A name requests use like an MCP server's, whose decision model picks which servers' tools a request gets."),
         (name = "Virtual keys", description = "Keys for apps and people, with limits, budgets and access tags, and the projects that group them."),
         (name = "Configuration", description = "Tags, and exporting and importing the configuration."),
@@ -715,11 +719,74 @@ mod paths {
         responses(
             (status = 200, description = "The gateway's answer.", content((Object = "application/json"))),
             (status = 202, description = "Accepted: notifications and responses have no answer."),
-            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+            (status = 401, description = "Missing, invalid, disabled or expired key or token; `WWW-Authenticate` names the protected resource metadata.", body = OpenAiError),
         ),
         params(("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
         security(("virtual_key" = []), ("virtual_key_header" = [])))]
     fn mcp_hub_post() {}
+
+    /// Protected resource metadata
+    ///
+    /// RFC 9728: where MCP clients sign in to use the gateway's MCP endpoints (`authorization_servers`). \n    /// Also at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-protected-resource/mcp/{server}`, \n    /// for one endpoint. A refused MCP request names it in its `WWW-Authenticate` header.
+    #[utoipa::path(get, path = "/.well-known/oauth-protected-resource", tag = "MCP client sign-in",
+        responses((status = 200, description = "The metadata.", body = Object)))]
+    fn oauth_resource() {}
+
+    /// Protected resource metadata: `/mcp`
+    #[utoipa::path(get, path = "/.well-known/oauth-protected-resource/mcp", tag = "MCP client sign-in",
+        responses((status = 200, description = "The metadata.", body = Object)))]
+    fn oauth_resource_hub() {}
+
+    /// Protected resource metadata: `/mcp/{server}`
+    #[utoipa::path(get, path = "/.well-known/oauth-protected-resource/mcp/{server}", tag = "MCP client sign-in", params(("server" = String, Path)),
+        responses((status = 200, description = "The metadata.", body = Object)))]
+    fn oauth_resource_server() {}
+
+    /// Authorization server metadata
+    ///
+    /// RFC 8414. Clients identify with a Client ID Metadata Document (`client_id_metadata_document_supported`); \n    /// there is no dynamic client registration. PKCE S256, public clients only.
+    #[utoipa::path(get, path = "/.well-known/oauth-authorization-server", tag = "MCP client sign-in",
+        responses((status = 200, description = "The metadata.", body = Object)))]
+    fn oauth_metadata() {}
+
+    /// Authorize an MCP client
+    ///
+    /// Checks the client's metadata document and the request, then sends the browser to the console, where a \n    /// signed-in person approves the client for one of their keys. Errors about the client or its redirect URI \n    /// are shown, not sent back.
+    #[utoipa::path(get, path = "/oauth/authorize", tag = "MCP client sign-in",
+        params(
+            ("response_type" = String, Query, description = "`code`."),
+            ("client_id" = String, Query, description = "The client's metadata document URL."),
+            ("redirect_uri" = Option<String>, Query, description = "One the document lists."),
+            ("code_challenge" = String, Query, description = "PKCE."),
+            ("code_challenge_method" = String, Query, description = "`S256`."),
+            ("resource" = Option<String>, Query, description = "The MCP endpoint: `{gateway}/mcp`, `{gateway}/mcp/{server}`, or the gateway for all of them. Default `/mcp`."),
+            ("scope" = Option<String>, Query, description = "`mcp`."),
+            ("state" = Option<String>, Query),
+        ),
+        responses(
+            (status = 302, description = "To the console's approval page, or back to the client with an error."),
+            (status = 400, description = "The client or its redirect URI cannot be used."),
+        ))]
+    fn oauth_authorize() {}
+
+    /// Token
+    ///
+    /// Form-encoded: `grant_type=authorization_code` with `code`, `client_id`, `redirect_uri`, `code_verifier` \n    /// and `resource`, or `grant_type=refresh_token` with `refresh_token` and `client_id`. Access tokens last \n    /// an hour; refresh tokens 30 days, and work once.
+    #[utoipa::path(post, path = "/oauth/token", tag = "MCP client sign-in",
+        request_body(content = String, content_type = "application/x-www-form-urlencoded"),
+        responses(
+            (status = 200, description = "`access_token`, `token_type`, `expires_in`, `refresh_token`, `scope`.", body = Object),
+            (status = 400, description = "An OAuth error: `error` and `error_description`.", body = Object),
+        ))]
+    fn oauth_token() {}
+
+    /// Revoke a token
+    ///
+    /// RFC 7009, form-encoded `token` and `client_id`: signs the client out. Always 200.
+    #[utoipa::path(post, path = "/oauth/revoke", tag = "MCP client sign-in",
+        request_body(content = String, content_type = "application/x-www-form-urlencoded"),
+        responses((status = 200, description = "Revoked, or there was nothing to revoke.")))]
+    fn oauth_revoke() {}
 
     /// MCP: every server, listen
     ///
@@ -898,6 +965,61 @@ mod paths {
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn key_disconnect() {}
+
+    /// List key's connected apps
+    ///
+    /// The MCP clients signed in to the gateway with OAuth as this key.
+    #[utoipa::path(get, path = "/admin/api/keys/{id}/apps", tag = "MCP client sign-in", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The key's grants, newest first.", body = Vec<crate::mcp_auth::ClientGrant>),
+            (status = 404, description = "No such key, or not one of the caller's.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_apps() {}
+
+    /// Revoke connected app
+    ///
+    /// Signs the client out: its tokens stop working, on other replicas within a minute.
+    #[utoipa::path(delete, path = "/admin/api/keys/{id}/apps/{grant}", tag = "MCP client sign-in", params(("id" = Uuid, Path), ("grant" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Revoked."),
+            (status = 404, description = "No such grant for the key.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_revoke_app() {}
+
+    /// MCP client sign-in request
+    ///
+    /// A sign-in waiting for approval: the client, where it returns to, and the MCP endpoint.
+    #[utoipa::path(get, path = "/admin/api/connect/{id}", tag = "MCP client sign-in", params(("id" = String, Path)),
+        responses(
+            (status = 200, description = "The request.", body = admin::connect::ConnectRequest),
+            (status = 404, description = "Expired or answered already.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn connect_request() {}
+
+    /// Approve MCP client sign-in
+    ///
+    /// Lets the client act as the key on the MCP endpoint it asked for. Returns where to send the browser.
+    #[utoipa::path(post, path = "/admin/api/connect/{id}", tag = "MCP client sign-in", params(("id" = String, Path)),
+        request_body = admin::connect::ApproveInput,
+        responses(
+            (status = 200, description = "Back to the client, with its code.", body = admin::connect::ConnectAnswer),
+            (status = 400, description = "The key cannot be used.", body = AdminError),
+            (status = 404, description = "Expired or answered already, or no such key.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn connect_approve() {}
+
+    /// Deny MCP client sign-in
+    #[utoipa::path(post, path = "/admin/api/connect/{id}/deny", tag = "MCP client sign-in", params(("id" = String, Path)),
+        responses(
+            (status = 200, description = "Back to the client, with access_denied.", body = admin::connect::ConnectAnswer),
+            (status = 404, description = "Expired or answered already.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn connect_deny() {}
 
     /// Get single sign-on settings
     ///

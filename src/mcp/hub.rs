@@ -24,7 +24,8 @@ use tower::ServiceExt;
 
 use super::{Calls, McpServer, ToolsError};
 use crate::{
-    auth::{self, ClientKey},
+    auth,
+    mcp_auth::McpKey,
     error::{Dialect, GatewayError},
     labels::Labels,
     model::VirtualKey,
@@ -54,7 +55,7 @@ static SERVICE: LazyLock<StreamableHttpService<Hub, LocalSessionManager>> = Lazy
 });
 
 /// `POST`, `GET` and `DELETE /mcp`: the key is authenticated here, before the SDK reads anything.
-pub async fn hub(State(state): State<AppState>, ClientKey(key): ClientKey, req: Request) -> Response {
+pub async fn hub(State(state): State<AppState>, McpKey(key): McpKey, req: Request) -> Response {
     let labels = match Labels::from_headers(req.headers()) {
         Ok(l) => l,
         Err(e) => return e.into_response_for(Dialect::OpenAi),

@@ -442,6 +442,20 @@ impl Cache {
         })
     }
 
+    /// A value kept for `ttl`, such as a sign-in in progress.
+    pub async fn put_for(&self, key: &str, value: &str, ttl: Duration) -> RedisResult<()> {
+        redis::cmd("SET").arg(key).arg(value).arg("EX").arg(ttl.as_secs().max(1)).query_async(&mut self.conn()).await
+    }
+
+    pub async fn peek(&self, key: &str) -> RedisResult<Option<String>> {
+        self.conn().get(key).await
+    }
+
+    /// The value, deleted as it is read: one-time codes are used once, whichever replica reads first.
+    pub async fn take(&self, key: &str) -> RedisResult<Option<String>> {
+        redis::cmd("GETDEL").arg(key).query_async(&mut self.conn()).await
+    }
+
     /// Records the key an A2A task or context belongs to, unless another key holds it already.
     pub async fn set_a2a_owner(&self, key: &str, owner: &str, ttl: Duration) {
         let r: RedisResult<()> = redis::cmd("SET").arg(key).arg(owner).arg("NX").arg("EX").arg(ttl.as_secs().max(1)).query_async(&mut self.conn()).await;

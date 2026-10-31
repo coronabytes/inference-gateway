@@ -35,7 +35,8 @@ pub mod router;
 
 use crate::{
     accounting::Tracker,
-    auth::{self, ClientKey},
+    auth,
+    mcp_auth::McpKey,
     capture,
     crypto::SecretBox,
     error::{Dialect, ErrorKind, GatewayError},
@@ -193,7 +194,7 @@ const MAX_READ: usize = 8 * 1024 * 1024;
 /// `POST`, `GET` and `DELETE /mcp/{server}`.
 pub async fn proxy(
     State(state): State<AppState>,
-    ClientKey(key): ClientKey,
+    McpKey(key): McpKey,
     Path(name): Path<String>,
     method: Method,
     headers: HeaderMap,

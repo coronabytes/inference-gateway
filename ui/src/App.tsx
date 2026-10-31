@@ -6,6 +6,7 @@ import { Galaxy } from "./components/Galaxy";
 import { DocsIcon, IconButton, MoonIcon, SunIcon } from "./components/ui";
 import { UserMenu } from "./components/UserMenu";
 import { Cluster } from "./pages/Cluster";
+import { Connect } from "./pages/Connect";
 import { Keys } from "./pages/Keys";
 import { Logs, RequestLog } from "./pages/Logs";
 import { Metrics } from "./pages/Metrics";
@@ -70,6 +71,14 @@ function currentPage(): PageId {
   return (page in PAGES ? page : "metrics") as PageId;
 }
 
+/** An MCP client's sign-in waiting for approval: `#/connect/{id}`. */
+function connectId(): string | null {
+  return window.location.hash.match(/^#\/connect\/([0-9a-f]+)$/)?.[1] ?? null;
+}
+
+/** sessionStorage: the sign-in to come back to once signed in, as single sign-on returns to `/`. */
+const CONNECT_RETURN = "gw.connect";
+
 /** A sign-in error the gateway sent back from the identity provider, once. */
 function takeLoginError(): string | null {
   const params = new URLSearchParams(window.location.search);
@@ -81,6 +90,7 @@ function takeLoginError(): string | null {
 export function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [page, setPage] = useState<PageId>(currentPage);
+  const [connect, setConnect] = useState(connectId);
   const [loginError] = useState(takeLoginError);
   const [theme, toggleTheme] = useTheme();
 
@@ -99,7 +109,10 @@ export function App() {
   }, [refresh]);
 
   useEffect(() => {
-    const onHash = () => setPage(currentPage());
+    const onHash = () => {
+      setPage(currentPage());
+      setConnect(connectId());
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -130,7 +143,26 @@ export function App() {
 
   if (session === null) return null;
   if (!session.authenticated) {
+    if (connect) {
+      try {
+        sessionStorage.setItem(CONNECT_RETURN, connect);
+      } catch {
+        // Without storage, a sign-in that leaves the page lands on the metrics; the app can start again.
+      }
+    }
     return <Login sso={session.sso} masterKey={session.master_key} dev={session.dev} version={session.version} initialError={loginError} onLogin={refresh} />;
+  }
+
+  // Back to an MCP client's sign-in that had to wait for the console's own.
+  if (!connect) {
+    let back: string | null = null;
+    try {
+      back = sessionStorage.getItem(CONNECT_RETURN);
+      sessionStorage.removeItem(CONNECT_RETURN);
+    } catch {
+      // Nothing to come back to.
+    }
+    if (back) window.location.hash = `#/connect/${back}`;
   }
 
   const user = session.role === "user";
@@ -152,7 +184,7 @@ export function App() {
         <nav>
           {!idle &&
             (Object.entries(pages) as [PageId, { label: string }][]).map(([id, { label }]) => (
-              <a key={id} href={`#/${id}`} className={page === id ? "active" : ""} aria-current={page === id ? "page" : undefined} data-label={label}>
+              <a key={id} href={`#/${id}`} className={page === id && !connect ? "active" : ""} aria-current={page === id && !connect ? "page" : undefined} data-label={label}>
                 {label}
               </a>
             ))}
@@ -170,7 +202,9 @@ export function App() {
         </div>
       </header>
       <main>
-        {idle ? (
+        {connect ? (
+          <Connect id={connect} />
+        ) : idle ? (
           <div className="empty-card">
             You are signed in, but not part of any project yet. Once an admin adds you to one, you manage its keys here and see its
             playground, request log and metrics.

@@ -63,6 +63,24 @@ For one server, use `https://gateway.example.com/mcp/github` as the URL instead.
 
 The key needs the `inference` or `all` scope. As on the inference API, it also works as `x-api-key`. Labels in `x-gateway-labels` are logged with each tool call, as for model requests.
 
+### Sign in with OAuth (Claude, ChatGPT)
+
+Clients that add remote MCP servers by their URL alone, such as Claude and ChatGPT, sign in with OAuth instead of taking a key. Give them `https://gateway.example.com/mcp` (or `/mcp/{name}`). A person signed in to the console approves the app and picks the virtual key it acts as:
+
+1. The client calls the gateway and gets `401` with a `WWW-Authenticate` header that names the gateway's protected resource metadata (`/.well-known/oauth-protected-resource/mcp`). The gateway is its own authorization server (`/.well-known/oauth-authorization-server`).
+2. The client sends the person's browser to the gateway, which sends it on to the console. After signing in there if needed, the person sees the app's name, the host its identity comes from, where it returns to, and the MCP endpoint. They pick a key and approve, or deny.
+3. The client gets an access token for that endpoint (an hour) and a refresh token (30 days, replaced on each use). Its tool calls count as the key's: its access, limits, budget and logging apply.
+
+Apps signed in as a key are listed on the key's **Sign-ins** (the plug icon on the Access page), with when they were approved, by whom and last used. **Revoke** signs one out; other replicas stop taking its token within a minute.
+
+What clients need:
+
+- **A client ID metadata document.** The client identifies itself with the URL of a JSON document listing its name and redirect URIs (Client ID Metadata Documents, the identification MCP clients are moving to). There is no dynamic client registration: clients that only register themselves cannot sign in, and use a key as above. The gateway fetches the document from the address in `client_id`, without following redirects and at most 5 KB, and keeps it as its `Cache-Control` allows, for 1 minute to a day.
+- **Public clients with PKCE.** Documents must not hold a secret; `token_endpoint_auth_method` is `none`. `private_key_jwt` is not supported yet.
+- **Redirect URIs** on https, or on localhost for programs on the person's computer. The console warns about localhost (any program could claim to be the app) and about a redirect to another host than the document's.
+- **`resource`:** the MCP endpoint, as `https://gateway.example.com/mcp` or `.../mcp/{name}`. A token works only there. The gateway's own address stands for all its MCP endpoints.
+- **The console:** approval happens in the console, so the gateway must serve it (`GATEWAY_UI`), and the client must reach the gateway at the address people use for the console.
+
 ## `/mcp`: every server
 
 - **The gateway answers itself.** It speaks every MCP protocol version, from 2024-11-05 to 2026-07-28, and keeps no sessions of its own, so any replica answers any request.

@@ -36,6 +36,7 @@ use crate::{
 };
 
 pub(crate) mod a2a;
+pub(crate) mod connect;
 pub(crate) mod guardrails;
 pub(crate) mod hub;
 pub(crate) mod mcp;
@@ -66,6 +67,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/mcp-servers/{id}/test", post(mcp::test_mcp_server))
         .route("/oauth/discover", post(oauth::discover))
         .route("/keys/{id}/connections", get(oauth::list_connections))
+        .route("/keys/{id}/apps", get(connect::list_apps))
+        .route("/keys/{id}/apps/{grant}", axum::routing::delete(connect::revoke_app))
+        .route("/connect/{id}", get(connect::get_request).post(connect::approve))
+        .route("/connect/{id}/deny", post(connect::deny))
         .route("/keys/{id}/connections/{kind}/{upstream}", post(oauth::connect).delete(oauth::disconnect))
         .route("/a2a-agents", get(a2a::list_a2a_agents).post(a2a::create_a2a_agent))
         .route("/a2a-agents/{id}", axum::routing::put(a2a::update_a2a_agent).delete(a2a::delete_a2a_agent))

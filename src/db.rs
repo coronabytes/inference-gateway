@@ -18,6 +18,7 @@ use crate::{
         McpServerRow,
         router::{ToolRoute, ToolRouterRow},
     },
+    mcp_auth::ClientGrant,
     oauth::OAuthConfig,
     model::{
         AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
@@ -962,6 +963,114 @@ pub async fn delete_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
     let r = sqlx::query!("DELETE FROM a2a_agents WHERE id = $1", id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(r.rows_affected() > 0)
+}
+
+// ---------------------------------------------------------------- MCP clients' grants
+
+pub async fn insert_client_grant(pool: &PgPool, g: &ClientGrant, access_hash: &[u8], refresh_hash: &[u8]) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO client_grants (id, key_id, client_id, client_name, redirect_uri, resource, scope, access_token_hash, access_expires_at,
+             refresh_token_hash, refresh_expires_at, created_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())",
+        g.id,
+        g.key_id,
+        g.client_id,
+        g.client_name,
+        g.redirect_uri,
+        g.resource,
+        g.scope,
+        access_hash,
+        g.access_expires_at,
+        refresh_hash,
+        g.refresh_expires_at,
+        g.created_by,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The grant an access token belongs to, while the token is valid.
+pub async fn client_grant_by_access(pool: &PgPool, access_hash: &[u8]) -> sqlx::Result<Option<ClientGrant>> {
+    sqlx::query_as!(
+        ClientGrant,
+        "SELECT id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by, created_at,
+                last_used_at
+         FROM client_grants WHERE access_token_hash = $1 AND access_expires_at > now()",
+        access_hash
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Rotates a grant's tokens in exchange for its valid refresh token, presented by its own client,
+/// in one statement: a refresh token works once.
+pub async fn rotate_client_grant(
+    pool: &PgPool,
+    client_id: &str,
+    refresh_hash: &[u8],
+    access_hash: &[u8],
+    access_expires_at: DateTime<Utc>,
+    new_refresh_hash: &[u8],
+    refresh_expires_at: DateTime<Utc>,
+) -> sqlx::Result<Option<ClientGrant>> {
+    sqlx::query_as!(
+        ClientGrant,
+        "UPDATE client_grants SET access_token_hash = $2, access_expires_at = $3, refresh_token_hash = $4, refresh_expires_at = $5
+         WHERE refresh_token_hash = $1 AND refresh_expires_at > now() AND client_id = $6
+         RETURNING id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by,
+                   created_at, last_used_at",
+        refresh_hash,
+        access_hash,
+        access_expires_at,
+        new_refresh_hash,
+        refresh_expires_at,
+        client_id,
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn touch_client_grant(pool: &PgPool, id: Uuid) -> sqlx::Result<()> {
+    sqlx::query!("UPDATE client_grants SET last_used_at = now() WHERE id = $1", id).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn list_client_grants(pool: &PgPool, key_id: Uuid) -> sqlx::Result<Vec<ClientGrant>> {
+    sqlx::query_as!(
+        ClientGrant,
+        "SELECT id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by, created_at,
+                last_used_at
+         FROM client_grants WHERE key_id = $1 ORDER BY created_at DESC",
+        key_id
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn delete_client_grant(pool: &PgPool, key_id: Uuid, id: Uuid) -> sqlx::Result<Option<ClientGrant>> {
+    sqlx::query_as!(
+        ClientGrant,
+        "DELETE FROM client_grants WHERE key_id = $1 AND id = $2
+         RETURNING id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by,
+                   created_at, last_used_at",
+        key_id,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Revokes the grant of an access or refresh token (RFC 7009); the client's `client_id` must be its own.
+pub async fn revoke_client_grant(pool: &PgPool, token_hash: &[u8], client_id: &str) -> sqlx::Result<Option<Uuid>> {
+    let r = sqlx::query!(
+        "DELETE FROM client_grants WHERE (access_token_hash = $1 OR refresh_token_hash = $1) AND client_id = $2 RETURNING id",
+        token_hash,
+        client_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(r.map(|r| r.id))
 }
 
 // ---------------------------------------------------------------- tool routers

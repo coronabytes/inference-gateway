@@ -340,7 +340,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
           >
             {k.enabled ? <PauseIcon /> : <PlayIcon />}
           </IconButton>
-          <IconButton label={`Sign-ins of ${k.name}`} title="Sign-ins to MCP servers and A2A agents" onClick={() => setSignIns(k)}>
+          <IconButton label={`Sign-ins of ${k.name}`} title="Sign-ins: to MCP servers and A2A agents, and of apps as this key" onClick={() => setSignIns(k)}>
             <PlugIcon />
           </IconButton>
           <IconButton

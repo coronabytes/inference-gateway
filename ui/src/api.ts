@@ -415,6 +415,36 @@ export interface OAuthDiscovered {
 }
 
 /** An upstream a key signs in to on its own (`GET /keys/{id}/connections`). */
+/** An MCP client signed in to the gateway with OAuth as a key (`GET /keys/{id}/apps`). */
+export interface ClientGrant {
+  id: string;
+  key_id: string;
+  /** The client's metadata document URL. */
+  client_id: string;
+  client_name?: string;
+  redirect_uri: string;
+  /** `/mcp`, `/mcp/{server}`, or `/` for every MCP endpoint. */
+  resource: string;
+  created_by?: string;
+  created_at: string;
+  last_used_at?: string;
+}
+
+/** An MCP client's sign-in waiting for approval (`GET /connect/{id}`). */
+export interface ConnectRequest {
+  client_id: string;
+  client_host: string;
+  client_name?: string;
+  client_uri?: string;
+  redirect_uri: string;
+  redirect_host: string;
+  /** It returns to a program on this computer. */
+  redirect_local: boolean;
+  /** It returns to another host than the client's own. */
+  redirect_elsewhere: boolean;
+  resource: string;
+}
+
 export interface KeyConnection {
   kind: "mcp" | "a2a";
   upstream_id: string;

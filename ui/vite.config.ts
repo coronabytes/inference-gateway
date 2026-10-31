@@ -15,6 +15,9 @@ export default defineConfig({
       "/v1": gateway,
       "/mcp": keepHost,
       "/a2a": keepHost,
+      // The OAuth sign-in of MCP clients: its addresses are the console's, where people approve it.
+      "/.well-known": keepHost,
+      "/oauth": keepHost,
       "/admin/openapi.json": gateway,
       "/admin/docs": gateway,
     },
