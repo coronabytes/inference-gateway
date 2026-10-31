@@ -20,6 +20,7 @@ use std::{
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use base64::Engine;
 use chrono::Utc;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -413,6 +414,41 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
+/// A token is kept this long at most, whatever its server says: an `expires_in` of years would
+/// keep a dead token (and an absurd one would overflow the clock).
+const MAX_TOKEN_LIFE: u64 = 30 * 24 * 3600;
+/// A document or token response from an upstream is read up to this size.
+const MAX_RESPONSE: usize = 1 << 20;
+
+/// How long a token lives, as its server says and within `MAX_TOKEN_LIFE`.
+fn lifetime(expires_in: Option<u64>) -> Option<Duration> {
+    expires_in.map(|s| Duration::from_secs(s.min(MAX_TOKEN_LIFE)))
+}
+
+/// When a token expires, as its server says and within `MAX_TOKEN_LIFE`.
+fn expiry(expires_in: Option<u64>) -> Option<chrono::DateTime<Utc>> {
+    lifetime(expires_in).map(|d| Utc::now() + chrono::Duration::from_std(d).expect("bounded"))
+}
+
+/// The response's body, read up to `max` bytes; a larger one is an error rather than memory.
+pub(crate) async fn read_body(resp: reqwest::Response, max: usize) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| GatewayError::from_reqwest(&e).message)?;
+        if body.len() + chunk.len() > max {
+            return Err(format!("the answer is larger than {} KB", max / 1024));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// A JSON body, read within `MAX_RESPONSE`; `Null` when it is not JSON or too large.
+async fn json_body(resp: reqwest::Response) -> Value {
+    read_body(resp, MAX_RESPONSE).await.ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
+}
+
 impl Tokens {
     async fn client_token(&self, state: &AppState, c: &Client) -> Result<String, String> {
         if let Some((token, expires)) = self.client.lock().expect("tokens lock").get(&(c.kind, c.upstream))
@@ -426,7 +462,7 @@ impl Tokens {
         }
         let t = token_request(state, c, form).await?;
         // Without an expiry, an hour: the upstream refusing it renews it sooner.
-        let expires = Instant::now() + Duration::from_secs(t.expires_in.unwrap_or(3600));
+        let expires = Instant::now() + lifetime(t.expires_in).unwrap_or(Duration::from_secs(3600));
         self.client.lock().expect("tokens lock").insert((c.kind, c.upstream), (t.access_token.clone(), expires));
         Ok(t.access_token)
     }
@@ -514,7 +550,7 @@ impl Tokens {
                 return Err(failed(e));
             }
         };
-        let expires_at = t.expires_in.map(|s| Utc::now() + chrono::Duration::seconds(s as i64));
+        let expires_at = expiry(t.expires_in);
         let refresh = t.refresh_token.as_deref().unwrap_or(&refresh);
         db::update_oauth_token(&mut *tx, c.sign_in(s), &sb.seal(t.access_token.as_bytes()), Some(&sb.seal(refresh.as_bytes())), expires_at)
             .await
@@ -551,7 +587,7 @@ async fn token_request(state: &AppState, c: &Client, mut form: Vec<(&'static str
     }
     let resp = req.form(&form).send().await.map_err(|e| GatewayError::from_reqwest(&e).message)?;
     let status = resp.status();
-    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    let body = json_body(resp).await;
     if !status.is_success() {
         let error = body.get("error").and_then(Value::as_str).unwrap_or("error");
         let description = body.get("error_description").and_then(Value::as_str).map(|d| format!(": {d}")).unwrap_or_default();
@@ -605,7 +641,7 @@ impl Client {
         ];
         let t = token_request(state, self, form).await?;
         let sb = &state.cfg.secret_box;
-        let expires_at = t.expires_in.map(|s| Utc::now() + chrono::Duration::seconds(s as i64));
+        let expires_at = expiry(t.expires_in);
         let refresh = t.refresh_token.as_deref().map(|r| sb.seal(r.as_bytes()));
         db::save_oauth_token(&state.db, self.sign_in(slot), &sb.seal(t.access_token.as_bytes()), refresh.as_deref(), expires_at, t.scope.as_deref(), by)
             .await
@@ -675,10 +711,7 @@ async fn get_json(state: &AppState, url: &str) -> Result<Value, String> {
     if !resp.status().is_success() {
         return Err(format!("{url} answered HTTP {}", resp.status().as_u16()));
     }
-    let bytes = resp.bytes().await.map_err(|e| format!("{url}: {}", GatewayError::from_reqwest(&e).message))?;
-    if bytes.len() > 1 << 20 {
-        return Err(format!("{url}: the document is too large"));
-    }
+    let bytes = read_body(resp, MAX_RESPONSE).await.map_err(|e| format!("{url}: {e}"))?;
     serde_json::from_slice(&bytes).map_err(|_| format!("{url} is not JSON"))
 }
 
@@ -825,7 +858,7 @@ pub async fn discover(
         });
         let resp = state.http.post(&reg).json(&body).timeout(Duration::from_secs(10)).send().await.map_err(|e| format!("registration: {}", GatewayError::from_reqwest(&e).message))?;
         let status = resp.status();
-        let v: Value = resp.json().await.unwrap_or(Value::Null);
+        let v = json_body(resp).await;
         if !status.is_success() {
             return Err(format!("registration was refused (HTTP {}): {}", status.as_u16(), v.get("error_description").or(v.get("error")).and_then(Value::as_str).unwrap_or("no details")));
         }
@@ -936,6 +969,15 @@ mod tests {
         // Keys that sign in on their own need a key.
         let per_key = UpstreamAuth::PerKey(Arc::new(Client { kind: Kind::Mcp, upstream: Uuid::nil(), name: "y".into(), config: OAuthConfig::default(), secret: None }));
         assert!(matches!(per_key.header(&state, None).await, Err(AuthError::NotConnected { .. })));
+    }
+
+    #[test]
+    fn token_lifetimes_are_bounded() {
+        assert_eq!(lifetime(Some(3600)), Some(Duration::from_secs(3600)));
+        assert_eq!(lifetime(Some(u64::MAX)), Some(Duration::from_secs(MAX_TOKEN_LIFE)));
+        assert_eq!(lifetime(None), None);
+        let at = expiry(Some(u64::MAX)).unwrap();
+        assert!(at <= Utc::now() + chrono::Duration::seconds(MAX_TOKEN_LIFE as i64));
     }
 
     #[test]

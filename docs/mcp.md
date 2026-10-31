@@ -69,7 +69,7 @@ Clients that add remote MCP servers by their URL alone, such as Claude and ChatG
 
 1. The client calls the gateway and gets `401` with a `WWW-Authenticate` header that names the gateway's protected resource metadata (`/.well-known/oauth-protected-resource/mcp`). The gateway is its own authorization server (`/.well-known/oauth-authorization-server`).
 2. The client sends the person's browser to the gateway, which sends it on to the console. After signing in there if needed, the person sees the app's name, the host its identity comes from, where it returns to, and the MCP endpoint. They pick a key and approve, or deny.
-3. The client gets an access token for that endpoint (an hour) and a refresh token (30 days, replaced on each use). Its tool calls count as the key's: its access, limits, budget and logging apply.
+3. The client gets an access token for that endpoint (an hour) and a refresh token (30 days, replaced on each use). A sign-in ends 90 days after it was approved however often it is refreshed, and at once when a replaced refresh token is presented again, which means someone else has it. Its tool calls count as the key's: its access, limits, budget and logging apply.
 
 Apps signed in as a key are listed on the key's **Sign-ins** (the plug icon on the Access page), with when they were approved, by whom and last used. **Revoke** signs one out; other replicas stop taking its token within a minute.
 

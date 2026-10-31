@@ -233,26 +233,33 @@ impl Card {
 }
 
 /// Agents' cards in this replica's memory, fetched again after `CARD_FRESH` or when the agent's
-/// settings change.
+/// settings change. Where each key signs in on its own, the card is fetched with the key's token
+/// and may be that account's own, so it is kept per key.
 #[derive(Default)]
-pub struct Cards(std::sync::Mutex<HashMap<Uuid, (Arc<A2aAgent>, Instant, Arc<Card>)>>);
+pub struct Cards(std::sync::Mutex<HashMap<(Uuid, Option<Uuid>), (Arc<A2aAgent>, Instant, Arc<Card>)>>);
 
 const CARD_FRESH: Duration = Duration::from_secs(300);
 
 impl Cards {
     /// `who`: who asks, for an agent whose keys sign in on their own and whose card needs it.
     pub async fn get(&self, state: &AppState, agent: &Arc<A2aAgent>, who: Option<Who<'_>>) -> Result<Arc<Card>, String> {
-        if let Some((a, at, card)) = self.0.lock().expect("cards lock").get(&agent.id)
+        let slot = (agent.id, if agent.auth.per_key() { who.as_ref().map(|w| w.key) } else { None });
+        if let Some((a, at, card)) = self.0.lock().expect("cards lock").get(&slot)
             && Arc::ptr_eq(a, agent)
             && at.elapsed() < CARD_FRESH
         {
             return Ok(card.clone());
         }
         let card = Arc::new(fetch_card(state, agent, who).await?);
-        self.0.lock().expect("cards lock").insert(agent.id, (agent.clone(), Instant::now(), card.clone()));
+        let mut cards = self.0.lock().expect("cards lock");
+        cards.retain(|_, (_, at, _)| at.elapsed() < CARD_FRESH);
+        cards.insert(slot, (agent.clone(), Instant::now(), card.clone()));
         Ok(card)
     }
 }
+
+/// A card is read up to this size.
+const MAX_CARD: usize = 1 << 20;
 
 /// The agent's card, as the agent serves it to the gateway. Where each key signs in on its own,
 /// the card is fetched without credentials (cards are mostly public) unless `who` has signed in.
@@ -270,7 +277,7 @@ pub async fn fetch_card(state: &AppState, agent: &A2aAgent, who: Option<Who<'_>>
     if !status.is_success() {
         return Err(format!("the card's address answered HTTP {}", status.as_u16()));
     }
-    let bytes = resp.bytes().await.map_err(|e| format!("the card could not be read: {}", GatewayError::from_reqwest(&e).message))?;
+    let bytes = crate::oauth::read_body(resp, MAX_CARD).await.map_err(|e| format!("the card could not be read: {e}"))?;
     let raw: Value = serde_json::from_slice(&bytes).map_err(|_| "the card is not JSON".to_string())?;
     Card::parse(raw)
 }

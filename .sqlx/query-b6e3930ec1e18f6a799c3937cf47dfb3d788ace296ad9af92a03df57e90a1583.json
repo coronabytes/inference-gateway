@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE client_grants SET access_token_hash = $2, access_expires_at = $3, refresh_token_hash = $4, refresh_expires_at = $5\n         WHERE refresh_token_hash = $1 AND refresh_expires_at > now() AND client_id = $6\n         RETURNING id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by,\n                   created_at, last_used_at",
+  "query": "UPDATE client_grants SET access_token_hash = $2, access_expires_at = $3, previous_refresh_hash = refresh_token_hash,\n             refresh_token_hash = $4, refresh_expires_at = LEAST($5, created_at + interval '90 days')\n         WHERE refresh_token_hash = $1 AND refresh_expires_at > now() AND client_id = $6\n         RETURNING id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by,\n                   created_at, last_used_at",
   "describe": {
     "columns": [
       {
@@ -161,5 +161,5 @@
       true
     ]
   },
-  "hash": "5dbd021a1172572f078df0663ba033d12426a57e3d7868fd860add57876ab483"
+  "hash": "b6e3930ec1e18f6a799c3937cf47dfb3d788ace296ad9af92a03df57e90a1583"
 }

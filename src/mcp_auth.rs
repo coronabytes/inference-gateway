@@ -8,8 +8,9 @@
 //! A person signed in to the console approves a client and picks the virtual key it acts as. The
 //! client then gets tokens for the MCP endpoint it asked for (`resource`), and its requests there
 //! count as the key's: its access, limits, budgets and logging apply. Access tokens last an hour,
-//! refresh tokens 30 days and rotate on use. Tokens are stored as SHA-256 hashes only (see
-//! `client_grants`); grants are listed and revoked per key in the console.
+//! refresh tokens 30 days and rotate on use; a grant ends 90 days after its approval however often
+//! it is refreshed, and at once when a replaced refresh token is presented again. Tokens are stored
+//! as SHA-256 hashes only (see `client_grants`); grants are listed and revoked per key in the console.
 
 use std::{
     collections::HashMap,
@@ -674,7 +675,16 @@ pub async fn token(State(state): State<AppState>, headers: HeaderMap, uri: Uri, 
                     token_response(&access, &refresh, &g.scope)
                 }
                 Ok(Some(_)) => token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the key it was approved for can no longer be used"),
-                Ok(None) => token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the refresh token is invalid, expired, used or not this client's"),
+                // A refresh token the gateway already replaced is in someone else's hands: the grant ends.
+                Ok(None) => match db::revoke_replayed_client_grant(&state.db, client_id, &hash(old)).await {
+                    Ok(Some(id)) => {
+                        state.mcp_auth.forget_tokens();
+                        tracing::warn!(grant = %id, client = %client_id, "a replaced refresh token was presented again; the grant is revoked");
+                        token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the refresh token was used before; the grant has been revoked, sign in again")
+                    }
+                    Ok(None) => token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the refresh token is invalid, expired, used or not this client's"),
+                    Err(e) => token_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &format!("the grant could not be read: {e}")),
+                },
                 Err(e) => token_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &format!("the grant could not be read: {e}")),
             }
         }

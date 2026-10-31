@@ -1003,8 +1003,18 @@ pub async fn client_grant_by_access(pool: &PgPool, access_hash: &[u8]) -> sqlx::
     .await
 }
 
+/// Revokes the grant whose replaced refresh token is presented again: its own client has the new
+/// one, so whoever presents the old one got it elsewhere (RFC 6819 5.2.2.3).
+pub async fn revoke_replayed_client_grant(pool: &PgPool, client_id: &str, refresh_hash: &[u8]) -> sqlx::Result<Option<Uuid>> {
+    let r = sqlx::query!("DELETE FROM client_grants WHERE previous_refresh_hash = $1 AND client_id = $2 RETURNING id", refresh_hash, client_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(r.map(|r| r.id))
+}
+
 /// Rotates a grant's tokens in exchange for its valid refresh token, presented by its own client,
-/// in one statement: a refresh token works once.
+/// in one statement: a refresh token works once. The new refresh token lasts `refresh_expires_at`,
+/// but never past 90 days from the grant's approval.
 pub async fn rotate_client_grant(
     pool: &PgPool,
     client_id: &str,
@@ -1016,7 +1026,8 @@ pub async fn rotate_client_grant(
 ) -> sqlx::Result<Option<ClientGrant>> {
     sqlx::query_as!(
         ClientGrant,
-        "UPDATE client_grants SET access_token_hash = $2, access_expires_at = $3, refresh_token_hash = $4, refresh_expires_at = $5
+        "UPDATE client_grants SET access_token_hash = $2, access_expires_at = $3, previous_refresh_hash = refresh_token_hash,
+             refresh_token_hash = $4, refresh_expires_at = LEAST($5, created_at + interval '90 days')
          WHERE refresh_token_hash = $1 AND refresh_expires_at > now() AND client_id = $6
          RETURNING id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by,
                    created_at, last_used_at",
