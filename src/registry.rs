@@ -34,6 +34,12 @@ pub struct Snapshot {
     pub projects: HashMap<Uuid, Arc<ProjectRow>>,
     /// Guardrails by name, ready to call.
     pub guardrails: BTreeMap<String, Arc<crate::guardrails::Active>>,
+    /// Enabled MCP servers by name, ready to call.
+    pub mcp_servers: HashMap<String, Arc<crate::mcp::McpServer>>,
+    /// Enabled A2A agents by name, ready to call.
+    pub a2a_agents: HashMap<String, Arc<crate::a2a::A2aAgent>>,
+    /// Enabled tool routers by name.
+    pub tool_routers: HashMap<String, Arc<crate::mcp::router::ToolRouter>>,
     pub loaded_at: Option<DateTime<Utc>>,
     pub errors: Vec<String>,
 }
@@ -64,14 +70,17 @@ impl Registry {
     }
 
     pub async fn reload(&self, pool: &sqlx::PgPool, cfg: &Config) -> Result<(), sqlx::Error> {
-        let (rows, creds, keys, routers, aliases, projects, guardrails) = tokio::try_join!(
+        let (rows, creds, keys, routers, aliases, projects, guardrails, mcp_servers, a2a_agents, tool_routers) = tokio::try_join!(
             db::list_deployments(pool),
             db::list_credentials(pool),
             db::list_keys(pool),
             db::list_routers(pool),
             db::list_aliases(pool),
             db::list_project_rows(pool),
-            db::list_guardrails(pool)
+            db::list_guardrails(pool),
+            db::list_mcp_servers(pool),
+            db::list_a2a_agents(pool),
+            db::list_tool_routers(pool)
         )?;
         // Decrypt each credential once, however many deployments share it.
         let creds: HashMap<Uuid, Result<ResolvedCredential, String>> =
@@ -156,6 +165,32 @@ impl Registry {
                     snap.errors.push(e);
                 }
             }
+        }
+        for s in mcp_servers.into_iter().filter(|s| s.enabled) {
+            match crate::mcp::McpServer::build(s, &cfg.secret_box) {
+                Ok(s) => {
+                    snap.mcp_servers.insert(s.name.clone(), Arc::new(s));
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "skipping misconfigured MCP server");
+                    snap.errors.push(e);
+                }
+            }
+        }
+        for a in a2a_agents.into_iter().filter(|a| a.enabled) {
+            match crate::a2a::A2aAgent::build(a, &cfg.secret_box) {
+                Ok(a) => {
+                    snap.a2a_agents.insert(a.name.clone(), Arc::new(a));
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "skipping misconfigured A2A agent");
+                    snap.errors.push(e);
+                }
+            }
+        }
+        for r in tool_routers.into_iter().filter(|r| r.enabled) {
+            let r = crate::mcp::router::ToolRouter::build(r);
+            snap.tool_routers.insert(r.name.clone(), Arc::new(r));
         }
         let n_dep: usize = snap.deployments.values().map(Vec::len).sum();
         tracing::debug!(deployments = n_dep, keys = snap.keys.len(), "registry reloaded");

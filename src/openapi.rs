@@ -36,12 +36,21 @@ use utoipa::{
     paths(
         paths::chat_completions, paths::responses, paths::messages, paths::count_tokens, paths::embeddings,
         paths::rerank, paths::decisions, paths::systemone, paths::list_models, paths::list_models_extended,
+        paths::mcp_hub_post, paths::mcp_hub_get, paths::mcp_hub_delete, paths::mcp_post, paths::mcp_get, paths::mcp_delete,
+        paths::oauth_resource, paths::oauth_resource_hub, paths::oauth_resource_server, paths::oauth_metadata, paths::oauth_authorize,
+        paths::oauth_token, paths::oauth_revoke,
+        paths::a2a_card, paths::a2a_jsonrpc, paths::a2a_rest_post, paths::a2a_rest_get, paths::a2a_rest_delete,
         paths::health_live, paths::health_ready,
         paths::session, paths::logout, paths::dev_login, paths::oidc_login, paths::oidc_callback,
+        paths::oauth_callback, paths::oauth_discover, paths::key_connections, paths::key_connect, paths::key_disconnect,
         paths::get_oidc_settings, paths::put_oidc_settings, paths::test_oidc_settings, paths::list_admins, paths::delete_admin, paths::set_admin_projects,
         paths::list_credentials, paths::create_credential, paths::update_credential, paths::delete_credential, paths::foundry_deployments, paths::bedrock_models, paths::aws_regions,
         paths::list_guardrails, paths::create_guardrail, paths::update_guardrail, paths::delete_guardrail, paths::test_guardrail,
         paths::guardrail_prices,
+        paths::list_a2a_agents, paths::create_a2a_agent, paths::update_a2a_agent, paths::delete_a2a_agent, paths::test_a2a_agent,
+        paths::list_tool_routers, paths::create_tool_router, paths::update_tool_router, paths::delete_tool_router,
+        paths::key_apps, paths::key_revoke_app, paths::connect_request, paths::connect_approve, paths::connect_deny,
+        paths::list_mcp_servers, paths::create_mcp_server, paths::update_mcp_server, paths::delete_mcp_server, paths::test_mcp_server,
         paths::list_deployments, paths::create_deployment, paths::get_deployment, paths::update_deployment,
         paths::delete_deployment, paths::test_deployment, paths::clear_cooldown,
         paths::list_routers, paths::create_router, paths::update_router, paths::delete_router,
@@ -53,7 +62,7 @@ use utoipa::{
         paths::list_tags, paths::export_config, paths::import_config, paths::model_hub, paths::model_efforts, paths::set_model_metadata,
         paths::status, paths::metrics, paths::logs, paths::log_labels, paths::log_tools, paths::log_bodies, paths::audit_log, paths::key_usage, paths::cluster,
         paths::get_settings, paths::put_settings,
-        paths::playground, paths::playground_options,
+        paths::playground, paths::playground_a2a, paths::playground_a2a_card, paths::playground_options,
         paths::search_prices, paths::match_price, paths::check_prices, paths::import_prices,
     ),
     modifiers(&SecuritySchemes),
@@ -66,6 +75,11 @@ use utoipa::{
         (name = "Auto routers", description = "Model names that pick one of several chat models per request."),
         (name = "Model aliases", description = "Model names that serve another model, which they follow when it is renamed."),
         (name = "Guardrails", description = "Provider guardrails that mask or block what prompts and responses must not contain."),
+        (name = "MCP", description = "MCP servers behind the gateway: one key for every server, the servers' credentials kept in the gateway."),
+        (name = "Upstream OAuth", description = "Signing the gateway, or each key, in to MCP servers and A2A agents with OAuth."),
+        (name = "A2A", description = "A2A agents behind the gateway: one key for every agent, the agents' credentials kept in the gateway."),
+        (name = "MCP client sign-in", description = "MCP clients (such as Claude or ChatGPT) signed in to the gateway with OAuth, each as a virtual key."),
+        (name = "Tool routers", description = "A name requests use like an MCP server's, whose decision model picks which servers' tools a request gets."),
         (name = "Virtual keys", description = "Keys for apps and people, with limits, budgets and access tags, and the projects that group them."),
         (name = "Configuration", description = "Tags, and exporting and importing the configuration."),
         (name = "Model hub", description = "The models a key may use, with their limits, prices and guardrails, and the models' metadata."),
@@ -407,6 +421,8 @@ mod schemas {
         deployments: usize,
         /// Auto routers carrying the tag.
         routers: usize,
+        /// MCP servers and A2A agents carrying the tag.
+        mcp_servers: usize,
         /// Keys holding the tag (for a user, their projects' keys).
         keys: usize,
     }
@@ -415,6 +431,8 @@ mod schemas {
     pub struct ImportChanges {
         created: Vec<String>,
         updated: Vec<String>,
+        /// Entries of the file that match one here that is already the same.
+        unchanged: usize,
     }
 
     #[derive(Serialize, ToSchema)]
@@ -422,15 +440,23 @@ mod schemas {
         dry_run: bool,
         credentials: ImportChanges,
         guardrails: ImportChanges,
+        projects: ImportChanges,
         deployments: ImportChanges,
         routers: ImportChanges,
         aliases: ImportChanges,
-        /// Keys whose allowed models follow a renamed model (only `updated`).
+        /// The file's keys, and keys whose allowed models follow a renamed model.
         keys: ImportChanges,
         /// Models whose metadata the file sets, or that takes a renamed model's along.
         model_metadata: ImportChanges,
+        mcp_servers: ImportChanges,
+        a2a_agents: ImportChanges,
+        tool_routers: ImportChanges,
         /// New credentials that need their secrets entered before their deployments work.
         needs_secrets: Vec<String>,
+        /// New MCP servers that work once their secret is entered.
+        mcp_servers_need_secrets: Vec<String>,
+        /// New A2A agents that work once their secret is entered.
+        a2a_agents_need_secrets: Vec<String>,
     }
 
     #[derive(Serialize, ToSchema)]
@@ -448,7 +474,7 @@ mod schemas {
 #[allow(dead_code)]
 mod paths {
     use super::schemas::*;
-    use crate::{admin, admin_auth, budget, db, model};
+    use crate::{admin, admin_auth, budget, db, model, oauth};
 
     // ------------------------------------------------------------ inference
 
@@ -610,6 +636,214 @@ mod paths {
         security(("virtual_key" = []), ("virtual_key_header" = [])))]
     fn list_models_extended() {}
 
+    const MCP_SESSION: &str = "The session the server opened, as the gateway handed it out with `initialize`'s answer. It only works \n        with the key that opened it; an unknown one is answered with `404`, after which the client starts a new session.";
+
+    const A2A_STATES: &str = "Each message is an entry in the request log (api `a2a`) with the state its task was left in, counts against \
+        the key's limits and budgets, and is charged the agent's price. Tasks belong to the key whose message created them: \
+        calls about another key's task are answered as for an unknown task.";
+
+    /// A2A: agent card
+    ///
+    /// The agent's card as the agent serves it, with the gateway's addresses as its interfaces (the newest \
+    /// JSON-RPC and HTTP+JSON ones) and the virtual key as its security.
+    #[utoipa::path(get, path = "/a2a/{agent}/.well-known/agent-card.json", tag = "A2A", params(("agent" = String, Path)),
+        responses(
+            (status = 200, description = "The agent card.", body = Object),
+            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+            (status = 404, description = "No such agent for this key.", body = OpenAiError),
+            (status = 502, description = "The agent's card could not be fetched or read.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_card() {}
+
+    /// A2A: JSON-RPC
+    ///
+    /// The agent's JSON-RPC interface, in A2A 1.0 (`SendMessage`, …) or 0.3 (`message/send`, …), as the card \
+    /// says. Listing tasks and the extended card are not offered.
+    #[utoipa::path(post, path = "/a2a/{agent}", tag = "A2A", params(("agent" = String, Path),
+            ("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
+        request_body(content = Object, content_type = "application/json"),
+        responses(
+            (status = 200, description = A2A_STATES, content((Object = "application/json"), (String = "text/event-stream"))),
+            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+            (status = 404, description = "No such agent for this key.", body = OpenAiError),
+            (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = OpenAiError),
+            (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_jsonrpc() {}
+
+    /// A2A: HTTP+JSON
+    ///
+    /// The agent's HTTP+JSON interface: `path` as the A2A specification has it, such as `message:send` or \
+    /// `tasks/{id}`.
+    #[utoipa::path(post, path = "/a2a/{agent}/rest/{*path}", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path),
+            ("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
+        request_body(content = Object, content_type = "application/json"),
+        responses(
+            (status = 200, description = A2A_STATES, content((Object = "application/json"), (String = "text/event-stream"))),
+            (status = 403, description = "Listing tasks or the extended card, which are not offered.", body = OpenAiError),
+            (status = 404, description = "No such agent for this key, or another key's task.", body = OpenAiError),
+            (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = OpenAiError),
+            (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_rest_post() {}
+
+    /// A2A: HTTP+JSON, read
+    #[utoipa::path(get, path = "/a2a/{agent}/rest/{*path}", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path)),
+        responses(
+            (status = 200, description = "The agent's answer.", content((Object = "application/json"), (String = "text/event-stream"))),
+            (status = 404, description = "No such agent for this key, or another key's task.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_rest_get() {}
+
+    /// A2A: HTTP+JSON, delete
+    #[utoipa::path(delete, path = "/a2a/{agent}/rest/{*path}", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path)),
+        responses(
+            (status = 200, description = "The agent's answer."),
+            (status = 404, description = "No such agent for this key, or another key's task.", body = OpenAiError),
+        ),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn a2a_rest_delete() {}
+
+    /// MCP: every server
+    ///
+    /// One MCP server with the tools of every MCP server the key may use, named \
+    /// `{server}__{tool}`, where the server's tool filters allow them. The gateway answers here itself, \
+    /// statelessly, in any protocol version, and calls the tool in a session it keeps with the server for \
+    /// the key. Each `tools/call` is an entry in the request log (api `mcp`), counts against the key's \
+    /// limits and budgets, and is charged the tool's price.
+    #[utoipa::path(post, path = "/mcp", tag = "MCP", request_body(content = Object, content_type = "application/json"),
+        responses(
+            (status = 200, description = "The gateway's answer.", content((Object = "application/json"))),
+            (status = 202, description = "Accepted: notifications and responses have no answer."),
+            (status = 401, description = "Missing, invalid, disabled or expired key or token; `WWW-Authenticate` names the protected resource metadata.", body = OpenAiError),
+        ),
+        params(("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_hub_post() {}
+
+    /// Protected resource metadata
+    ///
+    /// RFC 9728: where MCP clients sign in to use the gateway's MCP endpoints (`authorization_servers`). \n    /// Also at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-protected-resource/mcp/{server}`, \n    /// for one endpoint. A refused MCP request names it in its `WWW-Authenticate` header.
+    #[utoipa::path(get, path = "/.well-known/oauth-protected-resource", tag = "MCP client sign-in",
+        responses((status = 200, description = "The metadata.", body = Object)))]
+    fn oauth_resource() {}
+
+    /// Protected resource metadata: `/mcp`
+    #[utoipa::path(get, path = "/.well-known/oauth-protected-resource/mcp", tag = "MCP client sign-in",
+        responses((status = 200, description = "The metadata.", body = Object)))]
+    fn oauth_resource_hub() {}
+
+    /// Protected resource metadata: `/mcp/{server}`
+    #[utoipa::path(get, path = "/.well-known/oauth-protected-resource/mcp/{server}", tag = "MCP client sign-in", params(("server" = String, Path)),
+        responses((status = 200, description = "The metadata.", body = Object)))]
+    fn oauth_resource_server() {}
+
+    /// Authorization server metadata
+    ///
+    /// RFC 8414. Clients identify with a Client ID Metadata Document (`client_id_metadata_document_supported`); \n    /// there is no dynamic client registration. PKCE S256, public clients only.
+    #[utoipa::path(get, path = "/.well-known/oauth-authorization-server", tag = "MCP client sign-in",
+        responses((status = 200, description = "The metadata.", body = Object)))]
+    fn oauth_metadata() {}
+
+    /// Authorize an MCP client
+    ///
+    /// Checks the client's metadata document and the request, then sends the browser to the console, where a \n    /// signed-in person approves the client for one of their keys. Errors about the client or its redirect URI \n    /// are shown, not sent back.
+    #[utoipa::path(get, path = "/oauth/authorize", tag = "MCP client sign-in",
+        params(
+            ("response_type" = String, Query, description = "`code`."),
+            ("client_id" = String, Query, description = "The client's metadata document URL."),
+            ("redirect_uri" = Option<String>, Query, description = "One the document lists."),
+            ("code_challenge" = String, Query, description = "PKCE."),
+            ("code_challenge_method" = String, Query, description = "`S256`."),
+            ("resource" = Option<String>, Query, description = "The MCP endpoint: `{gateway}/mcp`, `{gateway}/mcp/{server}`, or the gateway for all of them. Default `/mcp`."),
+            ("scope" = Option<String>, Query, description = "`mcp`."),
+            ("state" = Option<String>, Query),
+        ),
+        responses(
+            (status = 302, description = "To the console's approval page, or back to the client with an error."),
+            (status = 400, description = "The client or its redirect URI cannot be used."),
+        ))]
+    fn oauth_authorize() {}
+
+    /// Token
+    ///
+    /// Form-encoded: `grant_type=authorization_code` with `code`, `client_id`, `redirect_uri`, `code_verifier` \n    /// and `resource`, or `grant_type=refresh_token` with `refresh_token` and `client_id`. Access tokens last \n    /// an hour; refresh tokens 30 days, and work once.
+    #[utoipa::path(post, path = "/oauth/token", tag = "MCP client sign-in",
+        request_body(content = String, content_type = "application/x-www-form-urlencoded"),
+        responses(
+            (status = 200, description = "`access_token`, `token_type`, `expires_in`, `refresh_token`, `scope`.", body = Object),
+            (status = 400, description = "An OAuth error: `error` and `error_description`.", body = Object),
+        ))]
+    fn oauth_token() {}
+
+    /// Revoke a token
+    ///
+    /// RFC 7009, form-encoded `token` and `client_id`: signs the client out. Always 200.
+    #[utoipa::path(post, path = "/oauth/revoke", tag = "MCP client sign-in",
+        request_body(content = String, content_type = "application/x-www-form-urlencoded"),
+        responses((status = 200, description = "Revoked, or there was nothing to revoke.")))]
+    fn oauth_revoke() {}
+
+    /// MCP: every server, listen
+    ///
+    /// Not offered: the gateway's own MCP server sends nothing unasked.
+    #[utoipa::path(get, path = "/mcp", tag = "MCP",
+        responses((status = 405, description = "Not offered.")),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_hub_get() {}
+
+    /// MCP: every server, end session
+    ///
+    /// Not needed: the gateway's own MCP server keeps no sessions.
+    #[utoipa::path(delete, path = "/mcp", tag = "MCP",
+        responses((status = 405, description = "Not needed.")),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_hub_delete() {}
+
+    /// MCP: send messages
+    ///
+    /// The MCP server named `server`, over Streamable HTTP: JSON-RPC messages as the MCP specification \n    /// describes them, forwarded as they are, with the gateway's credentials for the server. The answer is \n    /// JSON or server-sent events, as the server chooses. Each `tools/call` is an entry in the request log \n    /// (api `mcp`) and counts against the key's limits and budgets.
+    #[utoipa::path(post, path = "/mcp/{server}", tag = "MCP", request_body(content = Object, content_type = "application/json"),
+        responses(
+            (status = 200, description = "The server's answer.", content((Object = "application/json"), (String = "text/event-stream"))),
+            (status = 202, description = "Accepted: notifications and responses have no answer."),
+            (status = 401, description = "Missing, invalid, disabled or expired key.", body = OpenAiError),
+            (status = 404, description = "No such server for this key, or an unknown session.", body = OpenAiError),
+            (status = 429, description = "A rate limit or the key's budget, for a tool call; see `Retry-After`.", body = OpenAiError),
+            (status = 502, description = "The server failed, or refused the gateway's credentials.", body = OpenAiError),
+        ),
+        params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = MCP_SESSION),
+            ("x-gateway-labels" = Option<String>, Header, description = LABELS_HEADER)),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_post() {}
+
+    /// MCP: listen
+    ///
+    /// The server's own messages to the client, as server-sent events, where the server offers them.
+    #[utoipa::path(get, path = "/mcp/{server}", tag = "MCP",
+        responses(
+            (status = 200, description = "The server's messages.", content((String = "text/event-stream"))),
+            (status = 405, description = "The server does not offer this stream."),
+            (status = 404, description = "No such server for this key, or an unknown session.", body = OpenAiError),
+        ),
+        params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = MCP_SESSION)),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_get() {}
+
+    /// MCP: end session
+    #[utoipa::path(delete, path = "/mcp/{server}", tag = "MCP",
+        responses(
+            (status = 200, description = "The session ended."),
+            (status = 404, description = "No such server for this key, or an unknown session.", body = OpenAiError),
+        ),
+        params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = MCP_SESSION)),
+        security(("virtual_key" = []), ("virtual_key_header" = [])))]
+    fn mcp_delete() {}
+
     // ------------------------------------------------------------ health
 
     /// Liveness
@@ -671,6 +905,121 @@ mod paths {
         ),
         responses((status = 303, description = "Into the console, or back to the sign-in screen with `login_error`.")))]
     fn oidc_callback() {}
+
+    /// Upstream sign-in callback
+    ///
+    /// Where an MCP server's or A2A agent's authorization server sends the browser back after a key \
+    /// was signed in. It finishes only in the browser session that started the sign-in.
+    #[utoipa::path(get, path = "/admin/auth/oauth/callback", tag = "Sign-in",
+        params(
+            ("code" = Option<String>, Query), ("state" = Option<String>, Query),
+            ("error" = Option<String>, Query), ("error_description" = Option<String>, Query),
+        ),
+        responses((status = 303, description = "Back to the console's Access page, with `connected` or `connect_error`.")))]
+    fn oauth_callback() {}
+
+    /// Discover OAuth
+    ///
+    /// Finds an MCP server's (RFC 9728) or A2A agent's (its card) authorization server and what its \
+    /// metadata says. With `register`, registers the gateway there as a public client (RFC 7591).
+    #[utoipa::path(post, path = "/admin/api/oauth/discover", tag = "Upstream OAuth", request_body = admin::oauth::DiscoverInput,
+        responses(
+            (status = 200, description = "What was found.", body = oauth::Discovered),
+            (status = 400, description = "Nothing found, or registration refused.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn oauth_discover() {}
+
+    /// List key's upstream sign-ins
+    ///
+    /// The MCP servers and A2A agents the key may use whose keys sign in on their own, and whether it has.
+    #[utoipa::path(get, path = "/admin/api/keys/{id}/connections", tag = "Upstream OAuth", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The upstreams.", body = Vec<admin::oauth::Connection>),
+            (status = 404, description = "No such key.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_connections() {}
+
+    /// Sign key in to upstream
+    ///
+    /// Starts the authorization code flow with PKCE: send the browser to `authorization_url`. The \
+    /// upstream's authorization server sends it back to `/admin/auth/oauth/callback`.
+    #[utoipa::path(post, path = "/admin/api/keys/{id}/connections/{kind}/{upstream}", tag = "Upstream OAuth",
+        params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path), admin::oauth::ConnectQuery),
+        responses(
+            (status = 200, description = "Where to send the browser.", body = admin::oauth::ConnectStart),
+            (status = 404, description = "No such key, or no such upstream for it that signs keys in.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_connect() {}
+
+    /// Sign key out of upstream
+    ///
+    /// Deletes the key's tokens. Other replicas stop using them within five minutes.
+    #[utoipa::path(delete, path = "/admin/api/keys/{id}/connections/{kind}/{upstream}", tag = "Upstream OAuth",
+        params(("id" = Uuid, Path), ("kind" = String, Path), ("upstream" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Signed out."),
+            (status = 404, description = "The key had not signed in.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_disconnect() {}
+
+    /// List key's connected apps
+    ///
+    /// The MCP clients signed in to the gateway with OAuth as this key.
+    #[utoipa::path(get, path = "/admin/api/keys/{id}/apps", tag = "MCP client sign-in", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The key's grants, newest first.", body = Vec<crate::mcp_auth::ClientGrant>),
+            (status = 404, description = "No such key, or not one of the caller's.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_apps() {}
+
+    /// Revoke connected app
+    ///
+    /// Signs the client out: its tokens stop working, on other replicas within a minute.
+    #[utoipa::path(delete, path = "/admin/api/keys/{id}/apps/{grant}", tag = "MCP client sign-in", params(("id" = Uuid, Path), ("grant" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Revoked."),
+            (status = 404, description = "No such grant for the key.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn key_revoke_app() {}
+
+    /// MCP client sign-in request
+    ///
+    /// A sign-in waiting for approval: the client, where it returns to, and the MCP endpoint.
+    #[utoipa::path(get, path = "/admin/api/connect/{id}", tag = "MCP client sign-in", params(("id" = String, Path)),
+        responses(
+            (status = 200, description = "The request.", body = admin::connect::ConnectRequest),
+            (status = 404, description = "Expired or answered already.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn connect_request() {}
+
+    /// Approve MCP client sign-in
+    ///
+    /// Lets the client act as the key on the MCP endpoint it asked for. Returns where to send the browser.
+    #[utoipa::path(post, path = "/admin/api/connect/{id}", tag = "MCP client sign-in", params(("id" = String, Path)),
+        request_body = admin::connect::ApproveInput,
+        responses(
+            (status = 200, description = "Back to the client, with its code.", body = admin::connect::ConnectAnswer),
+            (status = 400, description = "The key cannot be used.", body = AdminError),
+            (status = 404, description = "Expired or answered already, or no such key.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn connect_approve() {}
+
+    /// Deny MCP client sign-in
+    #[utoipa::path(post, path = "/admin/api/connect/{id}/deny", tag = "MCP client sign-in", params(("id" = String, Path)),
+        responses(
+            (status = 200, description = "Back to the client, with access_denied.", body = admin::connect::ConnectAnswer),
+            (status = 404, description = "Expired or answered already.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn connect_deny() {}
 
     /// Get single sign-on settings
     ///
@@ -816,6 +1165,156 @@ mod paths {
         responses((status = 200, description = "The regions.", body = Vec<crate::aws::AwsRegion>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn aws_regions() {}
+
+    // ------------------------------------------------------------ A2A agents
+
+    /// List A2A agents
+    #[utoipa::path(get, path = "/admin/api/a2a-agents", tag = "A2A",
+        responses((status = 200, description = "The A2A agents.", body = Vec<admin::a2a::A2aAgentView>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn list_a2a_agents() {}
+
+    /// Create A2A agent
+    ///
+    /// An agent, found by its card, proxied at `/a2a/{name}`.
+    #[utoipa::path(post, path = "/admin/api/a2a-agents", tag = "A2A", request_body = admin::a2a::A2aAgentInput,
+        responses(
+            (status = 201, description = "The new A2A agent.", body = admin::a2a::A2aAgentView),
+            (status = 400, description = "Invalid A2A agent.", body = AdminError),
+            (status = 409, description = "The name is taken.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn create_a2a_agent() {}
+
+    /// Update A2A agent
+    ///
+    /// Without a secret, the stored secret stays.
+    #[utoipa::path(put, path = "/admin/api/a2a-agents/{id}", tag = "A2A", params(("id" = Uuid, Path)),
+        request_body = admin::a2a::A2aAgentInput,
+        responses(
+            (status = 200, description = "The A2A agent.", body = admin::a2a::A2aAgentView),
+            (status = 400, description = "Invalid A2A agent.", body = AdminError),
+            (status = 404, description = "No such A2A agent.", body = AdminError),
+            (status = 409, description = "The name is taken.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn update_a2a_agent() {}
+
+    /// Delete A2A agent
+    #[utoipa::path(delete, path = "/admin/api/a2a-agents/{id}", tag = "A2A", params(("id" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Deleted."),
+            (status = 404, description = "No such A2A agent.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn delete_a2a_agent() {}
+
+    /// Test A2A agent
+    ///
+    /// Fetches the agent's card, also while the agent is disabled, and says what the gateway proxies of it. \
+    /// No message is sent.
+    #[utoipa::path(post, path = "/admin/api/a2a-agents/{id}/test", tag = "A2A", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The card, or why it could not be used with `ok: false`.", body = admin::a2a::A2aAgentTestResult),
+            (status = 404, description = "No such A2A agent.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn test_a2a_agent() {}
+
+    // ------------------------------------------------------------ tool routers
+
+    /// List tool routers
+    #[utoipa::path(get, path = "/admin/api/tool-routers", tag = "Tool routers",
+        responses((status = 200, description = "The tool routers.", body = Vec<admin::tool_routers::ToolRouterView>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn list_tool_routers() {}
+
+    /// Create tool router
+    ///
+    /// A decision model and routes, each a group of one MCP server's tools with a description of when \n    /// they are needed. Requests name the router like an MCP server.
+    #[utoipa::path(post, path = "/admin/api/tool-routers", tag = "Tool routers", request_body = admin::tool_routers::ToolRouterInput,
+        responses(
+            (status = 201, description = "The new tool router.", body = admin::tool_routers::ToolRouterView),
+            (status = 400, description = "Invalid tool router.", body = AdminError),
+            (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn create_tool_router() {}
+
+    /// Update tool router
+    #[utoipa::path(put, path = "/admin/api/tool-routers/{id}", tag = "Tool routers", params(("id" = Uuid, Path)),
+        request_body = admin::tool_routers::ToolRouterInput,
+        responses(
+            (status = 200, description = "The tool router.", body = admin::tool_routers::ToolRouterView),
+            (status = 400, description = "Invalid tool router.", body = AdminError),
+            (status = 404, description = "No such tool router.", body = AdminError),
+            (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn update_tool_router() {}
+
+    /// Delete tool router
+    #[utoipa::path(delete, path = "/admin/api/tool-routers/{id}", tag = "Tool routers", params(("id" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Deleted."),
+            (status = 404, description = "No such tool router.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn delete_tool_router() {}
+
+    // ------------------------------------------------------------ MCP servers
+
+    /// List MCP servers
+    #[utoipa::path(get, path = "/admin/api/mcp-servers", tag = "MCP",
+        responses((status = 200, description = "The MCP servers.", body = Vec<admin::mcp::McpServerView>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn list_mcp_servers() {}
+
+    /// Create MCP server
+    ///
+    /// An upstream MCP server, proxied at `/mcp/{name}`.
+    #[utoipa::path(post, path = "/admin/api/mcp-servers", tag = "MCP", request_body = admin::mcp::McpServerInput,
+        responses(
+            (status = 201, description = "The new MCP server.", body = admin::mcp::McpServerView),
+            (status = 400, description = "Invalid MCP server.", body = AdminError),
+            (status = 409, description = "The name is taken.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn create_mcp_server() {}
+
+    /// Update MCP server
+    ///
+    /// Without a secret, the stored secret stays.
+    #[utoipa::path(put, path = "/admin/api/mcp-servers/{id}", tag = "MCP", params(("id" = Uuid, Path)),
+        request_body = admin::mcp::McpServerInput,
+        responses(
+            (status = 200, description = "The MCP server.", body = admin::mcp::McpServerView),
+            (status = 400, description = "Invalid MCP server.", body = AdminError),
+            (status = 404, description = "No such MCP server.", body = AdminError),
+            (status = 409, description = "The name is taken.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn update_mcp_server() {}
+
+    /// Delete MCP server
+    #[utoipa::path(delete, path = "/admin/api/mcp-servers/{id}", tag = "MCP", params(("id" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Deleted."),
+            (status = 404, description = "No such MCP server.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn delete_mcp_server() {}
+
+    /// Test MCP server
+    ///
+    /// Connects as a client would, also while the server is disabled, and lists its tools. Nothing is \n    /// logged or charged to a key.
+    #[utoipa::path(post, path = "/admin/api/mcp-servers/{id}/test", tag = "MCP", params(("id" = Uuid, Path)),
+        responses(
+            (status = 200, description = "The server's tools, or why it could not be used with `ok: false`.", body = admin::mcp::McpServerTestResult),
+            (status = 404, description = "No such MCP server.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn test_mcp_server() {}
 
     // ------------------------------------------------------------ guardrails
 
@@ -1158,8 +1657,8 @@ mod paths {
 
     /// List tags
     ///
-    /// Every tag on deployments and routers, and those keys still hold, with how many of each
-    /// carry it.
+    /// Every tag on deployments, routers and MCP servers, and those keys still hold, with how many
+    /// of each carry it.
     #[utoipa::path(get, path = "/admin/api/tags", tag = "Configuration",
         responses((status = 200, description = "The tags.", body = Vec<TagUsage>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
@@ -1206,8 +1705,8 @@ mod paths {
 
     /// Export configuration
     ///
-    /// Credentials come without their secrets.
-    #[utoipa::path(get, path = "/admin/api/config/export", tag = "Configuration",
+    /// Credentials, MCP servers and A2A agents come without their secrets; keys with the hash of \n    /// theirs, never the secret itself.
+    #[utoipa::path(get, path = "/admin/api/config/export", tag = "Configuration", params(admin::transfer::ExportQuery),
         responses((status = 200, description = "The configuration.", body = admin::transfer::Document)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn export_config() {}
@@ -1394,13 +1893,33 @@ mod paths {
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn playground() {}
 
+    /// Playground: an A2A agent
+    ///
+    /// A JSON-RPC call of an A2A agent as a chosen virtual key, as at `/a2a/{agent}`: logged,
+    /// counted against the key's limits and charged the agent's price.
+    #[utoipa::path(post, path = "/admin/api/playground/a2a/{agent}", tag = "Playground",
+        params(("agent" = String, Path), admin::PlaygroundQuery),
+        request_body = Object,
+        responses((status = 200, description = "The agent's answer, or its event stream.", body = Object)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn playground_a2a() {}
+
+    /// Playground: an A2A agent's card
+    ///
+    /// The agent's card as a chosen virtual key gets it at `/a2a/{agent}/.well-known/agent-card.json`.
+    #[utoipa::path(get, path = "/admin/api/playground/a2a/{agent}/card", tag = "Playground",
+        params(("agent" = String, Path), admin::PlaygroundQuery),
+        responses((status = 200, description = "The agent card, with the gateway's addresses.", body = Object)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn playground_a2a_card() {}
+
     /// Playground options
     ///
-    /// The models a key may call, with their modes, and the guardrails a request may ask for,
-    /// those the key or its project enforce marked.
+    /// The models a key may call, with their modes, the guardrails a request may ask for (those
+    /// the key or its project enforce marked), and the MCP servers and A2A agents it may use.
     #[utoipa::path(get, path = "/admin/api/playground/options", tag = "Playground", params(admin::PlaygroundQuery),
         responses(
-            (status = 200, description = "The key's models and guardrails.", body = admin::PlaygroundOptions),
+            (status = 200, description = "The key's models, guardrails, MCP servers and A2A agents.", body = admin::PlaygroundOptions),
             (status = 404, description = "No such key, or not one of the caller's.", body = AdminError),
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]

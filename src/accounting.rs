@@ -61,6 +61,11 @@ pub struct RequestRecord {
     pub bodies: Logged,
     /// What became of them, for the entry's `bodies` column: set by the writer.
     pub bodies_status: Option<&'static str>,
+    /// The tool an MCP call called (see `mcp`).
+    pub tool: Option<String>,
+    /// A message to an A2A agent: the state its task was left in, and its context (see `a2a`).
+    pub task_state: Option<String>,
+    pub context_id: Option<String>,
 }
 
 /// A logged request's bodies on their way to the writer. They are never copied: a clone of a
@@ -127,6 +132,12 @@ pub struct Tracker {
     guardrails: GuardrailCharge,
     /// Where the key's prompts are logged: what this call's entry keeps of its bodies.
     capture: Option<Box<Capture>>,
+    /// The tool an MCP call called.
+    tool: Option<String>,
+    /// A price per call (an MCP tool's), in USD, on top of what the usage costs.
+    charge_usd: f64,
+    task_state: Option<String>,
+    context_id: Option<String>,
 }
 
 /// Rough tokens for a number of bytes of text, for when a provider reports no usage. About four
@@ -181,6 +192,10 @@ impl Tracker {
             stream_ended: false,
             guardrails: GuardrailCharge::default(),
             capture: None,
+            tool: None,
+            charge_usd: 0.0,
+            task_state: None,
+            context_id: None,
         }
     }
 
@@ -190,6 +205,22 @@ impl Tracker {
             c.guardrails(trace);
         }
         self.guardrails = charge;
+    }
+
+    /// The tool an MCP call calls.
+    pub fn tool(&mut self, name: &str) {
+        self.tool = Some(crate::util::truncate(name, 200));
+    }
+
+    /// The state an A2A agent's task was left in, and its context.
+    pub fn task(&mut self, state: Option<&str>, context: Option<&str>) {
+        self.task_state = state.map(|s| crate::util::truncate(s, 40));
+        self.context_id = context.map(|c| crate::util::truncate(c, 200));
+    }
+
+    /// Charges a price per call, in USD, on top of the usage.
+    pub fn charge(&mut self, usd: f64) {
+        self.charge_usd += usd;
     }
 
     /// Whether this call's bodies are logged.
@@ -314,7 +345,7 @@ impl Drop for Tracker {
             }
         }
         let guardrails = std::mem::take(&mut self.guardrails);
-        let cost = self.deployment.as_ref().map_or(0.0, |d| d.pricing.cost(&self.usage)) + guardrails.cost_usd;
+        let cost = self.deployment.as_ref().map_or(0.0, |d| d.pricing.cost(&self.usage)) + guardrails.cost_usd + self.charge_usd;
         let rec = RequestRecord {
             id: self.id,
             ts: self.ts,
@@ -340,6 +371,9 @@ impl Drop for Tracker {
             search_cost_usd: self.deployment.as_ref().map_or(0.0, |d| d.pricing.search_cost(&self.usage)),
             bodies: Logged(self.capture.take()),
             bodies_status: None,
+            tool: self.tool.take(),
+            task_state: self.task_state.take(),
+            context_id: self.context_id.take(),
         };
         telemetry::end_call(&self.cx, &rec, self.deployment.as_ref().map(|d| d.upstream_model.as_str()));
         if let Some((parent, decides_status)) = self.parent.take() {
@@ -482,6 +516,9 @@ impl Drop for Rollup {
             search_cost_usd: s.search_cost_usd,
             bodies: Logged(s.capture),
             bodies_status: None,
+            tool: None,
+            task_state: None,
+            context_id: None,
         };
         telemetry::end_call(&self.cx, &rec, None);
         if self.tx.try_send(rec).is_err() {

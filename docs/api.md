@@ -67,6 +67,10 @@ curl https://gateway.example.com/v1/chat/completions -H "authorization: Bearer $
   -H 'x-gateway-guardrails: pii-and-prompt-attacks' -d '…'
 ```
 
+## MCP tools
+
+A request can name the gateway's [MCP servers](mcp.md) among its tools (`{"type": "mcp", "server_label": "github"}`, or `mcp_servers` on Messages). The gateway runs the tools the model calls, with any model, and returns the answer. See [MCP tools in model requests](mcp.md#mcp-tools-in-model-requests).
+
 ## Conversations
 
 Responses API clients can continue a conversation with `previous_response_id` on any model, not only on providers that store conversations themselves. For those that do not, the gateway keeps the history (encrypted, until the conversation goes unused for 15 minutes) and prefers the deployment that served the previous turn; for those that do, the conversation continues on the deployment that holds it. Conversations belong to the key that started them, and `store: false` turns this off. Each key may keep up to 64 MB of history; turns beyond it are answered but cannot be continued. Both limits are [settings](configuration.md#settings).

@@ -1,3 +1,4 @@
+mod a2a;
 mod accounting;
 mod admin;
 mod admin_auth;
@@ -19,8 +20,11 @@ mod entra;
 mod error;
 mod ir;
 mod labels;
+mod mcp;
+mod mcp_auth;
 mod model;
 mod netguard;
+mod oauth;
 mod openapi;
 mod prices;
 mod providers;
@@ -149,6 +153,10 @@ async fn run() -> Result<(), String> {
         entra: entra::Entra::default(),
         http,
         records: tx,
+        mcp: mcp::Upstreams::default(),
+        a2a: a2a::Cards::default(),
+        oauth: oauth::Tokens::default(),
+        mcp_auth: mcp_auth::Store::default(),
         bodies: capture::Budget::new(prompt_log_buffer),
         started: Instant::now(),
         started_at: chrono::Utc::now(),
@@ -180,7 +188,20 @@ async fn run() -> Result<(), String> {
         .route("/v2/rerank", post(api::rerank::rerank))
         .route("/rerank", post(api::rerank::rerank))
         .route("/v1/models", get(api::models::list_models))
-        .route("/v1/models-extended", get(api::models::list_models_extended));
+        .route("/v1/models-extended", get(api::models::list_models_extended))
+        .route("/mcp", post(mcp::hub::hub).get(mcp::hub::hub).delete(mcp::hub::hub))
+        .route("/mcp/{server}", post(mcp::proxy).get(mcp::proxy).delete(mcp::proxy))
+        .route("/a2a/{agent}", post(a2a::jsonrpc))
+        .route("/a2a/{agent}/.well-known/agent-card.json", get(a2a::card))
+        .route("/a2a/{agent}/rest/{*path}", get(a2a::rest).post(a2a::rest).delete(a2a::rest))
+        // The gateway as the OAuth authorization server of its MCP endpoints (see `mcp_auth`).
+        .route("/.well-known/oauth-protected-resource", get(mcp_auth::resource_root))
+        .route("/.well-known/oauth-protected-resource/mcp", get(mcp_auth::resource_hub))
+        .route("/.well-known/oauth-protected-resource/mcp/{server}", get(mcp_auth::resource_server))
+        .route("/.well-known/oauth-authorization-server", get(mcp_auth::metadata))
+        .route("/oauth/authorize", get(mcp_auth::authorize))
+        .route("/oauth/token", post(mcp_auth::token))
+        .route("/oauth/revoke", post(mcp_auth::revoke));
     if let Some(signals) = telemetry::describe() {
         tracing::info!(%signals, "exporting OpenTelemetry");
     }

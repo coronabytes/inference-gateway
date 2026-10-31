@@ -253,7 +253,7 @@ fn set_effort(body: &mut serde_json::Map<String, Value>, inbound: Inbound, effor
 }
 
 /// The conversation as plain text for the decision model, trimmed to its end.
-fn transcript(req: &ChatRequest) -> String {
+pub(crate) fn transcript(req: &ChatRequest) -> String {
     let mut out = String::new();
     let system: Vec<&str> = req.system.iter().map(|b| b.text.as_str()).collect();
     if !system.is_empty() {

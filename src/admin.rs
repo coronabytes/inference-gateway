@@ -35,8 +35,13 @@ use crate::{
     sync::broadcast_reload,
 };
 
+pub(crate) mod a2a;
+pub(crate) mod connect;
 pub(crate) mod guardrails;
 pub(crate) mod hub;
+pub(crate) mod mcp;
+pub(crate) mod tool_routers;
+pub(crate) mod oauth;
 pub(crate) mod transfer;
 
 type R<T> = Result<T, AdminError>;
@@ -57,6 +62,21 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/guardrails/prices", get(guardrails::list_prices))
         .route("/guardrails/{id}", axum::routing::put(guardrails::update_guardrail).delete(guardrails::delete_guardrail))
         .route("/guardrails/{id}/test", post(guardrails::test_guardrail))
+        .route("/mcp-servers", get(mcp::list_mcp_servers).post(mcp::create_mcp_server))
+        .route("/mcp-servers/{id}", axum::routing::put(mcp::update_mcp_server).delete(mcp::delete_mcp_server))
+        .route("/mcp-servers/{id}/test", post(mcp::test_mcp_server))
+        .route("/oauth/discover", post(oauth::discover))
+        .route("/keys/{id}/connections", get(oauth::list_connections))
+        .route("/keys/{id}/apps", get(connect::list_apps))
+        .route("/keys/{id}/apps/{grant}", axum::routing::delete(connect::revoke_app))
+        .route("/connect/{id}", get(connect::get_request).post(connect::approve))
+        .route("/connect/{id}/deny", post(connect::deny))
+        .route("/keys/{id}/connections/{kind}/{upstream}", post(oauth::connect).delete(oauth::disconnect))
+        .route("/a2a-agents", get(a2a::list_a2a_agents).post(a2a::create_a2a_agent))
+        .route("/a2a-agents/{id}", axum::routing::put(a2a::update_a2a_agent).delete(a2a::delete_a2a_agent))
+        .route("/a2a-agents/{id}/test", post(a2a::test_a2a_agent))
+        .route("/tool-routers", get(tool_routers::list_tool_routers).post(tool_routers::create_tool_router))
+        .route("/tool-routers/{id}", axum::routing::put(tool_routers::update_tool_router).delete(tool_routers::delete_tool_router))
         .route("/routers", get(list_routers).post(create_router))
         .route("/routers/{id}", axum::routing::put(update_router).delete(delete_router))
         .route("/aliases", get(list_aliases).post(create_alias))
@@ -89,6 +109,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/settings", get(get_settings).put(put_settings))
         .route("/playground/options", get(playground_options))
         .route("/playground/{api}", post(playground))
+        .route("/playground/a2a/{agent}", post(playground_a2a))
+        .route("/playground/a2a/{agent}/card", get(playground_a2a_card))
         .merge(crate::admin_auth::protected_api_routes())
         .merge(crate::prices::routes())
         // A route layer, so the guard knows which route it guards (users reach only some).
@@ -1637,15 +1659,27 @@ fn check_budget(limit: Option<f64>, period: Option<&str>) -> R<()> {
     }
 }
 
-/// Every tag on a deployment or router, with how many deployments and routers carry it.
-async fn known_tags(state: &AppState) -> R<BTreeMap<String, (usize, usize)>> {
-    let (deployments, routers) = tokio::try_join!(db::list_deployments(&state.db), db::list_routers(&state.db))?;
-    let mut tags: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+/// Every tag on a deployment, router, MCP server or A2A agent, with how many deployments, routers
+/// and MCP servers or agents carry it.
+async fn known_tags(state: &AppState) -> R<BTreeMap<String, (usize, usize, usize)>> {
+    let (deployments, routers, servers, agents) = tokio::try_join!(
+        db::list_deployments(&state.db),
+        db::list_routers(&state.db),
+        db::list_mcp_servers(&state.db),
+        db::list_a2a_agents(&state.db)
+    )?;
+    let mut tags: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+    for t in agents.into_iter().flat_map(|a| a.tags) {
+        tags.entry(t).or_default().2 += 1;
+    }
     for t in deployments.into_iter().flat_map(|d| d.tags) {
         tags.entry(t).or_default().0 += 1;
     }
     for t in routers.into_iter().flat_map(|r| r.tags) {
         tags.entry(t).or_default().1 += 1;
+    }
+    for t in servers.into_iter().flat_map(|s| s.tags) {
+        tags.entry(t).or_default().2 += 1;
     }
     Ok(tags)
 }
@@ -1654,20 +1688,22 @@ async fn list_tags(State(state): State<AppState>, Extension(access): Extension<A
     let (tags, held) = tokio::try_join!(known_tags(&state), async { Ok(db::key_tag_counts(&state.db, access.projects()).await?) })?;
     // Tags only keys still hold, once nothing carries them any more, come last.
     let mut out: Vec<Value> =
-        tags.iter().map(|(tag, (d, r))| json!({ "tag": tag, "deployments": d, "routers": r, "keys": held.get(tag).copied().unwrap_or(0) })).collect();
+        tags.iter()
+            .map(|(tag, (d, r, m))| json!({ "tag": tag, "deployments": d, "routers": r, "mcp_servers": m, "keys": held.get(tag).copied().unwrap_or(0) }))
+            .collect();
     let mut orphans: Vec<(&String, &i64)> = held.iter().filter(|(t, _)| !tags.contains_key(*t)).collect();
     orphans.sort();
-    out.extend(orphans.into_iter().map(|(tag, n)| json!({ "tag": tag, "deployments": 0, "routers": 0, "keys": n })));
+    out.extend(orphans.into_iter().map(|(tag, n)| json!({ "tag": tag, "deployments": 0, "routers": 0, "mcp_servers": 0, "keys": n })));
     Ok(Json(json!(out)))
 }
 
-/// A key's tags, normalized. Keys only pick tags that deployments or routers define; tags a key
-/// already holds stay valid after the last one carrying them is gone.
+/// A key's tags, normalized. Keys only pick tags that deployments, routers or MCP servers define;
+/// tags a key already holds stay valid after the last one carrying them is gone.
 async fn key_tags(state: &AppState, wanted: Vec<String>, held: &[String]) -> R<Vec<String>> {
     let tags = normalize_tags(wanted).map_err(AdminError::bad_request)?;
     let known = known_tags(state).await?;
     if let Some(t) = tags.iter().find(|t| !known.contains_key(*t) && !held.contains(t)) {
-        return Err(AdminError::bad_request(format!("no deployment or router has the tag '{t}'; add tags on the Models page")));
+        return Err(AdminError::bad_request(format!("no deployment, router, MCP server or A2A agent has the tag '{t}'; add tags on the Models or Tools page")));
     }
     Ok(tags)
 }
@@ -2093,6 +2129,16 @@ async fn delete_project(State(state): State<AppState>, Extension(actor): Extensi
         let models = models.into_iter().collect::<Vec<_>>().join(", ");
         return Err(AdminError::conflict(format!("deployments of {models} are limited to this project; remove it from them first")));
     }
+    let servers: Vec<String> =
+        db::list_mcp_servers(&state.db).await?.into_iter().filter(|s| s.project_ids.contains(&id)).map(|s| s.name).collect();
+    if !servers.is_empty() {
+        return Err(AdminError::conflict(format!("MCP servers {} are limited to this project; remove it from them first", servers.join(", "))));
+    }
+    let agents: Vec<String> =
+        db::list_a2a_agents(&state.db).await?.into_iter().filter(|a| a.project_ids.contains(&id)).map(|a| a.name).collect();
+    if !agents.is_empty() {
+        return Err(AdminError::conflict(format!("A2A agents {} are limited to this project; remove it from them first", agents.join(", "))));
+    }
     let keys = db::delete_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     // Replicas reload their keys so the deleted ones stop working there too.
     if !keys.is_empty() {
@@ -2327,7 +2373,8 @@ pub(crate) struct LogQuery {
     /// Just the requests whose stored prompt (after guardrails) or response contains these words:
     /// `"a phrase"`, `or`, `-word` and `prefix:*` work as in Postgres' `websearch_to_tsquery`.
     q: Option<String>,
-    /// Just the requests whose stored response called this tool (`web_search` for web searches).
+    /// Just the requests whose stored response called this tool (`web_search` for web searches),
+    /// and the MCP calls of a tool of this name.
     tool: Option<String>,
     /// Just the requests the guardrails did any of these to, as `blocked,masked`: `passed`,
     /// `flagged`, `masked` or `blocked`.
@@ -2663,12 +2710,26 @@ pub(crate) struct PlaygroundQuery {
     key_id: Uuid,
 }
 
-/// What the playground offers for a key: the models it may call, and the guardrails a request may
-/// ask for, those the key or its project enforce marked.
+/// What the playground offers for a key: the models it may call, the guardrails a request may
+/// ask for (those the key or its project enforce marked), and the MCP servers and A2A agents it
+/// may use.
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct PlaygroundOptions {
     models: Vec<PlaygroundModel>,
     guardrails: Vec<PlaygroundGuardrail>,
+    mcp_servers: Vec<PlaygroundUpstream>,
+    a2a_agents: Vec<PlaygroundUpstream>,
+}
+
+/// An MCP server or A2A agent the key may use, or a tool router.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PlaygroundUpstream {
+    name: String,
+    /// The key signs in to it itself, and has not yet.
+    needs_sign_in: bool,
+    /// A tool router, listed with the MCP servers: requests name it like one.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    router: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -2705,7 +2766,76 @@ async fn playground_options(State(state): State<AppState>, Extension(access): Ex
     let project = key.project_id.and_then(|p| snap.projects.get(&p));
     let enforced = |id: Uuid| key.guardrail_ids.contains(&id) || project.is_some_and(|p| p.guardrail_ids.contains(&id));
     let guardrails = snap.guardrails.values().map(|g| PlaygroundGuardrail { name: g.row.name.clone(), enforced: enforced(g.row.id) }).collect();
-    Ok(Json(PlaygroundOptions { models, guardrails }))
+    let signed_in = db::key_connections(&state.db, key.id).await?;
+    let upstream = |kind: crate::oauth::Kind, id: Uuid, name: &str, per_key: bool| PlaygroundUpstream {
+        name: name.to_string(),
+        needs_sign_in: per_key && !signed_in.iter().any(|r| r.0 == kind.as_str() && r.1 == id),
+        router: false,
+    };
+    let mut mcp_servers: Vec<PlaygroundUpstream> = snap
+        .mcp_servers
+        .values()
+        .filter(|s| s.allows(key))
+        .map(|s| upstream(crate::oauth::Kind::Mcp, s.id, &s.name, s.auth.per_key()))
+        .collect();
+    let mut a2a_agents: Vec<PlaygroundUpstream> = snap
+        .a2a_agents
+        .values()
+        .filter(|a| a.allows(key))
+        .map(|a| upstream(crate::oauth::Kind::A2a, a.id, &a.name, a.auth.per_key()))
+        .collect();
+    // Tool routers with a route the key may use.
+    mcp_servers.extend(
+        snap.tool_routers
+            .values()
+            .filter(|r| !r.usable(&snap, key).is_empty())
+            .map(|r| PlaygroundUpstream { name: r.name.clone(), needs_sign_in: false, router: true }),
+    );
+    mcp_servers.sort_by(|a, b| a.name.cmp(&b.name));
+    a2a_agents.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(PlaygroundOptions { models, guardrails, mcp_servers, a2a_agents }))
+}
+
+/// The key the playground plays as: for a user, only an inference key of their projects; others
+/// look like keys that do not exist.
+#[allow(clippy::result_large_err)]
+fn playground_key(state: &AppState, access: &Access, id: Uuid) -> Result<std::sync::Arc<VirtualKey>, Response> {
+    let not_found = |e: crate::error::GatewayError| e.into_response_for(crate::error::Dialect::OpenAi);
+    if !state.registry.snapshot().keys.values().any(|k| k.id == id && sees_key(access, k)) {
+        return Err(not_found(crate::error::GatewayError::not_found("virtual key not found")));
+    }
+    crate::auth::key_by_id(state, id).map_err(not_found)
+}
+
+/// `POST /admin/api/playground/a2a/{agent}?key_id=…`: a JSON-RPC call of the agent as the key,
+/// as at `/a2a/{agent}`, logged and charged as there.
+async fn playground_a2a(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Path(agent): Path<String>,
+    Query(q): Query<PlaygroundQuery>,
+    headers: axum::http::HeaderMap,
+    body: bytes::Bytes,
+) -> Response {
+    match playground_key(&state, &access, q.key_id) {
+        Ok(key) => crate::a2a::jsonrpc_for(&state, &key, &agent, &headers, body).await,
+        Err(r) => r,
+    }
+}
+
+/// `GET /admin/api/playground/a2a/{agent}/card?key_id=…`: the agent's card as the key gets it.
+async fn playground_a2a_card(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Path(agent): Path<String>,
+    Query(q): Query<PlaygroundQuery>,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    match playground_key(&state, &access, q.key_id) {
+        Ok(key) => crate::a2a::card_for(&state, &key, &agent, &uri, &headers).await,
+        Err(r) => r,
+    }
 }
 
 /// `POST /admin/api/playground/{chat|responses|messages|embeddings|rerank|decisions|systemone|models|models-extended}?key_id=…`

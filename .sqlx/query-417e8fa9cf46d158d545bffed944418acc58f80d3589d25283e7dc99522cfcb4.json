@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_tokens WHERE upstream_kind = 'mcp' AND upstream_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "417e8fa9cf46d158d545bffed944418acc58f80d3589d25283e7dc99522cfcb4"
+}

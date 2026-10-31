@@ -153,7 +153,18 @@ By default the gateway connects to public addresses only. Self-hosted models (vL
 
 - **Postgres** holds everything that matters: back it up like any other database. Valkey needs no backup; its append-only file only keeps state across restarts. Logged prompts and responses (`request_bodies`, see [prompt logging](security.md#prompt-logging)) are debugging data, not encrypted: exclude them with `pg_dump --exclude-table-data=request_bodies` unless backups may hold them. Leave prompt logging off for production keys.
 - **`GATEWAY_ENCRYPTION_KEY`** must be kept with the backup: stored provider secrets cannot be read without it.
-- **Cluster → Backup & Restore** in the console exports credentials (without their secrets), guardrails, deployments, auto routers and model descriptions as one JSON file, and merges such a file into a gateway, for example to copy configuration from staging to production. Imports match entries by id, then by name, never delete anything, and offer a dry run. Keys and projects are not exported.
+- **Cluster → Backup & Restore** in the console exports the configuration as one JSON file and merges such a file into a gateway, for example to copy configuration from staging to production. See [configuration files](#configuration-files).
+
+### Configuration files
+
+A file has a section for each kind of configuration: credentials, guardrails, projects, deployments, auto routers, model aliases, model descriptions, MCP servers, A2A agents, tool routers and virtual keys.
+
+- **Choosing sections:** the export offers a switch for each section, all on by default. Choosing a file to import shows its sections with how many entries each has, all on; turn off those you do not want. The API takes the same choice: `GET /admin/api/config/export?sections=keys,projects`, and an import takes the sections its file has.
+- **What goes together:** entries name each other, so a section comes with the sections it needs. Deployments and guardrails need their credentials, auto routers, aliases and model descriptions their deployments, tool routers their MCP servers and decision model, and keys their projects. While a section that needs another is on, that one stays on too. An entry may also name something that already exists on the gateway it is imported into; anything else is refused before anything is written.
+- **The check:** before anything changes, the import shows for each section how many of the file's entries are new, how many update an existing one, and how many already match. Click a section to see their names.
+- **Matching:** entries update what has the same id, or else what matches by name (deployments by model, credential and upstream model; keys by the hash of their secret). The rest is added. Nothing is deleted.
+- **Secrets:** credentials, MCP servers and A2A agents come without their secrets. New ones are listed after the import: enter their secrets on the Credentials, MCP servers and A2A agents pages, and until then they do not work.
+- **Keys:** a key is exported with the SHA-256 of its secret, never the secret itself, so an imported key works with the same secret as before. A key that already exists keeps its own secret: a key regenerated since the export is not brought back. Spend and budgets' periods start fresh. The file still lists your keys, their projects and limits: keep it as safe as a database backup.
 
 ## Rotate the encryption key
 
@@ -167,7 +178,7 @@ Nothing stops while the key changes: the gateway reads with both keys and writes
    docker run --rm --env-file gateway.env ghcr.io/coronabytes/inference-gateway:1.0 rotate-key
    ```
 
-   This re-encrypts provider secrets, the OIDC client secret and conversation state, skips what is already under the new key, and writes nothing if a stored secret cannot be read with either key. It is safe to run again.
+   This re-encrypts provider secrets, MCP server and A2A agent secrets, keys' upstream sign-ins, the OIDC client secret and conversation state, skips what is already under the new key, and writes nothing if a stored secret cannot be read with either key. It is safe to run again.
 4. Remove `GATEWAY_PREVIOUS_ENCRYPTION_KEY` and restart.
 
 ## Checklist

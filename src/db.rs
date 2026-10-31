@@ -2,7 +2,7 @@
 //! macros; `.sqlx/` holds the offline metadata so builds need no database
 //! (regenerate with `cargo sqlx prepare` after changing a query or migration).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -13,6 +13,13 @@ use crate::{
     accounting::RequestRecord,
     capture::Stored,
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailRow},
+    a2a::A2aAgentRow,
+    mcp::{
+        McpServerRow,
+        router::{ToolRoute, ToolRouterRow},
+    },
+    mcp_auth::ClientGrant,
+    oauth::OAuthConfig,
     model::{
         AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
         PromptLogging, Route,
@@ -775,6 +782,525 @@ pub async fn delete_guardrail(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
     Ok(r.rows_affected() > 0)
 }
 
+// ---------------------------------------------------------------- MCP servers
+
+pub async fn list_mcp_servers(pool: &PgPool) -> sqlx::Result<Vec<McpServerRow>> {
+    sqlx::query_as!(
+        McpServerRow,
+        r#"SELECT id, name, description, url, auth, auth_header, secret, oauth AS "oauth: Json<OAuthConfig>", tags, project_ids, timeout_secs,
+                  enabled, allowed_tools, denied_tools, price_per_call, tool_prices AS "tool_prices: Json<BTreeMap<String, f64>>", created_at, updated_at
+           FROM mcp_servers ORDER BY name"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_mcp_server(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<McpServerRow>> {
+    sqlx::query_as!(
+        McpServerRow,
+        r#"SELECT id, name, description, url, auth, auth_header, secret, oauth AS "oauth: Json<OAuthConfig>", tags, project_ids, timeout_secs,
+                  enabled, allowed_tools, denied_tools, price_per_call, tool_prices AS "tool_prices: Json<BTreeMap<String, f64>>", created_at, updated_at
+           FROM mcp_servers WHERE id = $1"#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn insert_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO mcp_servers (id, name, description, url, auth, auth_header, secret, tags, project_ids, timeout_secs, enabled, allowed_tools,
+             denied_tools, price_per_call, tool_prices, oauth, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())",
+        s.id,
+        s.name,
+        s.description,
+        s.url,
+        s.auth,
+        s.auth_header,
+        s.secret,
+        &s.tags,
+        &s.project_ids,
+        s.timeout_secs,
+        s.enabled,
+        &s.allowed_tools,
+        &s.denied_tools,
+        s.price_per_call,
+        &s.tool_prices as &Json<BTreeMap<String, f64>>,
+        &s.oauth as &Option<Json<OAuthConfig>>,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_mcp_server(db: impl PgExecutor<'_>, s: &McpServerRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE mcp_servers SET name = $2, description = $3, url = $4, auth = $5, auth_header = $6, secret = $7, tags = $8,
+             project_ids = $9, timeout_secs = $10, enabled = $11, allowed_tools = $12, denied_tools = $13, price_per_call = $14,
+             tool_prices = $15, oauth = $16, updated_at = now()
+         WHERE id = $1",
+        s.id,
+        s.name,
+        s.description,
+        s.url,
+        s.auth,
+        s.auth_header,
+        s.secret,
+        &s.tags,
+        &s.project_ids,
+        s.timeout_secs,
+        s.enabled,
+        &s.allowed_tools,
+        &s.denied_tools,
+        s.price_per_call,
+        &s.tool_prices as &Json<BTreeMap<String, f64>>,
+        &s.oauth as &Option<Json<OAuthConfig>>,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Also deletes the keys' tokens for it.
+pub async fn delete_mcp_server(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
+    let mut tx = pool.begin().await?;
+    sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = 'mcp' AND upstream_id = $1", id).execute(&mut *tx).await?;
+    let r = sqlx::query!("DELETE FROM mcp_servers WHERE id = $1", id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(r.rows_affected() > 0)
+}
+
+pub async fn sealed_mcp_secrets(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(Uuid, String, Vec<u8>)>> {
+    let rows = sqlx::query!(r#"SELECT id, name, secret AS "secret!" FROM mcp_servers WHERE secret IS NOT NULL FOR UPDATE"#)
+        .fetch_all(db)
+        .await?;
+    Ok(rows.into_iter().map(|r| (r.id, r.name, r.secret)).collect())
+}
+
+pub async fn set_mcp_secret(db: impl PgExecutor<'_>, id: Uuid, secret: &[u8]) -> sqlx::Result<()> {
+    sqlx::query!("UPDATE mcp_servers SET secret = $1 WHERE id = $2", secret, id).execute(db).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------- A2A agents
+
+pub async fn list_a2a_agents(pool: &PgPool) -> sqlx::Result<Vec<A2aAgentRow>> {
+    sqlx::query_as!(
+        A2aAgentRow,
+        r#"SELECT id, name, description, card_url, auth, auth_header, secret, oauth AS "oauth: Json<OAuthConfig>", tags, project_ids, timeout_secs,
+                  price_per_message, enabled, created_at, updated_at
+           FROM a2a_agents ORDER BY name"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<A2aAgentRow>> {
+    sqlx::query_as!(
+        A2aAgentRow,
+        r#"SELECT id, name, description, card_url, auth, auth_header, secret, oauth AS "oauth: Json<OAuthConfig>", tags, project_ids, timeout_secs,
+                  price_per_message, enabled, created_at, updated_at
+           FROM a2a_agents WHERE id = $1"#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn insert_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO a2a_agents (id, name, description, card_url, auth, auth_header, secret, tags, project_ids, timeout_secs, price_per_message,
+             enabled, oauth, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())",
+        a.id,
+        a.name,
+        a.description,
+        a.card_url,
+        a.auth,
+        a.auth_header,
+        a.secret,
+        &a.tags,
+        &a.project_ids,
+        a.timeout_secs,
+        a.price_per_message,
+        a.enabled,
+        &a.oauth as &Option<Json<OAuthConfig>>,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_a2a_agent(db: impl PgExecutor<'_>, a: &A2aAgentRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE a2a_agents SET name = $2, description = $3, card_url = $4, auth = $5, auth_header = $6, secret = $7, tags = $8,
+             project_ids = $9, timeout_secs = $10, price_per_message = $11, enabled = $12, oauth = $13, updated_at = now()
+         WHERE id = $1",
+        a.id,
+        a.name,
+        a.description,
+        a.card_url,
+        a.auth,
+        a.auth_header,
+        a.secret,
+        &a.tags,
+        &a.project_ids,
+        a.timeout_secs,
+        a.price_per_message,
+        a.enabled,
+        &a.oauth as &Option<Json<OAuthConfig>>,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Also deletes the keys' tokens for it.
+pub async fn delete_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
+    let mut tx = pool.begin().await?;
+    sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = 'a2a' AND upstream_id = $1", id).execute(&mut *tx).await?;
+    let r = sqlx::query!("DELETE FROM a2a_agents WHERE id = $1", id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(r.rows_affected() > 0)
+}
+
+// ---------------------------------------------------------------- MCP clients' grants
+
+pub async fn insert_client_grant(pool: &PgPool, g: &ClientGrant, access_hash: &[u8], refresh_hash: &[u8]) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO client_grants (id, key_id, client_id, client_name, redirect_uri, resource, scope, access_token_hash, access_expires_at,
+             refresh_token_hash, refresh_expires_at, created_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())",
+        g.id,
+        g.key_id,
+        g.client_id,
+        g.client_name,
+        g.redirect_uri,
+        g.resource,
+        g.scope,
+        access_hash,
+        g.access_expires_at,
+        refresh_hash,
+        g.refresh_expires_at,
+        g.created_by,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The grant an access token belongs to, while the token is valid.
+pub async fn client_grant_by_access(pool: &PgPool, access_hash: &[u8]) -> sqlx::Result<Option<ClientGrant>> {
+    sqlx::query_as!(
+        ClientGrant,
+        "SELECT id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by, created_at,
+                last_used_at
+         FROM client_grants WHERE access_token_hash = $1 AND access_expires_at > now()",
+        access_hash
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Rotates a grant's tokens in exchange for its valid refresh token, presented by its own client,
+/// in one statement: a refresh token works once.
+pub async fn rotate_client_grant(
+    pool: &PgPool,
+    client_id: &str,
+    refresh_hash: &[u8],
+    access_hash: &[u8],
+    access_expires_at: DateTime<Utc>,
+    new_refresh_hash: &[u8],
+    refresh_expires_at: DateTime<Utc>,
+) -> sqlx::Result<Option<ClientGrant>> {
+    sqlx::query_as!(
+        ClientGrant,
+        "UPDATE client_grants SET access_token_hash = $2, access_expires_at = $3, refresh_token_hash = $4, refresh_expires_at = $5
+         WHERE refresh_token_hash = $1 AND refresh_expires_at > now() AND client_id = $6
+         RETURNING id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by,
+                   created_at, last_used_at",
+        refresh_hash,
+        access_hash,
+        access_expires_at,
+        new_refresh_hash,
+        refresh_expires_at,
+        client_id,
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn touch_client_grant(pool: &PgPool, id: Uuid) -> sqlx::Result<()> {
+    sqlx::query!("UPDATE client_grants SET last_used_at = now() WHERE id = $1", id).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn list_client_grants(pool: &PgPool, key_id: Uuid) -> sqlx::Result<Vec<ClientGrant>> {
+    sqlx::query_as!(
+        ClientGrant,
+        "SELECT id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by, created_at,
+                last_used_at
+         FROM client_grants WHERE key_id = $1 ORDER BY created_at DESC",
+        key_id
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn delete_client_grant(pool: &PgPool, key_id: Uuid, id: Uuid) -> sqlx::Result<Option<ClientGrant>> {
+    sqlx::query_as!(
+        ClientGrant,
+        "DELETE FROM client_grants WHERE key_id = $1 AND id = $2
+         RETURNING id, key_id, client_id, client_name, redirect_uri, resource, scope, access_expires_at, refresh_expires_at, created_by,
+                   created_at, last_used_at",
+        key_id,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// Revokes the grant of an access or refresh token (RFC 7009); the client's `client_id` must be its own.
+pub async fn revoke_client_grant(pool: &PgPool, token_hash: &[u8], client_id: &str) -> sqlx::Result<Option<Uuid>> {
+    let r = sqlx::query!(
+        "DELETE FROM client_grants WHERE (access_token_hash = $1 OR refresh_token_hash = $1) AND client_id = $2 RETURNING id",
+        token_hash,
+        client_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(r.map(|r| r.id))
+}
+
+// ---------------------------------------------------------------- tool routers
+
+pub async fn list_tool_routers(pool: &PgPool) -> sqlx::Result<Vec<ToolRouterRow>> {
+    sqlx::query_as!(
+        ToolRouterRow,
+        r#"SELECT id, name, description, decision_model, instructions, routes AS "routes: Json<Vec<ToolRoute>>", threshold, max_routes, enabled,
+                  created_at, updated_at
+           FROM tool_routers ORDER BY name"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_tool_router(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<ToolRouterRow>> {
+    sqlx::query_as!(
+        ToolRouterRow,
+        r#"SELECT id, name, description, decision_model, instructions, routes AS "routes: Json<Vec<ToolRoute>>", threshold, max_routes, enabled,
+                  created_at, updated_at
+           FROM tool_routers WHERE id = $1"#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn insert_tool_router(db: impl PgExecutor<'_>, r: &ToolRouterRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO tool_routers (id, name, description, decision_model, instructions, routes, threshold, max_routes, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())",
+        r.id,
+        r.name,
+        r.description,
+        r.decision_model,
+        r.instructions,
+        &r.routes as &Json<Vec<ToolRoute>>,
+        r.threshold,
+        r.max_routes,
+        r.enabled,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_tool_router(db: impl PgExecutor<'_>, r: &ToolRouterRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE tool_routers SET name = $2, description = $3, decision_model = $4, instructions = $5, routes = $6, threshold = $7,
+             max_routes = $8, enabled = $9, updated_at = now()
+         WHERE id = $1",
+        r.id,
+        r.name,
+        r.description,
+        r.decision_model,
+        r.instructions,
+        &r.routes as &Json<Vec<ToolRoute>>,
+        r.threshold,
+        r.max_routes,
+        r.enabled,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_tool_router(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
+    Ok(sqlx::query!("DELETE FROM tool_routers WHERE id = $1", id).execute(pool).await?.rows_affected() > 0)
+}
+
+// ---------------------------------------------------------------- upstream OAuth tokens
+
+/// A key's tokens for an `oauth_user` upstream, sealed.
+pub struct OAuthTokenRow {
+    pub access_token: Vec<u8>,
+    pub refresh_token: Option<Vec<u8>>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+pub async fn get_oauth_token(pool: &PgPool, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<Option<OAuthTokenRow>> {
+    sqlx::query_as!(
+        OAuthTokenRow,
+        "SELECT access_token, refresh_token, expires_at FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+        kind,
+        upstream,
+        key
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/// The row, locked until the transaction ends: for a refresh.
+pub async fn lock_oauth_token(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<Option<OAuthTokenRow>> {
+    sqlx::query_as!(
+        OAuthTokenRow,
+        "SELECT access_token, refresh_token, expires_at FROM oauth_tokens
+         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 FOR UPDATE",
+        kind,
+        upstream,
+        key
+    )
+    .fetch_optional(db)
+    .await
+}
+
+pub async fn update_oauth_token(
+    db: impl PgExecutor<'_>,
+    kind: &str,
+    upstream: Uuid,
+    key: Uuid,
+    access: &[u8],
+    refresh: Option<&[u8]>,
+    expires_at: Option<DateTime<Utc>>,
+) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET access_token = $4, refresh_token = $5, expires_at = $6, updated_at = now()
+         WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+        kind,
+        upstream,
+        key,
+        access,
+        refresh,
+        expires_at
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// A new sign-in: replaces what the key had for the upstream.
+#[allow(clippy::too_many_arguments)]
+pub async fn save_oauth_token(
+    pool: &PgPool,
+    kind: &str,
+    upstream: Uuid,
+    key: Uuid,
+    access: &[u8],
+    refresh: Option<&[u8]>,
+    expires_at: Option<DateTime<Utc>>,
+    scope: Option<&str>,
+    by: &str,
+) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO oauth_tokens (upstream_kind, upstream_id, key_id, access_token, refresh_token, expires_at, scope, connected_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (upstream_kind, upstream_id, key_id) DO UPDATE SET access_token = EXCLUDED.access_token,
+             refresh_token = EXCLUDED.refresh_token, expires_at = EXCLUDED.expires_at, scope = EXCLUDED.scope,
+             connected_by = EXCLUDED.connected_by, created_at = now(), updated_at = now()",
+        kind,
+        upstream,
+        key,
+        access,
+        refresh,
+        expires_at,
+        scope,
+        by
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The upstream refused the token: the next call refreshes it.
+pub async fn expire_oauth_token(pool: &PgPool, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET expires_at = now() WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+        kind,
+        upstream,
+        key
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_oauth_token(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid) -> sqlx::Result<bool> {
+    let r = sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3", kind, upstream, key)
+        .execute(db)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// A key's sign-ins: (kind, upstream, signed in at, expires at, scope, by whom).
+pub async fn key_connections(
+    pool: &PgPool,
+    key: Uuid,
+) -> sqlx::Result<Vec<(String, Uuid, DateTime<Utc>, Option<DateTime<Utc>>, bool, Option<String>, Option<String>)>> {
+    let rows = sqlx::query!(
+        r#"SELECT upstream_kind, upstream_id, created_at, expires_at, refresh_token IS NOT NULL AS "refreshable!", scope, connected_by
+           FROM oauth_tokens WHERE key_id = $1"#,
+        key
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.created_at, r.expires_at, r.refreshable, r.scope, r.connected_by)).collect())
+}
+
+/// Every sealed token, for `rotate-key`: (kind, upstream, key, access, refresh).
+#[allow(clippy::type_complexity)]
+pub async fn sealed_oauth_tokens(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(String, Uuid, Uuid, Vec<u8>, Option<Vec<u8>>)>> {
+    let rows = sqlx::query!("SELECT upstream_kind, upstream_id, key_id, access_token, refresh_token FROM oauth_tokens FOR UPDATE").fetch_all(db).await?;
+    Ok(rows.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.key_id, r.access_token, r.refresh_token)).collect())
+}
+
+pub async fn set_oauth_token_secrets(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid, key: Uuid, access: &[u8], refresh: Option<&[u8]>) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE oauth_tokens SET access_token = $4, refresh_token = $5 WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3",
+        kind,
+        upstream,
+        key,
+        access,
+        refresh
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn sealed_a2a_secrets(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(Uuid, String, Vec<u8>)>> {
+    let rows = sqlx::query!(r#"SELECT id, name, secret AS "secret!" FROM a2a_agents WHERE secret IS NOT NULL FOR UPDATE"#)
+        .fetch_all(db)
+        .await?;
+    Ok(rows.into_iter().map(|r| (r.id, r.name, r.secret)).collect())
+}
+
+pub async fn set_a2a_secret(db: impl PgExecutor<'_>, id: Uuid, secret: &[u8]) -> sqlx::Result<()> {
+    sqlx::query!("UPDATE a2a_agents SET secret = $1 WHERE id = $2", secret, id).execute(db).await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------- model metadata
 
 /// Every model's metadata, by public model name.
@@ -871,7 +1397,7 @@ pub async fn get_project(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Project
 
 /// Creates the project or updates its name, description, state and budget. Spend resets go
 /// through `reset_project_spend`.
-pub async fn upsert_project(pool: &PgPool, p: &ProjectRow) -> sqlx::Result<()> {
+pub async fn upsert_project(db: impl PgExecutor<'_>, p: &ProjectRow) -> sqlx::Result<()> {
     sqlx::query!(
         "INSERT INTO projects (id, name, description, enabled, max_budget_usd, budget_period, guardrail_ids, web_search, prompt_logging,
              created_at, updated_at)
@@ -890,7 +1416,7 @@ pub async fn upsert_project(pool: &PgPool, p: &ProjectRow) -> sqlx::Result<()> {
         p.prompt_logging.as_str(),
         p.created_at,
     )
-    .execute(pool)
+    .execute(db)
     .await?;
     Ok(())
 }
@@ -1043,7 +1569,7 @@ pub async fn get_key(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<VirtualKey>
     .await
 }
 
-pub async fn insert_key(pool: &PgPool, k: &VirtualKey) -> sqlx::Result<()> {
+pub async fn insert_key(db: impl PgExecutor<'_>, k: &VirtualKey) -> sqlx::Result<()> {
     sqlx::query!(
         "INSERT INTO virtual_keys (id, name, key_hash, key_prefix, allowed_models, allowed_tags, rpm_limit, tpm_limit,
              max_budget_usd, budget_period, spend_usd, enabled, expires_at, metadata, scope, project_id, guardrail_ids, web_search,
@@ -1068,7 +1594,7 @@ pub async fn insert_key(pool: &PgPool, k: &VirtualKey) -> sqlx::Result<()> {
         k.web_search,
         k.prompt_logging,
     )
-    .execute(pool)
+    .execute(db)
     .await?;
     Ok(())
 }
@@ -1157,6 +1683,9 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
     let mut searches = Vec::with_capacity(batch.len());
     let mut search_costs = Vec::with_capacity(batch.len());
     let mut bodies = Vec::with_capacity(batch.len());
+    let mut mcp_tools = Vec::with_capacity(batch.len());
+    let mut task_states = Vec::with_capacity(batch.len());
+    let mut context_ids = Vec::with_capacity(batch.len());
     for r in batch {
         ids.push(r.id);
         ts.push(r.ts);
@@ -1184,6 +1713,9 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         searches.push(r.usage.search_units as i64);
         search_costs.push(r.search_cost_usd);
         bodies.push(r.bodies_status.map(str::to_string));
+        mcp_tools.push(r.tool.clone());
+        task_states.push(r.task_state.clone());
+        context_ids.push(r.context_id.clone());
     }
 
     let mut tx = pool.begin().await?;
@@ -1193,11 +1725,11 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         "INSERT INTO request_logs (id, ts, key_id, model_name, deployment_id, provider, api, stream,
              status_code, latency_ms, ttft_ms, input_tokens, output_tokens, cache_read_tokens,
              cache_write_tokens, cost_usd, attempts, error, parent_id, project_id, labels, guardrails, guardrail_cost_usd,
-             searches, search_cost_usd, bodies)
+             searches, search_cost_usd, bodies, tool, task_state, context_id)
          SELECT * FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::text[], $5::uuid[],
              $6::text[], $7::text[], $8::bool[], $9::int[], $10::int[], $11::int[], $12::bigint[],
              $13::bigint[], $14::bigint[], $15::bigint[], $16::float8[], $17::int[], $18::text[], $19::uuid[],
-             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[], $26::text[])",
+             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[], $26::text[], $27::text[], $28::text[], $29::text[])",
         &ids,
         &ts,
         &key_ids as _,
@@ -1224,6 +1756,9 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         &searches,
         &search_costs,
         &bodies as _,
+        &mcp_tools as _,
+        &task_states as _,
+        &context_ids as _,
     )
     .execute(&mut *tx)
     .await?;
@@ -1332,6 +1867,12 @@ pub struct LogRow {
     pub credential_name: Option<String>,
     /// The tools its response called, where its bodies are logged (see `capture`).
     pub tool_calls: Option<Vec<String>>,
+    /// The tool an MCP call (api `mcp`) called, on the server named by `model_name`.
+    pub tool: Option<String>,
+    /// A message to an A2A agent (api `a2a`): the state its task was left in, such as `completed`.
+    pub task_state: Option<String>,
+    /// A message to an A2A agent: its context, shared by a conversation's messages.
+    pub context_id: Option<String>,
     pub api: String,
     pub stream: bool,
     pub status_code: i32,
@@ -1382,7 +1923,7 @@ pub struct LogFilter<'a> {
     pub bodies: bool,
     /// Full-text search of the stored bodies (`websearch_to_tsquery` syntax).
     pub text: Option<&'a str>,
-    /// Entries whose response called this tool.
+    /// Entries whose response called this tool, and MCP calls of it.
     pub tool: Option<&'a str>,
     /// Entries the guardrails did any of these to (`passed`, `flagged`, `masked`, `blocked`).
     pub guardrail: Option<&'a [String]>,
@@ -1405,7 +1946,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)
@@ -1422,7 +1963,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
              AND (NOT $9 OR (l.key_id IS NOT NULL AND k.id IS NULL))
              AND (NOT $10 OR b.id IS NOT NULL)
              AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))
-             AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text])
+             AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text] OR l.tool = $12)
              AND ($14::text[] IS NULL OR l.guardrails->>'action' = ANY($14))
            ORDER BY l.ts DESC LIMIT $1"#,
         f.limit,
@@ -1455,7 +1996,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
@@ -1482,7 +2023,7 @@ async fn logs_by_id(pool: &PgPool, ids: &[Uuid], body_days: u32) -> sqlx::Result
         r#"SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS "key_name?", l.model_name,
                   l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)

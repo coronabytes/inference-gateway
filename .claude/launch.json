@@ -4,14 +4,45 @@
     {
       "name": "gateway",
       "runtimeExecutable": "cargo",
-      "runtimeArgs": ["run"],
+      "runtimeArgs": [
+        "run"
+      ],
       "port": 8080
     },
     {
       "name": "ui",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "ui"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "ui"
+      ],
       "port": 5173
+    },
+    {
+      "name": "mock-mcp",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "dev/mock-mcp.mjs"
+      ],
+      "port": 9998
+    },
+    {
+      "name": "mock-a2a",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "dev/mock-a2a.mjs"
+      ],
+      "port": 9997
+    },
+    {
+      "name": "mock-mcp-client",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "dev/mock-mcp-client.mjs"
+      ],
+      "port": 9996
     }
   ]
 }

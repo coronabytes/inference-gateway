@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oauth_tokens WHERE upstream_kind = 'a2a' AND upstream_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "25d8fd3d2486547ac11b67afa01e8483078059a8df380e31c9f1f16ae84c1964"
+}

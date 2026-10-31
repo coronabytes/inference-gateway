@@ -345,6 +345,14 @@ const USER_ROUTES: &[(Method, &str)] = &[
     (Method::DELETE, "/keys/{id}"),
     (Method::POST, "/keys/{id}/reset-spend"),
     (Method::POST, "/keys/{id}/regenerate"),
+    (Method::GET, "/keys/{id}/connections"),
+    (Method::POST, "/keys/{id}/connections/{kind}/{upstream}"),
+    (Method::DELETE, "/keys/{id}/connections/{kind}/{upstream}"),
+    (Method::GET, "/keys/{id}/apps"),
+    (Method::DELETE, "/keys/{id}/apps/{grant}"),
+    (Method::GET, "/connect/{id}"),
+    (Method::POST, "/connect/{id}"),
+    (Method::POST, "/connect/{id}/deny"),
     (Method::GET, "/projects"),
     (Method::GET, "/projects/options"),
     (Method::GET, "/tags"),
@@ -358,6 +366,8 @@ const USER_ROUTES: &[(Method, &str)] = &[
     (Method::GET, "/usage/keys"),
     (Method::GET, "/playground/options"),
     (Method::POST, "/playground/{api}"),
+    (Method::POST, "/playground/a2a/{agent}"),
+    (Method::GET, "/playground/a2a/{agent}/card"),
     (Method::GET, "/hub"),
     (Method::GET, "/efforts"),
 ];
@@ -506,7 +516,10 @@ pub fn protected_api_routes() -> Router<AppState> {
 
 /// Browser redirects for the sign-in flow (`/admin/auth/...`).
 pub fn browser_routes() -> Router<AppState> {
-    Router::new().route("/oidc/login", get(start_login)).route("/oidc/callback", get(callback))
+    Router::new()
+        .route("/oidc/login", get(start_login))
+        .route("/oidc/callback", get(callback))
+        .route("/oauth/callback", get(crate::admin::oauth::callback))
 }
 
 /// Who is signed in, what they may do, and how the sign-in screen should look. Works signed out.

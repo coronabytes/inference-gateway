@@ -19,6 +19,14 @@ pub struct Inner {
     pub entra: crate::entra::Entra,
     pub http: reqwest::Client,
     pub records: mpsc::Sender<RequestRecord>,
+    /// The gateway's sessions with MCP servers, and their tool lists, for `/mcp`.
+    pub mcp: crate::mcp::Upstreams,
+    /// A2A agents' cards, for `/a2a`.
+    pub a2a: crate::a2a::Cards,
+    /// Upstream OAuth tokens in memory.
+    pub oauth: crate::oauth::Tokens,
+    /// What MCP clients signed in to the gateway with OAuth: their documents and tokens.
+    pub mcp_auth: crate::mcp_auth::Store,
     /// Memory for logged prompts and responses until they are written.
     pub bodies: crate::capture::Budget,
     pub started: Instant,
@@ -42,6 +50,19 @@ impl std::ops::Deref for AppState {
 /// and point at closed ports, so anything that does reach them fails (and Valkey fails open).
 #[cfg(test)]
 pub fn test_state() -> AppState {
+    // The receiver is dropped: records from tests go nowhere.
+    test_state_with(crate::netguard::Policy::default(), mpsc::channel(16).0)
+}
+
+/// A test state whose upstreams may be on loopback, with the channel its request records arrive on.
+#[cfg(test)]
+pub fn test_state_local() -> (AppState, mpsc::Receiver<RequestRecord>) {
+    let (records, rx) = mpsc::channel(64);
+    (test_state_with(crate::netguard::Policy::from_list("127.0.0.0/8").unwrap(), records), rx)
+}
+
+#[cfg(test)]
+fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Sender<RequestRecord>) -> AppState {
     use std::time::Duration;
 
     use base64::Engine;
@@ -61,7 +82,7 @@ pub fn test_state() -> AppState {
         instance_id: "test".into(),
         dev_login: false,
         cookie_secure: true,
-        upstream_policy: crate::netguard::Policy::default(),
+        upstream_policy,
         prompt_log_buffer_bytes: 1 << 20,
     };
     let settings = Live::default();
@@ -71,8 +92,6 @@ pub fn test_state() -> AppState {
         .connect_lazy(&cfg.database_url)
         .unwrap();
     let cache = Cache::new(&cfg.valkey_url, cfg.valkey_cluster).unwrap();
-    // The receiver is dropped: records from tests go nowhere.
-    let (records, _) = mpsc::channel(16);
     AppState::new(Inner {
         cfg,
         settings,
@@ -84,6 +103,10 @@ pub fn test_state() -> AppState {
         entra: crate::entra::Entra::default(),
         http: reqwest::Client::new(),
         records,
+        mcp: crate::mcp::Upstreams::default(),
+        a2a: crate::a2a::Cards::default(),
+        oauth: crate::oauth::Tokens::default(),
+        mcp_auth: crate::mcp_auth::Store::default(),
         bodies: crate::capture::Budget::new(1 << 20),
         started: Instant::now(),
         started_at: chrono::Utc::now(),

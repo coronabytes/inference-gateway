@@ -386,6 +386,212 @@ export interface GuardrailTestResult {
   error?: string;
 }
 
+export type McpAuth = "none" | "bearer" | "header" | "oauth" | "oauth_user";
+
+/** An upstream's OAuth client, for `oauth` (client credentials) and `oauth_user` (each key signs in). */
+export interface OAuthConfig {
+  token_url: string;
+  authorization_url?: string;
+  client_id: string;
+  scopes: string[];
+  /** The RFC 8707 resource the tokens are for. */
+  resource?: string;
+  /** The redirect URI the client was registered with. */
+  redirect_uri?: string;
+  token_auth?: "client_secret_basic" | "client_secret_post" | "none";
+}
+
+/** What `POST /oauth/discover` found. */
+export interface OAuthDiscovered {
+  token_url?: string;
+  authorization_url?: string;
+  registration_url?: string;
+  scopes: string[];
+  resource?: string;
+  token_auth_methods: string[];
+  client_id?: string;
+  client_secret?: string;
+  redirect_uri?: string;
+}
+
+/** An upstream a key signs in to on its own (`GET /keys/{id}/connections`). */
+/** An MCP client signed in to the gateway with OAuth as a key (`GET /keys/{id}/apps`). */
+export interface ClientGrant {
+  id: string;
+  key_id: string;
+  /** The client's metadata document URL. */
+  client_id: string;
+  client_name?: string;
+  redirect_uri: string;
+  /** `/mcp`, `/mcp/{server}`, or `/` for every MCP endpoint. */
+  resource: string;
+  created_by?: string;
+  created_at: string;
+  last_used_at?: string;
+}
+
+/** An MCP client's sign-in waiting for approval (`GET /connect/{id}`). */
+export interface ConnectRequest {
+  client_id: string;
+  client_host: string;
+  client_name?: string;
+  client_uri?: string;
+  redirect_uri: string;
+  redirect_host: string;
+  /** It returns to a program on this computer. */
+  redirect_local: boolean;
+  /** It returns to another host than the client's own. */
+  redirect_elsewhere: boolean;
+  resource: string;
+}
+
+export interface KeyConnection {
+  kind: "mcp" | "a2a";
+  upstream_id: string;
+  name: string;
+  connected: boolean;
+  signed_in_at?: string;
+  expires_at?: string;
+  refreshable: boolean;
+  scope?: string;
+  connected_by?: string;
+}
+
+/** An MCP server the gateway proxies at `/mcp/{name}` (`GET /mcp-servers`). */
+export interface McpServer {
+  id: string;
+  name: string;
+  description?: string;
+  url: string;
+  auth: McpAuth;
+  /** The header that carries the secret, for `header` auth. */
+  auth_header?: string;
+  /** Whether a secret is stored; the secret itself is never returned. */
+  has_secret: boolean;
+  oauth?: OAuthConfig;
+  tags: string[];
+  project_ids: string[];
+  timeout_secs: number;
+  enabled: boolean;
+  /** The tools keys may call; empty for every tool the server offers. */
+  allowed_tools: string[];
+  /** Tools keys may not call, whatever `allowed_tools` says. */
+  denied_tools: string[];
+  /** USD per tool call, unless `tool_prices` names the tool. */
+  price_per_call: number;
+  tool_prices: Record<string, number>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface McpServerInput {
+  name: string;
+  description?: string;
+  url: string;
+  auth: McpAuth;
+  auth_header?: string;
+  /** Omitted on update: the stored secret stays. */
+  secret?: string;
+  oauth?: OAuthConfig;
+  tags: string[];
+  project_ids: string[];
+  timeout_secs: number;
+  enabled: boolean;
+  allowed_tools: string[];
+  denied_tools: string[];
+  price_per_call: number;
+  tool_prices: Record<string, number>;
+}
+
+/** What `POST /mcp-servers/{id}/test` answers. */
+/** A tool router route: one MCP server's tools, offered when the decision model finds them needed. */
+export interface ToolRoute {
+  name: string;
+  description: string;
+  server_id: string;
+  /** Empty for all of the server's tools. */
+  tools: string[];
+}
+
+/** A tool router (`GET /tool-routers`): requests name it like an MCP server. */
+export interface ToolRouter {
+  id: string;
+  name: string;
+  description?: string;
+  decision_model: string;
+  instructions?: string;
+  routes: ToolRoute[];
+  threshold: number;
+  max_routes?: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ToolRouterInput = Omit<ToolRouter, "id" | "created_at" | "updated_at" | "description" | "instructions" | "max_routes"> & {
+  description: string | null;
+  instructions: string | null;
+  max_routes: number | null;
+};
+
+export interface McpServerTestResult {
+  ok: boolean;
+  latency_ms: number;
+  protocol_version?: string;
+  server_info?: { name?: string; version?: string };
+  tools: { name: string; description?: string }[];
+  error?: string;
+}
+
+/** An A2A agent the gateway proxies at `/a2a/{name}` (`GET /a2a-agents`). */
+export interface A2aAgent {
+  id: string;
+  name: string;
+  description?: string;
+  card_url: string;
+  auth: McpAuth;
+  auth_header?: string;
+  /** Whether a secret is stored; the secret itself is never returned. */
+  has_secret: boolean;
+  oauth?: OAuthConfig;
+  tags: string[];
+  project_ids: string[];
+  timeout_secs: number;
+  /** USD per message sent to the agent. */
+  price_per_message: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface A2aAgentInput {
+  name: string;
+  description?: string;
+  card_url: string;
+  auth: McpAuth;
+  auth_header?: string;
+  /** Omitted on update: the stored secret stays. */
+  secret?: string;
+  oauth?: OAuthConfig;
+  tags: string[];
+  project_ids: string[];
+  timeout_secs: number;
+  price_per_message: number;
+  enabled: boolean;
+}
+
+/** What `POST /a2a-agents/{id}/test` answers: the agent's card, as far as the gateway proxies it. */
+export interface A2aAgentTestResult {
+  ok: boolean;
+  latency_ms: number;
+  name?: string;
+  description?: string;
+  version?: string;
+  interfaces?: { binding: "JSONRPC" | "HTTP+JSON"; version: string; url: string }[];
+  skills?: { name: string; description?: string }[];
+  error?: string;
+}
+
 export interface CredentialInput {
   name: string;
   provider?: Provider;
@@ -394,11 +600,12 @@ export interface CredentialInput {
   secrets: Secrets;
 }
 
-/** A tag and how many deployments, routers and keys carry it (`GET /tags`). */
+/** A tag and how many deployments, routers, MCP servers and keys carry it (`GET /tags`). */
 export interface TagInfo {
   tag: string;
   deployments: number;
   routers: number;
+  mcp_servers: number;
   keys: number;
 }
 
@@ -416,6 +623,16 @@ export interface PlaygroundOptions {
   models: { name: string; mode: Mode; router: boolean; web_search: boolean }[];
   /** Those enforced on the key or its project always apply. */
   guardrails: { name: string; enforced: boolean }[];
+  /** The MCP servers and A2A agents the key may use; `needs_sign_in`: the key signs in itself, and has not yet. */
+  mcp_servers: PlaygroundUpstream[];
+  a2a_agents: PlaygroundUpstream[];
+}
+
+export interface PlaygroundUpstream {
+  name: string;
+  needs_sign_in: boolean;
+  /** A tool router, listed with the MCP servers. */
+  router?: boolean;
 }
 
 /** Puts a list filter in a query as `a,b`, with `none` (a value that cannot be an id or a tag) sent as `-`. */
@@ -678,6 +895,12 @@ export interface LogRow {
   credential_name: string | null;
   /** The tools its response called, where its prompt and response are logged. */
   tool_calls: string[] | null;
+  /** The tool an MCP call (api `mcp`) called, on the server named by `model_name`. */
+  tool: string | null;
+  /** A message to an A2A agent (api `a2a`): the state its task was left in, such as `completed`. */
+  task_state: string | null;
+  /** A message to an A2A agent: its context, shared by a conversation's messages. */
+  context_id: string | null;
   api: string;
   stream: boolean;
   status_code: number;

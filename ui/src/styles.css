@@ -640,6 +640,25 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .bubble-sources a { color: var(--link); }
 .bubble-meta { font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .typing { color: var(--text-muted); letter-spacing: 2px; }
+/* In a reply, before its text: the gateway's MCP tools and calls, each folded (Playground.tsx: McpItems). */
+.mcp-items { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; white-space: normal; }
+.mcp-item { border: 1px solid var(--border); border-radius: 8px; padding: 3px 8px; font-size: 12.5px; background: var(--surface); }
+.mcp-item.failed { border-color: var(--status-critical); }
+.mcp-item summary { cursor: pointer; color: var(--text-secondary); display: flex; align-items: center; gap: 5px; }
+.mcp-item summary svg { width: 13px; height: 13px; flex: none; }
+.mcp-item code { font-size: 12px; }
+.mcp-body { padding: 4px 0 2px; overflow-wrap: anywhere; }
+.mcp-body pre { margin: 2px 0 6px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; max-height: 240px; overflow: auto; }
+.mcp-label { font-size: 11px; color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase; }
+/* The A2A playground: a reply's task state, artifacts and status message (PlaygroundAgent.tsx). */
+.a2a-state { display: inline-block; font-size: 11px; line-height: 16px; padding: 0 7px; margin-right: 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
+.a2a-state.completed { color: var(--good-text); border-color: var(--status-good); }
+.a2a-state.failed, .a2a-state.rejected, .a2a-state.canceled { color: var(--critical-text); border-color: var(--status-critical); }
+.a2a-state.input-required, .a2a-state.auth-required { color: var(--warning-text); border-color: var(--status-warning); }
+.a2a-artifact { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.a2a-status { margin-top: 6px; color: var(--text-secondary); }
+.agent-card { margin: 6px 0 0; max-height: 220px; overflow: auto; font-family: var(--mono); font-size: 12px; }
+.agent-note { margin-top: 8px; font-size: 12.5px; }
 /* Above the composer while the chat is empty: the sample prompts. */
 .chat-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 10px 10px; }
 /* Request log: what the guardrails did, before the cost they add to. */
@@ -1002,6 +1021,21 @@ tr.clickable:hover td { background: var(--wash); }
 .transfer-summary { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .transfer-summary details ul { margin: 6px 0 4px; padding-left: 18px; }
 .transfer-summary summary { cursor: pointer; }
+/* An MCP client's sign-in (Connect.tsx): one card, in the middle. */
+.connect-card { max-width: 560px; margin: 24px auto; }
+.connect-card p { margin: 0; }
+.connect-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
+.connect-facts dt { color: var(--text-muted); font-size: 12.5px; padding-top: 1px; }
+.connect-facts dd { margin: 0; overflow-wrap: anywhere; }
+/* A second table in a dialog, such as a key's apps under its sign-ins. */
+.dialog-subhead { margin: 18px 0 4px; font-size: 13px; font-weight: 600; }
+/* Backup & Restore: a switch per section, then per section what an import does (ConfigTransfer.tsx). */
+.transfer-head { margin: 6px 0 0; font-size: 13px; font-weight: 600; }
+.transfer-sections { display: flex; flex-wrap: wrap; gap: 8px; }
+.transfer-table { max-width: 640px; }
+.transfer-unfold { background: none; border: 0; padding: 0; font: inherit; color: var(--link); cursor: pointer; }
+.transfer-names ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.transfer-secrets { margin: 0; padding-left: 18px; }
 
 /* Dropdown with search (SearchSelect): drawn by the app, so it matches when open */
 .select { position: relative; display: inline-block; }

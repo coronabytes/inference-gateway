@@ -1,12 +1,14 @@
-//! Exporting and importing the gateway's configuration: credentials, guardrails, deployments,
-//! auto routers, model aliases and the models' metadata (the model hub's display names and descriptions) as one
-//! JSON document, to back it up or move it to another gateway.
+//! Exporting and importing the gateway's configuration: credentials, guardrails, projects,
+//! deployments, auto routers, model aliases, the models' metadata (the model hub's display names
+//! and descriptions), MCP servers, A2A agents, tool routers and virtual keys as one JSON document,
+//! to back it up or move it to another gateway. An export can leave sections out (`sections`), and
+//! an import takes the sections the document has.
 //!
-//! Credentials are exported without their secrets: only the names of the secret fields that were
-//! set. Deployments and guardrails refer to their credential, and deployments to the projects they
-//! are limited to, by name, so a document works on any gateway. Projects and keys themselves are
-//! not exported: those named must exist where the document is imported, and the guardrails set on
-//! them stay as they are.
+//! Credentials, MCP servers and A2A agents are exported without their secrets: only which were
+//! set. Entries refer to each other by name (deployments and guardrails to their credential,
+//! deployments, servers, agents and keys to their projects, projects and keys to their guardrails,
+//! tool routers to their servers), so a document works on any gateway: what an entry names must
+//! be in the document or on the gateway it is imported into. See `access` for keys.
 //!
 //! Every entry carries its id (from version 2 on). Import merges: an entry updates what has its id,
 //! and otherwise what matches it as before ids were exported: credentials by name, deployments by
@@ -21,6 +23,9 @@
 //! `projects` keeps the projects it has. Everything is checked as it will be after the import,
 //! with the same rules as the admin API, before anything is written, and then written in one
 //! transaction. `dry_run` only reports what would change.
+
+mod access;
+mod upstreams;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -54,8 +59,24 @@ use crate::{
 
 const FORMAT: &str = "inference-gateway-config";
 /// 2 added the ids of credentials, deployments and routers, 3 guardrails, 4 model metadata, 5
-/// model aliases. Older documents still import.
-const VERSION: u32 = 5;
+/// model aliases, 6 projects, keys, MCP servers, A2A agents and tool routers. Older documents
+/// still import.
+const VERSION: u32 = 6;
+
+/// The sections of a document, in the order they are imported.
+const SECTIONS: [&str; 11] = [
+    "credentials",
+    "guardrails",
+    "projects",
+    "deployments",
+    "routers",
+    "aliases",
+    "model_metadata",
+    "mcp_servers",
+    "a2a_agents",
+    "tool_routers",
+    "keys",
+];
 
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -64,25 +85,40 @@ pub(crate) struct Document {
     version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     exported_at: Option<DateTime<Utc>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     credentials: Vec<CredentialDoc>,
     /// From version 3.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     guardrails: Vec<GuardrailDoc>,
+    /// From version 6.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    projects: Vec<access::ProjectDoc>,
     /// Deployments as the admin API takes them, with their `id`, the credential's name in
     /// `credential` and the names of the projects they are limited to in `projects`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     deployments: Vec<Map<String, Value>>,
     /// Auto routers as the admin API takes them, with their `id`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     routers: Vec<Map<String, Value>>,
     /// From version 5: model aliases as the admin API takes them, with their `id`, and their
     /// target's model name in `target`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     aliases: Vec<Map<String, Value>>,
     /// From version 4: what the model hub shows of each model besides its deployments.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     model_metadata: Vec<ModelMetadataDoc>,
+    /// From version 6.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    mcp_servers: Vec<upstreams::McpServerDoc>,
+    /// From version 6.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    a2a_agents: Vec<upstreams::A2aAgentDoc>,
+    /// From version 6.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tool_routers: Vec<upstreams::ToolRouterDoc>,
+    /// From version 6.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    keys: Vec<access::KeyDoc>,
 }
 
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
@@ -194,8 +230,28 @@ fn alias_doc(a: &AliasRow, deployments: &[DeploymentRow], routers: &[RouterRow])
     }
 }
 
-/// `GET /admin/api/config/export`: the configuration as a JSON download.
-pub(super) async fn export(State(state): State<AppState>) -> R<impl IntoResponse> {
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ExportQuery {
+    /// The sections to export, comma-separated: `credentials`, `guardrails`, `projects`,
+    /// `deployments`, `routers`, `aliases`, `model_metadata`, `mcp_servers`, `a2a_agents`,
+    /// `tool_routers` and `keys`. Default: all of them.
+    sections: Option<String>,
+}
+
+/// `GET /admin/api/config/export[?sections=…]`: the configuration as a JSON download.
+pub(super) async fn export(State(state): State<AppState>, Query(q): Query<ExportQuery>) -> R<impl IntoResponse> {
+    let wanted: HashSet<&str> = match q.sections.as_deref() {
+        None => SECTIONS.into_iter().collect(),
+        Some(list) => {
+            let wanted: HashSet<&str> = list.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+            if let Some(s) = wanted.iter().find(|s| !SECTIONS.contains(s)) {
+                return Err(bad(format!("unknown section '{s}'; the sections are {}", SECTIONS.join(", "))));
+            }
+            wanted
+        }
+    };
+    let has = |s: &str| wanted.contains(s);
     let (creds, deployments, routers, aliases, projects, guardrails, metadata) = tokio::try_join!(
         db::list_credentials(&state.db),
         db::list_deployments(&state.db),
@@ -205,6 +261,13 @@ pub(super) async fn export(State(state): State<AppState>) -> R<impl IntoResponse
         db::list_guardrails(&state.db),
         db::list_model_metadata(&state.db)
     )?;
+    let (servers, agents, tool_routers, keys) = tokio::try_join!(
+        db::list_mcp_servers(&state.db),
+        db::list_a2a_agents(&state.db),
+        db::list_tool_routers(&state.db),
+        db::list_keys(&state.db)
+    )?;
+    let project_rows = projects;
     let mut model_metadata: Vec<ModelMetadataDoc> = metadata
         .into_iter()
         .filter_map(|(model, m)| match m {
@@ -214,7 +277,7 @@ pub(super) async fn export(State(state): State<AppState>) -> R<impl IntoResponse
         .collect();
     model_metadata.sort_by(|a, b| a.model.cmp(&b.model));
     let names: HashMap<Uuid, &str> = creds.iter().map(|c| (c.id, c.name.as_str())).collect();
-    let projects: HashMap<Uuid, String> = projects.into_iter().map(|p| (p.id, p.name)).collect();
+    let projects: HashMap<Uuid, String> = project_rows.iter().map(|p| (p.id, p.name.clone())).collect();
     let credentials = creds
         .iter()
         .map(|c| {
@@ -228,19 +291,33 @@ pub(super) async fn export(State(state): State<AppState>) -> R<impl IntoResponse
             }
         })
         .collect();
+    // By name, so that documents of the same keys compare equal.
+    let mut keys = keys;
+    keys.sort_by(|a, b| (&a.name, a.id).cmp(&(&b.name, b.id)));
+    let keys: Vec<access::KeyDoc> = keys.iter().map(|k| access::key_doc(k, &project_rows, &guardrails)).collect();
     let doc = Document {
         format: FORMAT.into(),
         version: VERSION,
         exported_at: Some(Utc::now()),
-        credentials,
-        guardrails: guardrails.iter().map(|g| guardrail_doc(g, names.get(&g.credential_id).copied().unwrap_or_default())).collect(),
+        credentials: if has("credentials") { credentials } else { Vec::new() },
+        guardrails: guardrails
+            .iter()
+            .filter(|_| has("guardrails"))
+            .map(|g| guardrail_doc(g, names.get(&g.credential_id).copied().unwrap_or_default()))
+            .collect(),
+        projects: project_rows.iter().filter(|_| has("projects")).map(|p| access::project_doc(p, &guardrails)).collect(),
         deployments: deployments
             .iter()
+            .filter(|_| has("deployments"))
             .map(|d| deployment_doc(d, names.get(&d.credential_id).copied().unwrap_or_default(), &projects))
             .collect(),
-        routers: routers.iter().map(router_doc).collect(),
-        aliases: aliases.iter().map(|a| alias_doc(a, &deployments, &routers)).collect(),
-        model_metadata,
+        routers: routers.iter().filter(|_| has("routers")).map(router_doc).collect(),
+        aliases: aliases.iter().filter(|_| has("aliases")).map(|a| alias_doc(a, &deployments, &routers)).collect(),
+        model_metadata: if has("model_metadata") { model_metadata } else { Vec::new() },
+        mcp_servers: servers.iter().filter(|_| has("mcp_servers")).map(|s| upstreams::mcp_server_doc(s, &project_rows)).collect(),
+        a2a_agents: agents.iter().filter(|_| has("a2a_agents")).map(|a| upstreams::a2a_agent_doc(a, &project_rows)).collect(),
+        tool_routers: tool_routers.iter().filter(|_| has("tool_routers")).map(|r| upstreams::tool_router_doc(r, &servers)).collect(),
+        keys: if has("keys") { keys } else { Vec::new() },
     };
     let disposition = format!("attachment; filename=\"inference-gateway-config-{}.json\"", Utc::now().format("%Y-%m-%d"));
     Ok(([(header::CONTENT_DISPOSITION, disposition)], Json(doc)))
@@ -253,10 +330,12 @@ pub(crate) struct ImportQuery {
     dry_run: bool,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug)]
 struct Changes {
     created: Vec<String>,
     updated: Vec<String>,
+    /// Entries of the file that match one here that is already the same.
+    unchanged: usize,
 }
 
 /// Providers whose credentials do not work without a secret. OpenAI-compatible servers may need
@@ -310,7 +389,7 @@ pub(super) async fn import(
     if !(1..=VERSION).contains(&doc.version) {
         return Err(bad(format!("configuration version {} is not supported; this gateway reads versions 1 to {VERSION}", doc.version)));
     }
-    let (mut creds, mut deployments, mut routers, mut aliases, mut keys, projects, mut guardrails, mut metadata) = tokio::try_join!(
+    let (mut creds, mut deployments, mut routers, mut aliases, mut keys, mut project_rows, mut guardrails, mut metadata) = tokio::try_join!(
         db::list_credentials(&state.db),
         db::list_deployments(&state.db),
         db::list_routers(&state.db),
@@ -320,7 +399,8 @@ pub(super) async fn import(
         db::list_guardrails(&state.db),
         db::list_model_metadata(&state.db)
     )?;
-    let projects: HashMap<Uuid, String> = projects.into_iter().map(|p| (p.id, p.name)).collect();
+    let (mut servers, mut agents, mut tool_routers) =
+        tokio::try_join!(db::list_mcp_servers(&state.db), db::list_a2a_agents(&state.db), db::list_tool_routers(&state.db))?;
     let now = Utc::now();
 
     // Credentials: by id, then by name. Existing ones keep their secrets; new ones get none.
@@ -357,6 +437,8 @@ pub(super) async fn import(
                     x.name = name;
                     updated_creds.insert(x.id);
                     cred_changes.updated.push(label);
+                } else {
+                    cred_changes.unchanged += 1;
                 }
             }
             None => {
@@ -421,6 +503,8 @@ pub(super) async fn import(
                 if guardrail_doc(x, &cred_name) != before {
                     changed_guards.insert(x.id);
                     guard_changes.updated.push(renamed.map_or(name.clone(), |old| format!("{name}, renamed from {old}")));
+                } else {
+                    guard_changes.unchanged += 1;
                 }
             }
             None => {
@@ -446,6 +530,11 @@ pub(super) async fn import(
     if let Some(g) = guardrails.iter().find(|g| !names.insert(g.name.as_str())) {
         return Err(bad(format!("guardrail '{}': another guardrail on this gateway has that name", g.name)));
     }
+
+    // Projects: by id, then by name, with their guardrails by name as they will be. Before the
+    // deployments, which name them.
+    let (project_changes, changed_projects) = access::import_projects(doc.projects, &mut project_rows, &guardrails, now)?;
+    let projects: HashMap<Uuid, String> = project_rows.iter().map(|p| (p.id, p.name.clone())).collect();
 
     // Deployments: by id, then by model name, credential and upstream model.
     let (mut dep_changes, mut changed_deps, mut claimed) = (Changes::default(), HashSet::new(), HashSet::new());
@@ -514,7 +603,9 @@ pub(super) async fn import(
         match existing {
             Some(ix) => {
                 let before = &deployments[ix];
-                if before.credential_id != row.credential_id || deployment_doc(before, "", &projects) != deployment_doc(&row, "", &projects) {
+                if before.credential_id == row.credential_id && deployment_doc(before, "", &projects) == deployment_doc(&row, "", &projects) {
+                    dep_changes.unchanged += 1;
+                } else {
                     if before.model_name != row.model_name {
                         left.push((id, before.model_name.clone()));
                         renames.push((before.model_name.clone(), row.model_name.clone()));
@@ -562,7 +653,9 @@ pub(super) async fn import(
         match existing {
             Some(ix) => {
                 let before = &routers[ix];
-                if router_doc(before) != router_doc(&row) {
+                if router_doc(before) == router_doc(&row) {
+                    router_changes.unchanged += 1;
+                } else {
                     if before.model_name != row.model_name {
                         router_renames.push((before.model_name.clone(), row.model_name.clone()));
                         router_changes.updated.push(format!("{}, renamed from {}", row.model_name, before.model_name));
@@ -634,7 +727,9 @@ pub(super) async fn import(
         match existing {
             Some(ix) => {
                 let before = &aliases[ix];
-                if alias_doc(before, &deployments, &routers) != alias_doc(&row, &deployments, &routers) {
+                if alias_doc(before, &deployments, &routers) == alias_doc(&row, &deployments, &routers) {
+                    alias_changes.unchanged += 1;
+                } else {
                     if before.model_name != row.model_name {
                         alias_renames.push((before.model_name.clone(), row.model_name.clone()));
                         alias_changes.updated.push(format!("{}, renamed from {}", row.model_name, before.model_name));
@@ -656,10 +751,21 @@ pub(super) async fn import(
         let (_, k) = rename_model(old, new, &deployments, &mut routers, &mut keys);
         changed_keys.extend(k);
     }
-    let key_changes = Changes {
-        created: vec![],
-        updated: keys.iter().filter(|k| changed_keys.contains(&k.id)).map(|k| format!("{} (follows a rename)", k.name)).collect(),
-    };
+    // MCP servers and A2A agents: by id, then by name, with their projects by name as they will be.
+    // Then tool routers, with their servers by name and their decision models as they will be.
+    let server_import = upstreams::import_mcp_servers(&state, doc.mcp_servers, &mut servers, &project_rows, now)?;
+    let agent_import = upstreams::import_a2a_agents(&state, doc.a2a_agents, &mut agents, &project_rows, now)?;
+    let router_import = upstreams::import_tool_routers(doc.tool_routers, &mut tool_routers, &servers, &deployments)?;
+    if let Some(s) = servers.iter().find(|s| tool_routers.iter().any(|r| r.name == s.name)) {
+        return Err(bad(format!("MCP server '{}': a tool router has that name", s.name)));
+    }
+
+    // Keys: by id, then by their secret's hash, with their project and guardrails by name.
+    let followed_keys = changed_keys.clone();
+    let (mut key_changes, new_keys, matched_keys) = access::import_keys(doc.keys, &mut keys, &project_rows, &guardrails, &mut changed_keys, now)?;
+    key_changes.updated.extend(
+        keys.iter().filter(|k| followed_keys.contains(&k.id) && !matched_keys.contains(&k.id)).map(|k| format!("{} (follows a rename)", k.name)),
+    );
 
     // Model metadata: renamed models take theirs along, as in the admin API, unless the new name
     // has its own; then the file's entries, by model name as the models will be.
@@ -690,8 +796,14 @@ pub(super) async fn import(
         let new = Value::Object(check_metadata(e.metadata).map_err(about(&what))?);
         let empty = new.as_object().is_some_and(Map::is_empty);
         match metadata.get(&model) {
-            Some(old) if *old == new => continue,
-            None if empty => continue,
+            Some(old) if *old == new => {
+                meta_changes.unchanged += 1;
+                continue;
+            }
+            None if empty => {
+                meta_changes.unchanged += 1;
+                continue;
+            }
             Some(_) => meta_changes.updated.push(if empty { format!("{model} (removed)") } else { model.clone() }),
             None => meta_changes.created.push(model.clone()),
         }
@@ -717,6 +829,9 @@ pub(super) async fn import(
         for g in guardrails.iter().filter(|g| changed_guards.contains(&g.id)) {
             db::update_guardrail(&mut *tx, g).await?;
         }
+        for p in project_rows.iter().filter(|p| changed_projects.contains(&p.id)) {
+            db::upsert_project(&mut *tx, p).await?;
+        }
         for d in deployments.iter().filter(|d| changed_deps.contains(&d.id)) {
             db::upsert_deployment(&mut *tx, d).await?;
         }
@@ -726,8 +841,29 @@ pub(super) async fn import(
         for a in aliases.iter().filter(|a| changed_aliases.contains(&a.id)) {
             db::upsert_alias(&mut *tx, a).await?;
         }
-        for k in keys.iter().filter(|k| changed_keys.contains(&k.id)) {
+        for k in keys.iter().filter(|k| changed_keys.contains(&k.id) && !new_keys.contains(&k.id)) {
             db::update_key(&mut *tx, k).await?;
+        }
+        for k in keys.iter().filter(|k| new_keys.contains(&k.id)) {
+            db::insert_key(&mut *tx, k).await?;
+        }
+        for s in servers.iter().filter(|s| server_import.created.contains(&s.id)) {
+            db::insert_mcp_server(&mut *tx, s).await?;
+        }
+        for s in servers.iter().filter(|s| server_import.updated.contains(&s.id)) {
+            db::update_mcp_server(&mut *tx, s).await?;
+        }
+        for a in agents.iter().filter(|a| agent_import.created.contains(&a.id)) {
+            db::insert_a2a_agent(&mut *tx, a).await?;
+        }
+        for a in agents.iter().filter(|a| agent_import.updated.contains(&a.id)) {
+            db::update_a2a_agent(&mut *tx, a).await?;
+        }
+        for r in tool_routers.iter().filter(|r| router_import.created.contains(&r.id)) {
+            db::insert_tool_router(&mut *tx, r).await?;
+        }
+        for r in tool_routers.iter().filter(|r| router_import.updated.contains(&r.id)) {
+            db::update_tool_router(&mut *tx, r).await?;
         }
         for model in &changed_meta {
             let m = metadata.get(model).cloned().unwrap_or_else(|| Value::Object(Map::new()));
@@ -743,11 +879,16 @@ pub(super) async fn import(
             aliases = changed_aliases.len(),
             keys = changed_keys.len(),
             model_metadata = changed_meta.len(),
+            projects = changed_projects.len(),
+            mcp_servers = server_import.created.len() + server_import.updated.len(),
+            a2a_agents = agent_import.created.len() + agent_import.updated.len(),
+            tool_routers = router_import.created.len() + router_import.updated.len(),
             "configuration imported"
         );
         let details = json!({
-            "credentials": cred_changes, "guardrails": guard_changes, "deployments": dep_changes, "routers": router_changes,
-            "aliases": alias_changes, "keys": key_changes, "model_metadata": meta_changes,
+            "credentials": cred_changes, "guardrails": guard_changes, "projects": project_changes, "deployments": dep_changes,
+            "routers": router_changes, "aliases": alias_changes, "keys": key_changes, "model_metadata": meta_changes,
+            "mcp_servers": server_import.changes, "a2a_agents": agent_import.changes, "tool_routers": router_import.changes,
         });
         audit::Event::new("configuration", "import").details(details).record(&state, &actor).await;
     }
@@ -755,13 +896,20 @@ pub(super) async fn import(
         "dry_run": q.dry_run,
         "credentials": cred_changes,
         "guardrails": guard_changes,
+        "projects": project_changes,
         "deployments": dep_changes,
         "routers": router_changes,
         "aliases": alias_changes,
-        // Keys whose allowed models follow a renamed model.
+        // The file's keys, and keys whose allowed models follow a renamed model.
         "keys": key_changes,
         "model_metadata": meta_changes,
+        "mcp_servers": server_import.changes,
+        "a2a_agents": agent_import.changes,
+        "tool_routers": router_import.changes,
         // New credentials that need their secrets entered before their deployments work.
         "needs_secrets": needs_secrets,
+        // New MCP servers and A2A agents that work once their secret is entered.
+        "mcp_servers_need_secrets": server_import.needs_secrets,
+        "a2a_agents_need_secrets": agent_import.needs_secrets,
     })))
 }

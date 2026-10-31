@@ -431,6 +431,39 @@ impl Cache {
         }
     }
 
+    /// The key that an A2A task or context belongs to (see `a2a`); reading it keeps it for another
+    /// `ttl`. `None` when unknown, or when Valkey cannot be reached.
+    pub async fn a2a_owner(&self, key: &str, ttl: Duration) -> Option<String> {
+        let r: RedisResult<Option<String>> =
+            redis::cmd("GETEX").arg(key).arg("EX").arg(ttl.as_secs().max(1)).query_async(&mut self.conn()).await;
+        r.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "failed to read an A2A task's owner");
+            None
+        })
+    }
+
+    /// A value kept for `ttl`, such as a sign-in in progress.
+    pub async fn put_for(&self, key: &str, value: &str, ttl: Duration) -> RedisResult<()> {
+        redis::cmd("SET").arg(key).arg(value).arg("EX").arg(ttl.as_secs().max(1)).query_async(&mut self.conn()).await
+    }
+
+    pub async fn peek(&self, key: &str) -> RedisResult<Option<String>> {
+        self.conn().get(key).await
+    }
+
+    /// The value, deleted as it is read: one-time codes are used once, whichever replica reads first.
+    pub async fn take(&self, key: &str) -> RedisResult<Option<String>> {
+        redis::cmd("GETDEL").arg(key).query_async(&mut self.conn()).await
+    }
+
+    /// Records the key an A2A task or context belongs to, unless another key holds it already.
+    pub async fn set_a2a_owner(&self, key: &str, owner: &str, ttl: Duration) {
+        let r: RedisResult<()> = redis::cmd("SET").arg(key).arg(owner).arg("NX").arg("EX").arg(ttl.as_secs().max(1)).query_async(&mut self.conn()).await;
+        if let Err(e) = r {
+            tracing::warn!(error = %e, "failed to save an A2A task's owner");
+        }
+    }
+
     /// Per-period spend counter of a key or a project. The hash tag keeps one spender's counters
     /// in one cluster slot.
     fn spend_key(who: Spender, window_id: &str) -> String {

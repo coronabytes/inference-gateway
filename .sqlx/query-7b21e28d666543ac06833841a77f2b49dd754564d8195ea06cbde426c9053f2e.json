@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT upstream_kind, upstream_id, key_id, access_token, refresh_token FROM oauth_tokens FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "upstream_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "upstream_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "upstream_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "upstream_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "key_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "key_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "access_token",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "access_token"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "refresh_token",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "oauth_tokens",
+            "name": "refresh_token"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "7b21e28d666543ac06833841a77f2b49dd754564d8195ea06cbde426c9053f2e"
+}
