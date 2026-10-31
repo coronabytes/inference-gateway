@@ -75,7 +75,7 @@ Apps signed in as a key are listed on the key's **Sign-ins** (the plug icon on t
 
 What clients need:
 
-- **A client ID metadata document.** The client identifies itself with the URL of a JSON document listing its name and redirect URIs (Client ID Metadata Documents, the identification MCP clients are moving to). There is no dynamic client registration: clients that only register themselves cannot sign in, and use a key as above. The gateway fetches the document from the address in `client_id`, without following redirects and at most 5 KB, and keeps it as its `Cache-Control` allows, for 1 minute to a day.
+- **A client ID metadata document.** The client identifies itself with the URL of a JSON document listing its name and redirect URIs (Client ID Metadata Documents, the identification MCP clients are moving to). There is no dynamic client registration: clients that only register themselves cannot sign in, and use a key as above. The gateway fetches the document from the address in `client_id`, without following redirects and at most 5 KB, and keeps it as its `Cache-Control` allows, for 1 minute to a day. Each replica keeps at most 256 documents and starts at most 60 sign-ins a minute; why a document could not be read is in the gateway log, not in the answer.
 - **Public clients with PKCE.** Documents must not hold a secret; `token_endpoint_auth_method` is `none`. `private_key_jwt` is not supported yet.
 - **Redirect URIs** on https, or on localhost for programs on the person's computer. The console warns about localhost (any program could claim to be the app) and about a redirect to another host than the document's.
 - **`resource`:** the MCP endpoint, as `https://gateway.example.com/mcp` or `.../mcp/{name}`. A token works only there. The gateway's own address stands for all its MCP endpoints.
@@ -101,6 +101,7 @@ What clients need:
   - A server that refuses the gateway's credentials (`401` or `403`) is reported as `502`. The client is not asked to sign in to the server.
   - The client's key is never forwarded, and neither are its other headers.
 - **Limits and budgets:** a tool call is refused when the key or its project is over a rate limit or budget. On `/mcp/{name}` the refusal is `429`, and on `/mcp` a JSON-RPC error with code `-32000`. Other messages are not limited.
+- **Every `tools/call` needs an id** that is a string or a number, as JSON-RPC requests do. One without is answered with `-32600` and logged as `400`, rather than passed to a server that might run it unanswered.
 - **Disabled servers** answer `404`, as unknown ones do, and their tools leave `/mcp`.
 
 ## MCP tools in model requests
@@ -179,7 +180,7 @@ Each tool call is an entry with api `mcp`. The server's name is its model, its t
 |---|---|
 | `200` | The tool answered. |
 | `422` | The tool ran and reported an error (`isError`). The entry's error is the tool's message. |
-| `400`, `404` | The server refused the call as JSON-RPC (invalid parameters, an unknown tool, an unknown method). |
+| `400`, `404` | The server refused the call as JSON-RPC (invalid parameters, an unknown tool, an unknown method), or the call had no id. |
 | `403` | The tool is hidden on the gateway. |
 | `429` | The key or its project was over a rate limit or budget. |
 | `502` | The server failed, refused the gateway's credentials, or ended its answer without a reply to the call. |

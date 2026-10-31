@@ -50,6 +50,7 @@ The playground (**Models → Playground**) lists the A2A agents the chosen key m
 ## What the gateway does
 
 - **Messages pass through.** Requests and answers are forwarded as they are, streams included, with the `A2A-Version` and `A2A-Extensions` headers.
+- **HTTP+JSON paths stay under the agent's interface.** What follows `/rest/` goes after the interface's URL; a path with `.` or `..` segments, `?` or `#` in it is refused with `400`, so a client cannot reach anything else on the agent's host with the gateway's credentials.
 - **Tasks belong to their key.** Every key reaches the agent as the gateway, so the gateway records which key's message created each task and context. It keeps that for 30 days after each use.
   - Getting, cancelling or following a task, its push notification settings, or a message that continues a task, only work for the key that owns it. Other keys get *task not found*.
   - A message in another key's context is refused the same way. A client may start a context of its own.
