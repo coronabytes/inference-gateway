@@ -2,10 +2,11 @@
 
 The gateway puts [Model Context Protocol](https://modelcontextprotocol.io) servers behind the same virtual keys as the models. It signs in to each server with its own credentials, and clients never see them. Each tool call is logged, counts against the key's limits and budgets, and can be priced.
 
-Clients reach MCP servers through the gateway in two ways:
+Clients reach MCP servers through the gateway in three ways:
 
 - **`/mcp`**: one MCP server with the tools of every server the key may use, named `{server}__{tool}`, such as `github__create_issue`. Use it to connect a client once and get every tool.
 - **`/mcp/{name}`**: one server, passed through as it is, with everything that server offers besides tools (resources, prompts, notifications).
+- **In a model request**: the gateway runs the tools itself while the model answers, with any model. See [MCP tools in model requests](#mcp-tools-in-model-requests).
 
 Servers are reached over **Streamable HTTP**. Servers that only run locally over stdio need an HTTP wrapper in front of them. The gateway does not start processes.
 
@@ -83,6 +84,37 @@ The key needs the `inference` or `all` scope. As on the inference API, it also w
   - The client's key is never forwarded, and neither are its other headers.
 - **Limits and budgets:** a tool call is refused when the key or its project is over a rate limit or budget. On `/mcp/{name}` the refusal is `429`, and on `/mcp` a JSON-RPC error with code `-32000`. Other messages are not limited.
 - **Disabled servers** answer `404`, as unknown ones do, and their tools leave `/mcp`.
+
+## MCP tools in model requests
+
+A request to `/v1/responses`, `/v1/chat/completions` or `/v1/messages` can name gateway MCP servers among its tools. The gateway offers their tools to the model and runs the calls the model makes. This works with any model, streaming or not, and the client only sees the answer.
+
+Responses and Chat Completions take OpenAI's `mcp` tool:
+
+```json
+{
+  "model": "claude-sonnet",
+  "input": "Which issues are open on the gateway repository?",
+  "tools": [
+    { "type": "mcp", "server_label": "github", "allowed_tools": ["search_issues"], "require_approval": "never" }
+  ]
+}
+```
+
+Messages takes Anthropic's MCP connector: `mcp_servers: [{"type": "url", "name": "github", "tool_configuration": {"allowed_tools": [...]}}]`, and `mcp_toolset` tools to choose a server's tools.
+
+- **The server** is a gateway MCP server's name (`server_label`, `name`) that the key may use. A `server_url` or `url`, if given, must be the gateway's own `/mcp/{name}`. Other servers are refused, since the gateway would reach them with nothing to account for.
+- **Credentials:** the gateway signs in as it does on `/mcp`, with its own credentials or the key's own sign-in. `authorization` and `headers` are refused.
+- **Approval:** the gateway runs the tools without asking, so `require_approval` is `never` or left out.
+- **Which tools:** `allowed_tools` narrows the server's tools further, after the server's own [tool filters](#tools-and-prices). The model sees them as function tools named `{server}__{tool}`.
+
+How a request runs:
+
+- **Rounds:** when the model calls gateway tools, the gateway runs the calls in parallel, gives the model their results, and asks again. This continues until the model answers, for at most 8 rounds, on the same deployment.
+- **What the client gets:** one response, with the text of every round. Calls of the gateway's tools are left out: the client has nothing to do for them. When the model also calls one of the client's own function tools, the response ends there and returns that call, as usual.
+- **Accounting:** the response's usage is the sum of every round. Each tool call is also an entry of its own in the request log (api `mcp`), counted against the key's limits and budgets and charged its price. A limit or budget reached mid-request becomes the tool's error, which the model gets.
+- **Logging:** where the key's prompts are logged, the response keeps what ran (tool, arguments, result) under `x_gateway_not_sent`.
+- **Upstreams:** the request is translated even for a deployment that speaks the client's API, since the gateway drives the rounds. Tool results with images reach models that take images.
 
 ## In the request log
 

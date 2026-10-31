@@ -149,35 +149,14 @@ impl ServerHandler for Hub {
             t.fail_status(403, "the tool is not available through the gateway");
             return Err(unknown());
         }
-        // The call as the server gets it: its own tool name, the arguments and the progress token.
-        let mut params = json!({ "name": tool, "arguments": request.arguments.clone().unwrap_or_default() });
-        if let Some(token) = request.meta.as_ref().and_then(|m| m.get("progressToken")) {
-            params["_meta"] = json!({ "progressToken": token });
-        }
-        let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params });
-        let mut calls = Calls::new(&state, &key, &labels, server, std::slice::from_ref(&msg));
-        if let Err(e) = auth::check_key_limits(&state, &key).await {
-            calls.fail(&e);
-            return Err(gateway_error(&e));
-        }
-        if let Err(why) = state.cfg.upstream_policy.check_url(&server.url) {
-            let e = GatewayError::internal(format!("the MCP server's address is not allowed: {why}"));
-            calls.fail(&e);
-            return Err(gateway_error(&e));
-        }
-        let reply = match state.mcp.call(&state, key.id, server, &msg).await {
-            Ok(r) => r,
-            Err(e) => {
-                calls.fail_status(502, e.clone());
-                return Err(ErrorData::internal_error(format!("the MCP server failed: {e}"), None));
-            }
-        };
-        calls.ended = true;
-        calls.settle(&reply);
-        if let Some(e) = reply.get("error") {
-            return Err(serde_json::from_value(e.clone()).unwrap_or_else(|_| ErrorData::internal_error("the MCP server failed", None)));
-        }
-        let result = reply.get("result").cloned().unwrap_or(Value::Null);
+        let progress = request.meta.as_ref().and_then(|m| m.get("progressToken")).cloned();
+        let result = run_tool(&state, &key, &labels, server, tool, Value::Object(request.arguments.clone().unwrap_or_default()), progress)
+            .await
+            .map_err(|e| match e {
+                ToolError::Gateway(e) => gateway_error(&e),
+                ToolError::Server(e) => ErrorData::internal_error(format!("the MCP server failed: {e}"), None),
+                ToolError::Rpc(e) => serde_json::from_value(e).unwrap_or_else(|_| ErrorData::internal_error("the MCP server failed", None)),
+            })?;
         serde_json::from_value::<CallToolResult>(result)
             .map(Into::into)
             .map_err(|e| ErrorData::internal_error(format!("the MCP server's result is not valid: {e}"), None))
@@ -186,6 +165,69 @@ impl ServerHandler for Hub {
     fn supported_protocol_versions(&self) -> Cow<'static, [rmcp::model::ProtocolVersion]> {
         Cow::Borrowed(rmcp::model::ProtocolVersion::KNOWN_VERSIONS)
     }
+}
+
+/// Why a tool call did not give a result.
+pub(crate) enum ToolError {
+    /// The gateway refused it: a limit, a budget, an address it may not reach.
+    Gateway(GatewayError),
+    /// The server could not be reached or failed.
+    Server(String),
+    /// The server answered with a JSON-RPC error.
+    Rpc(Value),
+}
+
+impl ToolError {
+    pub(crate) fn message(&self) -> String {
+        match self {
+            ToolError::Gateway(e) => e.message.clone(),
+            ToolError::Server(e) => format!("the MCP server failed: {e}"),
+            ToolError::Rpc(e) => e.get("message").and_then(Value::as_str).unwrap_or("the MCP server refused the call").to_string(),
+        }
+    }
+}
+
+/// Calls `tool` on `server` for `key`, in the key's session with the server, after its limits and
+/// budgets: one entry in the request log (api `mcp`), charged the tool's price. Returns the
+/// server's `CallToolResult`, as JSON.
+pub(crate) async fn run_tool(
+    state: &AppState,
+    key: &Arc<VirtualKey>,
+    labels: &Labels,
+    server: &McpServer,
+    tool: &str,
+    arguments: Value,
+    progress: Option<Value>,
+) -> Result<Value, ToolError> {
+    // The call as the server gets it: its own tool name, the arguments and the progress token.
+    let mut params = json!({ "name": tool, "arguments": arguments });
+    if let Some(token) = progress {
+        params["_meta"] = json!({ "progressToken": token });
+    }
+    let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params });
+    let mut calls = Calls::new(state, key, labels, server, std::slice::from_ref(&msg));
+    if let Err(e) = auth::check_key_limits(state, key).await {
+        calls.fail(&e);
+        return Err(ToolError::Gateway(e));
+    }
+    if let Err(why) = state.cfg.upstream_policy.check_url(&server.url) {
+        let e = GatewayError::internal(format!("the MCP server's address is not allowed: {why}"));
+        calls.fail(&e);
+        return Err(ToolError::Gateway(e));
+    }
+    let reply = match state.mcp.call(state, key.id, server, &msg).await {
+        Ok(r) => r,
+        Err(e) => {
+            calls.fail_status(502, e.clone());
+            return Err(ToolError::Server(e));
+        }
+    };
+    calls.ended = true;
+    calls.settle(&reply);
+    if let Some(e) = reply.get("error") {
+        return Err(ToolError::Rpc(e.clone()));
+    }
+    Ok(reply.get("result").cloned().unwrap_or(Value::Null))
 }
 
 /// A refusal of the gateway's own (a limit, a budget) as a JSON-RPC error.

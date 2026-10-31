@@ -4,6 +4,7 @@ pub mod anthropic;
 pub mod chat;
 pub mod decisions;
 pub mod embeddings;
+pub mod mcp_tools;
 mod guard;
 pub mod models;
 pub mod rerank;
@@ -272,6 +273,22 @@ pub(crate) async fn run_model(
         }
     }
 
+    // Gateway MCP tools: taken out of the request, listed for the key, run by the gateway.
+    let toolset = match mcp_tools::take(&mut raw, inbound) {
+        Ok(w) if w.is_empty() => None,
+        Ok(w) => match mcp_tools::toolset(state, &key, w).await {
+            Ok(set) => Some(Arc::new(set)),
+            Err(e) => {
+                tracker.fail(&e);
+                return Err(e);
+            }
+        },
+        Err(e) => {
+            tracker.fail(&e);
+            return Err(e);
+        }
+    };
+
     if parent.is_none()
         && tracker.logging()
     {
@@ -345,8 +362,9 @@ pub(crate) async fn run_model(
         };
         tried.insert(d.id);
         tracker.attempt(d.clone());
-        // A gateway-held transcript must be replayed, so it is translated even for native upstreams.
-        let result = if inbound.is_native(&d) && gateway_history.is_none() {
+        // A gateway-held transcript must be replayed, and gateway MCP tools run in rounds, so both
+        // are translated even for native upstreams.
+        let result = if inbound.is_native(&d) && gateway_history.is_none() && toolset.is_none() {
             passthrough(state, &d, &raw, stream, inbound, headers).await
         } else {
             if ir.is_none() {
@@ -355,6 +373,12 @@ pub(crate) async fn run_model(
                     Inbound::Responses => responses::parse_request(&raw),
                     Inbound::Chat => chat::parse_request(&raw),
                 };
+                let parsed = parsed.and_then(|mut p| {
+                    if let Some(set) = &toolset {
+                        mcp_tools::offer(&mut p, set)?;
+                    }
+                    Ok(p)
+                });
                 match parsed {
                     Ok(p) => ir = Some(p),
                     Err(e) => {
@@ -364,9 +388,20 @@ pub(crate) async fn run_model(
                 }
             }
             let turn = ir.as_ref().unwrap();
-            match gateway_history {
-                Some(h) => translate(state, &d, &with_history(turn, &raw, h, d.provider), stream).await,
-                None => translate(state, &d, turn, stream).await,
+            let turn = match gateway_history {
+                Some(h) => std::borrow::Cow::Owned(with_history(turn, &raw, h, d.provider)),
+                None => std::borrow::Cow::Borrowed(turn),
+            };
+            match &toolset {
+                Some(set) => {
+                    let caller = mcp_tools::Caller { key: key.clone(), labels: labels.clone() };
+                    match mcp_tools::start(state, &d, turn.into_owned(), set.clone(), caller).await {
+                        Ok((first, rest)) if stream => Ok(Outcome::Stream { first, rest }),
+                        Ok((first, rest)) => collect(first, rest).await,
+                        Err(e) => Err(e),
+                    }
+                }
+                None => translate(state, &d, &turn, stream).await,
             }
         };
         match result {
@@ -683,6 +718,16 @@ async fn translate(state: &AppState, d: &Arc<Deployment>, ir: &ChatRequest, stre
         }
         Ok(Outcome::Full(agg.finish()))
     }
+}
+
+/// A response that is not streamed, put together from its events.
+async fn collect(first: StreamEvent, mut rest: EventStream) -> Result<Outcome, GatewayError> {
+    let mut agg = Aggregator::default();
+    agg.push(&first);
+    while let Some(ev) = rest.next().await {
+        agg.push(&ev?);
+    }
+    Ok(Outcome::Full(agg.finish()))
 }
 
 /// Renders a finished translated response as its API returns it without streaming.
