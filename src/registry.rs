@@ -38,6 +38,8 @@ pub struct Snapshot {
     pub mcp_servers: HashMap<String, Arc<crate::mcp::McpServer>>,
     /// Enabled A2A agents by name, ready to call.
     pub a2a_agents: HashMap<String, Arc<crate::a2a::A2aAgent>>,
+    /// Enabled tool routers by name.
+    pub tool_routers: HashMap<String, Arc<crate::mcp::router::ToolRouter>>,
     pub loaded_at: Option<DateTime<Utc>>,
     pub errors: Vec<String>,
 }
@@ -68,7 +70,7 @@ impl Registry {
     }
 
     pub async fn reload(&self, pool: &sqlx::PgPool, cfg: &Config) -> Result<(), sqlx::Error> {
-        let (rows, creds, keys, routers, aliases, projects, guardrails, mcp_servers, a2a_agents) = tokio::try_join!(
+        let (rows, creds, keys, routers, aliases, projects, guardrails, mcp_servers, a2a_agents, tool_routers) = tokio::try_join!(
             db::list_deployments(pool),
             db::list_credentials(pool),
             db::list_keys(pool),
@@ -77,7 +79,8 @@ impl Registry {
             db::list_project_rows(pool),
             db::list_guardrails(pool),
             db::list_mcp_servers(pool),
-            db::list_a2a_agents(pool)
+            db::list_a2a_agents(pool),
+            db::list_tool_routers(pool)
         )?;
         // Decrypt each credential once, however many deployments share it.
         let creds: HashMap<Uuid, Result<ResolvedCredential, String>> =
@@ -184,6 +187,10 @@ impl Registry {
                     snap.errors.push(e);
                 }
             }
+        }
+        for r in tool_routers.into_iter().filter(|r| r.enabled) {
+            let r = crate::mcp::router::ToolRouter::build(r);
+            snap.tool_routers.insert(r.name.clone(), Arc::new(r));
         }
         let n_dep: usize = snap.deployments.values().map(Vec::len).sum();
         tracing::debug!(deployments = n_dep, keys = snap.keys.len(), "registry reloaded");

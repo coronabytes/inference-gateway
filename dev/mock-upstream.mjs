@@ -139,7 +139,12 @@ function responses(body, res) {
 function systemone(body, req, res) {
   const answers = {};
   for (const [name, q] of Object.entries(body.questions ?? {})) {
-    if (q.type === "noul") answers[name] = { type: "noul", noul: 0.75 };
+    // With criteria: likely true when a word of the true criterion is in the state (tool routers' routes).
+    if (q.type === "noul" && q.criteria?.true) {
+      const state = JSON.stringify(body.state).toLowerCase();
+      const hit = q.criteria.true.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length > 3 && state.includes(w));
+      answers[name] = { type: "noul", noul: hit ? 0.9 : 0.1 };
+    } else if (q.type === "noul") answers[name] = { type: "noul", noul: 0.75 };
     if (q.type === "choice") {
       const labels = Object.keys(q.criteria);
       const probabilities = Object.fromEntries(labels.map((l, i) => [l, i === labels.length - 1 ? 0.7 : 0.3 / (labels.length - 1)]));

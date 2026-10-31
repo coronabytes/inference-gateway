@@ -240,6 +240,56 @@ pub async fn choose_route(state: &AppState, router: &AutoRouter, transcript: Str
 }
 
 const ROUTE_QUESTION: &str = "route";
+
+/// How sure a tool router's decision model is that each of `routes` is needed for the transcript,
+/// in their order: one yes-or-no question per route, in one call. The call is an entry of its own
+/// in the request log (api `decisions`), charged to the key.
+pub async fn choose_tools(
+    state: &AppState,
+    key: &Arc<VirtualKey>,
+    labels: &Labels,
+    router: &crate::mcp::router::ToolRouter,
+    routes: &[&crate::mcp::router::ToolRoute],
+    transcript: String,
+) -> Result<Vec<f64>, GatewayError> {
+    let model = &router.decision_model;
+    let mut tracker = Tracker::new(state, Some(key), labels, model, "decisions", false);
+    let candidates = match super::deployments_for(state, model, Mode::Decision) {
+        Ok(c) => c,
+        Err(e) => {
+            tracker.fail(&e);
+            return Err(e);
+        }
+    };
+    let instructions = router.instructions.as_deref().unwrap_or(DEFAULT_TOOLS_INSTRUCTIONS);
+    let questions: Map<String, Value> = routes
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let criteria = json!({ "true": r.description, "false": "Answering needs none of these tools." });
+            (format!("route_{i}"), json!({ "type": "noul", "instructions": instructions, "criteria": criteria }))
+        })
+        .collect();
+    let p = Prepared { state: transcript.into(), questions, assets: Map::new(), order: Vec::new(), needs_images: false };
+    if let Some(c) = tracker.log() {
+        c.request(crate::capture::Body::Json(json!({ "model": model, "state": p.state, "questions": p.questions })));
+    }
+    let (p, no_headers) = (&p, &HeaderMap::new());
+    let resp = super::with_failover(state, &candidates, model, &mut tracker, |d| async move { call(state, &d, p, no_headers).await }).await?;
+    tracker.set_usage(usage(&resp));
+    if let Some(c) = tracker.log() {
+        c.response(crate::capture::Body::Json(resp.clone()));
+    }
+    let sure: Option<Vec<f64>> = (0..routes.len()).map(|i| resp["answers"][format!("route_{i}")]["noul"].as_f64()).collect();
+    sure.ok_or_else(|| {
+        let e = bad_upstream("the decision model did not answer for every route");
+        tracker.fail(&e);
+        e
+    })
+}
+
+const DEFAULT_TOOLS_INSTRUCTIONS: &str =
+    "Will answering the conversation's latest request need these tools? Answer true only if the answer would use them.";
 const DEFAULT_ROUTE_INSTRUCTIONS: &str =
     "Which route should handle this request? Pick the route whose description fits the request best.";
 

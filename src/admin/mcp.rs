@@ -281,6 +281,9 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
     if name.contains(SEPARATOR) {
         return Err(AdminError::bad_request(format!("the server's name cannot contain {SEPARATOR}")));
     }
+    if db::list_tool_routers(&state.db).await?.iter().any(|r| r.name == name) {
+        return Err(AdminError::conflict("a tool router has this name: requests could not tell them apart"));
+    }
     let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     let url = check_url(state, &i.url)?;
     let reserved = ["mcp-session-id", "mcp-protocol-version", "last-event-id", "mcp-method", "mcp-name"];
@@ -382,6 +385,10 @@ pub(crate) async fn update_mcp_server(
 
 pub(crate) async fn delete_mcp_server(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
     let name = db::get_mcp_server(&state.db, id).await?.ok_or_else(AdminError::not_found)?.name;
+    let routers = super::tool_routers::routers_using(&state, id).await?;
+    if !routers.is_empty() {
+        return Err(AdminError::conflict(format!("tool routers use this server: {}", routers.join(", "))));
+    }
     if !db::delete_mcp_server(&state.db, id).await? {
         return Err(AdminError::not_found());
     }

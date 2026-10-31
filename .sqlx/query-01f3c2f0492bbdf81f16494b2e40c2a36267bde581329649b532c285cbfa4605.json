@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tool_routers (id, name, description, decision_model, instructions, routes, threshold, max_routes, enabled, created_at, updated_at)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Float8",
+        "Int4",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "01f3c2f0492bbdf81f16494b2e40c2a36267bde581329649b532c285cbfa4605"
+}

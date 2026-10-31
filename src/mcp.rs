@@ -31,6 +31,7 @@ use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 pub mod hub;
+pub mod router;
 
 use crate::{
     accounting::Tracker,

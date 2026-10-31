@@ -177,6 +177,9 @@ interface Msg extends Turn {
     guardrail?: string;
     /** MCP servers were offered on Chat Completions, which has no place for the calls. */
     mcpUnseen?: boolean;
+    /** What tool routers picked: `x-gateway-tool-routes` and `x-gateway-tool-route`. */
+    toolRoutes?: string;
+    toolRoute?: string;
   };
 }
 
@@ -649,6 +652,8 @@ export function Playground() {
     let routeName: string | undefined;
     let route: string | undefined;
     let guardrail: string | undefined;
+    let toolRoutes: string | undefined;
+    let toolRoute: string | undefined;
     try {
       const res = await adminFetch(`/playground/${apiId}?key_id=${encodeURIComponent(keyId)}`, body, controller.signal, {
         ...labelHeaders(labels),
@@ -662,6 +667,8 @@ export function Playground() {
       routedTo = res.headers.get("x-gateway-routed-model") ?? undefined;
       routeName = res.headers.get("x-gateway-route-name") ?? undefined;
       route = res.headers.get("x-gateway-route") ?? undefined;
+      toolRoutes = res.headers.get("x-gateway-tool-routes") ?? undefined;
+      toolRoute = res.headers.get("x-gateway-tool-route") ?? undefined;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error?.message ?? data?.error ?? `request failed (${res.status})`);
@@ -698,6 +705,8 @@ export function Playground() {
           route,
           guardrail,
           mcpUnseen: apiId === "chat" && mcp.length > 0,
+          toolRoutes,
+          toolRoute,
         },
       });
     } catch (e) {
@@ -781,11 +790,11 @@ export function Playground() {
         {mode === "chat" && options.mcp_servers.length > 0 && (
           <MultiSelect
             caption="MCP"
-            hint="Offer these MCP servers' tools to the model: the gateway runs the calls the model makes, with any model, and each call is in the request log. Responses and Messages show the calls in the reply; Chat Completions has no place for them."
+            hint="Offer these MCP servers' tools to the model: the gateway runs the calls the model makes, with any model, and each call is in the request log. A tool router (marked router) offers only the tools its decision model picks. Responses and Messages show the calls in the reply; Chat Completions has no place for them."
             values={mcp}
             onChange={setMcpPicked}
             none="None"
-            options={options.mcp_servers.map((s) => ({ value: s.name, label: s.name, note: s.needs_sign_in ? "sign in" : undefined }))}
+            options={options.mcp_servers.map((s) => ({ value: s.name, label: s.name, note: s.router ? "router" : s.needs_sign_in ? "sign in" : undefined }))}
           />
         )}
         {/* Only chat requests are screened. */}
@@ -922,6 +931,7 @@ export function Playground() {
                         const calls = m.mcp?.filter((x) => x.kind === "call").length ?? 0;
                         return calls ? ` · ${calls} MCP call${calls === 1 ? "" : "s"}` : "";
                       })()}
+                      {m.meta.toolRoute !== undefined && ` · tool routes: ${m.meta.toolRoutes || "none"} (${m.meta.toolRoute})`}
                       {m.meta.mcpUnseen && " · MCP calls are in the request log (Chat Completions has no place for them)"}
                       {m.meta.routedTo && ` · routed to ${m.meta.routedTo}${m.meta.routeName ? ` via ${m.meta.routeName}` : ""}${m.meta.route?.startsWith("decision:") ? ` (confidence ${Math.round(Number(m.meta.route.slice(9)) * 100)}%)` : m.meta.route ? ` (${m.meta.route})` : ""}`}
                       {m.meta.chained && " · continued via previous_response_id"}

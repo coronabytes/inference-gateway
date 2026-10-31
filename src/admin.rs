@@ -39,6 +39,7 @@ pub(crate) mod a2a;
 pub(crate) mod guardrails;
 pub(crate) mod hub;
 pub(crate) mod mcp;
+pub(crate) mod tool_routers;
 pub(crate) mod oauth;
 pub(crate) mod transfer;
 
@@ -69,6 +70,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/a2a-agents", get(a2a::list_a2a_agents).post(a2a::create_a2a_agent))
         .route("/a2a-agents/{id}", axum::routing::put(a2a::update_a2a_agent).delete(a2a::delete_a2a_agent))
         .route("/a2a-agents/{id}/test", post(a2a::test_a2a_agent))
+        .route("/tool-routers", get(tool_routers::list_tool_routers).post(tool_routers::create_tool_router))
+        .route("/tool-routers/{id}", axum::routing::put(tool_routers::update_tool_router).delete(tool_routers::delete_tool_router))
         .route("/routers", get(list_routers).post(create_router))
         .route("/routers/{id}", axum::routing::put(update_router).delete(delete_router))
         .route("/aliases", get(list_aliases).post(create_alias))
@@ -2713,12 +2716,15 @@ pub(crate) struct PlaygroundOptions {
     a2a_agents: Vec<PlaygroundUpstream>,
 }
 
-/// An MCP server or A2A agent the key may use.
+/// An MCP server or A2A agent the key may use, or a tool router.
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct PlaygroundUpstream {
     name: String,
     /// The key signs in to it itself, and has not yet.
     needs_sign_in: bool,
+    /// A tool router, listed with the MCP servers: requests name it like one.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    router: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -2759,6 +2765,7 @@ async fn playground_options(State(state): State<AppState>, Extension(access): Ex
     let upstream = |kind: crate::oauth::Kind, id: Uuid, name: &str, per_key: bool| PlaygroundUpstream {
         name: name.to_string(),
         needs_sign_in: per_key && !signed_in.iter().any(|r| r.0 == kind.as_str() && r.1 == id),
+        router: false,
     };
     let mut mcp_servers: Vec<PlaygroundUpstream> = snap
         .mcp_servers
@@ -2772,6 +2779,13 @@ async fn playground_options(State(state): State<AppState>, Extension(access): Ex
         .filter(|a| a.allows(key))
         .map(|a| upstream(crate::oauth::Kind::A2a, a.id, &a.name, a.auth.per_key()))
         .collect();
+    // Tool routers with a route the key may use.
+    mcp_servers.extend(
+        snap.tool_routers
+            .values()
+            .filter(|r| !r.usable(&snap, key).is_empty())
+            .map(|r| PlaygroundUpstream { name: r.name.clone(), needs_sign_in: false, router: true }),
+    );
     mcp_servers.sort_by(|a, b| a.name.cmp(&b.name));
     a2a_agents.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(PlaygroundOptions { models, guardrails, mcp_servers, a2a_agents }))

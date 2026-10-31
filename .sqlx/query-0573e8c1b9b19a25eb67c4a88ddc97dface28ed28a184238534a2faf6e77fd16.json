@@ -1,0 +1,146 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, description, decision_model, instructions, routes AS \"routes: Json<Vec<ToolRoute>>\", threshold, max_routes, enabled,\n                  created_at, updated_at\n           FROM tool_routers ORDER BY name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "decision_model",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "decision_model"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "instructions",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "instructions"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "routes: Json<Vec<ToolRoute>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "routes"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "threshold",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "threshold"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "max_routes",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "max_routes"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "tool_routers",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0573e8c1b9b19a25eb67c4a88ddc97dface28ed28a184238534a2faf6e77fd16"
+}

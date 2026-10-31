@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tool_routers SET name = $2, description = $3, decision_model = $4, instructions = $5, routes = $6, threshold = $7,\n             max_routes = $8, enabled = $9, updated_at = now()\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Float8",
+        "Int4",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b619dbdbd48c1aa7c7db8e192a4146bfeda275b217e5af6f3f70a222670e315a"
+}

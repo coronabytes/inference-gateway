@@ -19,7 +19,11 @@ use crate::{
     error::{ErrorKind, GatewayError},
     ir::{self, Aggregator, BlockKind, ChatRequest, ImageSource, McpItem, Message, Part, Role, StopReason, StreamEvent, Usage},
     labels::Labels,
-    mcp::{McpServer, ToolsError, hub::{SEPARATOR, run_tool}},
+    mcp::{
+        McpServer, ToolsError,
+        hub::{SEPARATOR, run_tool},
+        router::{self, ToolRoute},
+    },
     model::{Deployment, VirtualKey},
     providers::{self, EventResult, EventStream},
     state::AppState,
@@ -29,10 +33,13 @@ use crate::{
 const MAX_ROUNDS: usize = 8;
 
 /// A gateway MCP server a request names, and which of its tools it wants (all when `None`).
+/// Servers a tool router picked are `optional`: one that cannot list its tools is left out
+/// rather than failing the request.
 #[derive(Debug, PartialEq)]
 pub struct Wanted {
     server: String,
     allowed: Option<Vec<String>>,
+    optional: bool,
 }
 
 /// The gateway MCP tools of a request, as offered to the model.
@@ -95,7 +102,7 @@ pub fn take(raw: &mut Value, inbound: Inbound) -> Result<Vec<Wanted>, GatewayErr
                     Some(Value::String(s)) if s == "never" => {}
                     Some(_) => return Err(invalid("the gateway runs MCP tools without asking: require_approval can only be never")),
                 }
-                wanted.push(Wanted { server: server.to_string(), allowed: tool_names(t.get("allowed_tools")) });
+                wanted.push(Wanted { server: server.to_string(), allowed: tool_names(t.get("allowed_tools")), optional: false });
             }
             *tools = rest;
         }
@@ -131,7 +138,7 @@ pub fn take(raw: &mut Value, inbound: Inbound) -> Result<Vec<Wanted>, GatewayErr
                     continue;
                 }
                 let allowed = tool_names(s.pointer("/tool_configuration/allowed_tools")).or_else(|| chosen.remove(server));
-                wanted.push(Wanted { server: server.to_string(), allowed });
+                wanted.push(Wanted { server: server.to_string(), allowed, optional: false });
             }
         }
     }
@@ -148,23 +155,102 @@ fn function_name(server: &str, tool: &str) -> String {
     format!("{}_{hash}", &name[..55])
 }
 
+/// What a tool router chose for a request, for the response's headers.
+#[derive(Debug)]
+pub struct Routed {
+    pub router: String,
+    pub routes: Vec<String>,
+    /// `decision`, `fallback` (the decision failed: every route), or `none` (the key may use no route).
+    pub how: &'static str,
+}
+
+impl Routed {
+    /// The `x-gateway-tool-router`, `-routes` and `-route` headers: one entry per router, joined by `; `.
+    pub fn headers(routed: &[Routed]) -> [(&'static str, String); 3] {
+        let join = |f: &dyn Fn(&Routed) -> String| routed.iter().map(f).collect::<Vec<_>>().join("; ");
+        [
+            ("x-gateway-tool-router", join(&|r| r.router.clone())),
+            ("x-gateway-tool-routes", join(&|r| r.routes.join(","))),
+            ("x-gateway-tool-route", join(&|r| r.how.to_string())),
+        ]
+    }
+}
+
+/// Replaces the tool routers a request names by the servers and tools of the routes their
+/// decision models pick for it. A failed decision offers every route the key may use.
+pub async fn route(state: &AppState, key: &Arc<VirtualKey>, labels: &Labels, raw: &Value, inbound: Inbound, wanted: Vec<Wanted>) -> (Vec<Wanted>, Vec<Routed>) {
+    let snap = state.registry.snapshot();
+    if !wanted.iter().any(|w| snap.tool_routers.contains_key(&w.server)) {
+        return (wanted, Vec::new());
+    }
+    let transcript = match inbound {
+        Inbound::Messages => super::anthropic::parse_request(raw),
+        Inbound::Responses => super::responses::parse_request(raw),
+        Inbound::Chat => super::chat::parse_request(raw),
+    }
+    .map(|r| super::routing::transcript(&r));
+    let (mut out, mut routed) = (Vec::new(), Vec::new());
+    for w in wanted {
+        let Some(router) = snap.tool_routers.get(&w.server) else {
+            out.push(w);
+            continue;
+        };
+        let usable = router.usable(&snap, key);
+        let routes: Vec<&ToolRoute> = usable.iter().map(|(r, _)| *r).collect();
+        let decided = match &transcript {
+            _ if routes.is_empty() => Ok(Vec::new()),
+            Ok(t) => crate::api::decisions::choose_tools(state, key, labels, router, &routes, t.clone()).await.map(|sure| router.pick(&routes, &sure)),
+            Err(e) => Err(e.clone()),
+        };
+        let (picked, how) = match decided {
+            Ok(_) if routes.is_empty() => (Vec::new(), "none"),
+            Ok(picked) => (picked, "decision"),
+            Err(e) => {
+                tracing::warn!(router = %router.name, router_id = %router.id, error = %e.message, "tool route decision failed; offering every route");
+                (routes.clone(), "fallback")
+            }
+        };
+        let server_of = |r: &ToolRoute| usable.iter().find(|(u, _)| std::ptr::eq(*u, r)).map_or("", |(_, s)| s.name.as_str());
+        for (server, allowed) in router::merge(picked.iter().map(|r| (*r, server_of(r)))) {
+            out.push(Wanted { server, allowed, optional: true });
+        }
+        routed.push(Routed { router: router.name.clone(), routes: picked.iter().map(|r| r.name.clone()).collect(), how });
+    }
+    (out, routed)
+}
+
 /// The tools of the servers a request names, as the key may use them.
 pub async fn toolset(state: &AppState, key: &VirtualKey, wanted: Vec<Wanted>) -> Result<Toolset, GatewayError> {
     let snap = state.registry.snapshot();
     let mut set = Toolset { by_name: HashMap::new(), defs: Vec::new(), listed: Vec::new() };
     for w in wanted {
-        let server = snap
+        let found = snap
             .mcp_servers
             .get(&w.server)
             .filter(|s| s.allows(key))
             .cloned()
-            .ok_or_else(|| GatewayError::not_found(format!("no MCP server '{}' that this key may use", w.server)))?;
-        let listed = state.mcp.tools(state, &server, key.id).await.map_err(|e| match e {
-            ToolsError::Auth(e) => e.into_gateway(),
-            ToolsError::Failed(e) => {
-                GatewayError { upstream: true, ..GatewayError::new(ErrorKind::Upstream, axum::http::StatusCode::BAD_GATEWAY, format!("MCP server '{}': {e}", server.name)) }
+            .ok_or_else(|| GatewayError::not_found(format!("no MCP server '{}' that this key may use", w.server)));
+        let found = match found {
+            Ok(s) => Ok((s.clone(), state.mcp.tools(state, &s, key.id).await)),
+            Err(e) => Err(e),
+        };
+        let (server, listed) = match found.and_then(|(server, listed)| {
+            let listed = listed.map_err(|e| match e {
+                ToolsError::Auth(e) => e.into_gateway(),
+                ToolsError::Failed(e) => GatewayError {
+                    upstream: true,
+                    ..GatewayError::new(ErrorKind::Upstream, axum::http::StatusCode::BAD_GATEWAY, format!("MCP server '{}': {e}", server.name))
+                },
+            })?;
+            Ok((server, listed))
+        }) {
+            Ok(found) => found,
+            Err(e) if w.optional => {
+                tracing::warn!(server = %w.server, error = %e.message, "routed MCP server left out of the request");
+                continue;
             }
-        })?;
+            Err(e) => return Err(e),
+        };
         let mut offered = Vec::new();
         for t in listed.iter() {
             let Some(tool) = t.get("name").and_then(Value::as_str) else { continue };
@@ -173,6 +259,10 @@ pub async fn toolset(state: &AppState, key: &VirtualKey, wanted: Vec<Wanted>) ->
             }
             offered.push(t.clone());
             let name = function_name(&server.name, tool);
+            // Named twice, directly and through a tool router: offered once.
+            if set.by_name.contains_key(&name) {
+                continue;
+            }
             set.defs.push(ir::Tool {
                 name: name.clone(),
                 description: t.get("description").and_then(Value::as_str).map(str::to_string),
@@ -375,8 +465,8 @@ mod tests {
         ] });
         let wanted = take(&mut raw, Inbound::Responses).unwrap();
         assert_eq!(wanted, [
-            Wanted { server: "github".into(), allowed: Some(vec!["search".into()]) },
-            Wanted { server: "docs".into(), allowed: Some(vec!["read".into()]) },
+            Wanted { server: "github".into(), allowed: Some(vec!["search".into()]), optional: false },
+            Wanted { server: "docs".into(), allowed: Some(vec!["read".into()]), optional: false },
         ]);
         assert_eq!(raw["tools"], json!([{ "type": "function", "name": "f" }]));
 
@@ -390,7 +480,7 @@ mod tests {
             "tools": [{ "type": "mcp_toolset", "mcp_server_name": "github", "default_config": { "enabled": false }, "configs": { "search": { "enabled": true } } }, { "name": "f" }],
         });
         let wanted = take(&mut raw, Inbound::Messages).unwrap();
-        assert_eq!(wanted, [Wanted { server: "github".into(), allowed: Some(vec!["search".into()]) }]);
+        assert_eq!(wanted, [Wanted { server: "github".into(), allowed: Some(vec!["search".into()]), optional: false }]);
         assert!(raw.get("mcp_servers").is_none());
         assert_eq!(raw["tools"], json!([{ "name": "f" }]));
     }

@@ -46,6 +46,7 @@ use utoipa::{
         paths::list_guardrails, paths::create_guardrail, paths::update_guardrail, paths::delete_guardrail, paths::test_guardrail,
         paths::guardrail_prices,
         paths::list_a2a_agents, paths::create_a2a_agent, paths::update_a2a_agent, paths::delete_a2a_agent, paths::test_a2a_agent,
+        paths::list_tool_routers, paths::create_tool_router, paths::update_tool_router, paths::delete_tool_router,
         paths::list_mcp_servers, paths::create_mcp_server, paths::update_mcp_server, paths::delete_mcp_server, paths::test_mcp_server,
         paths::list_deployments, paths::create_deployment, paths::get_deployment, paths::update_deployment,
         paths::delete_deployment, paths::test_deployment, paths::clear_cooldown,
@@ -74,6 +75,7 @@ use utoipa::{
         (name = "MCP", description = "MCP servers behind the gateway: one key for every server, the servers' credentials kept in the gateway."),
         (name = "Upstream OAuth", description = "Signing the gateway, or each key, in to MCP servers and A2A agents with OAuth."),
         (name = "A2A", description = "A2A agents behind the gateway: one key for every agent, the agents' credentials kept in the gateway."),
+        (name = "Tool routers", description = "A name requests use like an MCP server's, whose decision model picks which servers' tools a request gets."),
         (name = "Virtual keys", description = "Keys for apps and people, with limits, budgets and access tags, and the projects that group them."),
         (name = "Configuration", description = "Tags, and exporting and importing the configuration."),
         (name = "Model hub", description = "The models a key may use, with their limits, prices and guardrails, and the models' metadata."),
@@ -1086,6 +1088,47 @@ mod paths {
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn test_a2a_agent() {}
+
+    // ------------------------------------------------------------ tool routers
+
+    /// List tool routers
+    #[utoipa::path(get, path = "/admin/api/tool-routers", tag = "Tool routers",
+        responses((status = 200, description = "The tool routers.", body = Vec<admin::tool_routers::ToolRouterView>)),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn list_tool_routers() {}
+
+    /// Create tool router
+    ///
+    /// A decision model and routes, each a group of one MCP server's tools with a description of when \n    /// they are needed. Requests name the router like an MCP server.
+    #[utoipa::path(post, path = "/admin/api/tool-routers", tag = "Tool routers", request_body = admin::tool_routers::ToolRouterInput,
+        responses(
+            (status = 201, description = "The new tool router.", body = admin::tool_routers::ToolRouterView),
+            (status = 400, description = "Invalid tool router.", body = AdminError),
+            (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn create_tool_router() {}
+
+    /// Update tool router
+    #[utoipa::path(put, path = "/admin/api/tool-routers/{id}", tag = "Tool routers", params(("id" = Uuid, Path)),
+        request_body = admin::tool_routers::ToolRouterInput,
+        responses(
+            (status = 200, description = "The tool router.", body = admin::tool_routers::ToolRouterView),
+            (status = 400, description = "Invalid tool router.", body = AdminError),
+            (status = 404, description = "No such tool router.", body = AdminError),
+            (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn update_tool_router() {}
+
+    /// Delete tool router
+    #[utoipa::path(delete, path = "/admin/api/tool-routers/{id}", tag = "Tool routers", params(("id" = Uuid, Path)),
+        responses(
+            (status = 204, description = "Deleted."),
+            (status = 404, description = "No such tool router.", body = AdminError),
+        ),
+        security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+    fn delete_tool_router() {}
 
     // ------------------------------------------------------------ MCP servers
 

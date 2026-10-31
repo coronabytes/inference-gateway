@@ -14,7 +14,10 @@ use crate::{
     capture::Stored,
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailRow},
     a2a::A2aAgentRow,
-    mcp::McpServerRow,
+    mcp::{
+        McpServerRow,
+        router::{ToolRoute, ToolRouterRow},
+    },
     oauth::OAuthConfig,
     model::{
         AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
@@ -959,6 +962,74 @@ pub async fn delete_a2a_agent(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
     let r = sqlx::query!("DELETE FROM a2a_agents WHERE id = $1", id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(r.rows_affected() > 0)
+}
+
+// ---------------------------------------------------------------- tool routers
+
+pub async fn list_tool_routers(pool: &PgPool) -> sqlx::Result<Vec<ToolRouterRow>> {
+    sqlx::query_as!(
+        ToolRouterRow,
+        r#"SELECT id, name, description, decision_model, instructions, routes AS "routes: Json<Vec<ToolRoute>>", threshold, max_routes, enabled,
+                  created_at, updated_at
+           FROM tool_routers ORDER BY name"#
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_tool_router(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<ToolRouterRow>> {
+    sqlx::query_as!(
+        ToolRouterRow,
+        r#"SELECT id, name, description, decision_model, instructions, routes AS "routes: Json<Vec<ToolRoute>>", threshold, max_routes, enabled,
+                  created_at, updated_at
+           FROM tool_routers WHERE id = $1"#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn insert_tool_router(db: impl PgExecutor<'_>, r: &ToolRouterRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO tool_routers (id, name, description, decision_model, instructions, routes, threshold, max_routes, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())",
+        r.id,
+        r.name,
+        r.description,
+        r.decision_model,
+        r.instructions,
+        &r.routes as &Json<Vec<ToolRoute>>,
+        r.threshold,
+        r.max_routes,
+        r.enabled,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn update_tool_router(db: impl PgExecutor<'_>, r: &ToolRouterRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "UPDATE tool_routers SET name = $2, description = $3, decision_model = $4, instructions = $5, routes = $6, threshold = $7,
+             max_routes = $8, enabled = $9, updated_at = now()
+         WHERE id = $1",
+        r.id,
+        r.name,
+        r.description,
+        r.decision_model,
+        r.instructions,
+        &r.routes as &Json<Vec<ToolRoute>>,
+        r.threshold,
+        r.max_routes,
+        r.enabled,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_tool_router(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
+    Ok(sqlx::query!("DELETE FROM tool_routers WHERE id = $1", id).execute(pool).await?.rows_affected() > 0)
 }
 
 // ---------------------------------------------------------------- upstream OAuth tokens

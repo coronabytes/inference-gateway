@@ -474,6 +474,36 @@ export interface McpServerInput {
 }
 
 /** What `POST /mcp-servers/{id}/test` answers. */
+/** A tool router route: one MCP server's tools, offered when the decision model finds them needed. */
+export interface ToolRoute {
+  name: string;
+  description: string;
+  server_id: string;
+  /** Empty for all of the server's tools. */
+  tools: string[];
+}
+
+/** A tool router (`GET /tool-routers`): requests name it like an MCP server. */
+export interface ToolRouter {
+  id: string;
+  name: string;
+  description?: string;
+  decision_model: string;
+  instructions?: string;
+  routes: ToolRoute[];
+  threshold: number;
+  max_routes?: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ToolRouterInput = Omit<ToolRouter, "id" | "created_at" | "updated_at" | "description" | "instructions" | "max_routes"> & {
+  description: string | null;
+  instructions: string | null;
+  max_routes: number | null;
+};
+
 export interface McpServerTestResult {
   ok: boolean;
   latency_ms: number;
@@ -571,6 +601,8 @@ export interface PlaygroundOptions {
 export interface PlaygroundUpstream {
   name: string;
   needs_sign_in: boolean;
+  /** A tool router, listed with the MCP servers. */
+  router?: boolean;
 }
 
 /** Puts a list filter in a query as `a,b`, with `none` (a value that cannot be an id or a tag) sent as `-`. */

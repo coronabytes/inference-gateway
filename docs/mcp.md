@@ -118,15 +118,40 @@ How a request runs:
   - **In a later turn:** a client may send these items and blocks back as they came. The model gets them as text, since the tools may not be offered then. A conversation continued with `previous_response_id` keeps them the same way.
 - **Accounting:** the response's usage is the sum of every round. Each tool call is also an entry of its own in the request log (api `mcp`), counted against the key's limits and budgets and charged its price. A limit or budget reached mid-request becomes the tool's error, which the model gets.
 - **Logging:** where the key's prompts are logged, the response is logged as the client got it. On Chat Completions, what ran is kept under `x_gateway_not_sent.mcp`.
+- **Upstreams:** the request is translated even for a deployment that speaks the client's API, since the gateway drives the rounds. Tool results with images reach models that take images.
 
-To try it, pick servers under **MCP** in the [playground](#in-the-playground).
+With many servers, a [tool router](#tool-routers) gives each request only the tools it needs. To try it, pick servers under **MCP** in the [playground](#in-the-playground).
 
 ## In the playground
 
 The playground (**Models → Playground**) offers the MCP servers the chosen key may use under **MCP**. The chosen servers' tools go with every chat request, and each reply shows what ran before its text: the tools each server offered, and each call, with its arguments and result. Click one to unfold it. On Chat Completions, which has no place for the calls, they are only in the request log.
 
 A server where each key signs in itself is marked **sign in** while the key has not signed in yet. **Sign in** in the warning above the chat starts it, and the sign-in comes back to the playground.
-- **Upstreams:** the request is translated even for a deployment that speaks the client's API, since the gateway drives the rounds. Tool results with images reach models that take images.
+
+Tool routers are listed with the servers, marked **router**. Each reply says which of its routes the decision model picked.
+
+## Tool routers
+
+Every tool a model is offered costs input tokens and makes picking the right one harder. A tool router gives each request only the tools it needs: a decision model reads the conversation and picks among the router's routes, as an [auto router](auto-routers.md) picks among models.
+
+Add one under **Tools → Tool routers**. It has a decision model and routes. Each route is a group of one MCP server's tools (all of them, or those you pick) with a description of when they are needed, such as "questions about invoices, payments and refunds".
+
+A request names the router like an MCP server: `{"type": "mcp", "server_label": "support"}`, or `mcp_servers: [{"type": "url", "name": "support"}]` in Messages. For each request:
+
+- **The decision:** one call to the decision model, which says for every route how sure it is that the request needs it. Routes at or above the router's **threshold** (0.5 by default) are offered, the surest first, at most **At most** of them.
+- **No route needed:** the model gets none of the router's tools.
+- **The decision fails:** the model gets every route's tools, so routing problems never fail a request.
+- **Access:** only routes whose server the key may use are asked about. A route's server that cannot list its tools, such as one the key has not signed in to, is left out.
+- **Headers:** `x-gateway-tool-router` (the router), `x-gateway-tool-routes` (the routes picked, comma-separated) and `x-gateway-tool-route` (`decision`, `fallback`, or `none` when the key may use no route).
+- **Accounting:** the decision is its own entry in the request log (api `decisions`, with the decision model), charged to the key at the decision model's price.
+
+Things to know:
+
+- Each turn is decided anew, so a conversation's tools may change between turns. A changed tool list also changes the prompt the provider can cache.
+- The decision model sees the request as sent. A Responses request continued with `previous_response_id` sends only its new turn, so the decision only sees that.
+- `allowed_tools` on a router is ignored: the routes say which tools it offers.
+- A router's name cannot be an MCP server's, and an MCP server a router uses cannot be deleted.
+- Routers work in model requests only, not on `/mcp`, where clients list tools before there is a conversation to decide on.
 
 ## In the request log
 

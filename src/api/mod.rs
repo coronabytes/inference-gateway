@@ -273,16 +273,22 @@ pub(crate) async fn run_model(
         }
     }
 
-    // Gateway MCP tools: taken out of the request, listed for the key, run by the gateway.
+    // Gateway MCP tools: taken out of the request, tool routers replaced by the servers they
+    // pick, listed for the key, run by the gateway.
+    let mut routed = Vec::new();
     let toolset = match mcp_tools::take(&mut raw, inbound) {
         Ok(w) if w.is_empty() => None,
-        Ok(w) => match mcp_tools::toolset(state, &key, w).await {
-            Ok(set) => Some(Arc::new(set)),
-            Err(e) => {
-                tracker.fail(&e);
-                return Err(e);
+        Ok(w) => {
+            let (w, r) = mcp_tools::route(state, &key, labels, &raw, inbound, w).await;
+            routed = r;
+            match mcp_tools::toolset(state, &key, w).await {
+                Ok(set) => Some(Arc::new(set)),
+                Err(e) => {
+                    tracker.fail(&e);
+                    return Err(e);
+                }
             }
-        },
+        }
         Err(e) => {
             tracker.fail(&e);
             return Err(e);
@@ -516,6 +522,13 @@ pub(crate) async fn run_model(
     };
     resp.headers_mut().insert("x-request-id", request_id);
     guardrail_header(&mut resp, guarded.as_ref());
+    if !routed.is_empty() {
+        for (name, value) in mcp_tools::Routed::headers(&routed) {
+            if let Ok(v) = HeaderValue::from_str(&value) {
+                resp.headers_mut().insert(name, v);
+            }
+        }
+    }
     Ok(resp)
 }
 
