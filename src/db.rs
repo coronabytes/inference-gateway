@@ -2097,48 +2097,10 @@ impl LogFilter<'_> {
 /// The request log, newest first, with the calls routed requests made. Filtered by content, it
 /// also returns the router entries of matching calls, so they can be shown together.
 pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<LogRow>> {
-    let mut rows = sqlx::query_as!(
-        LogRow,
-        r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
-                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
-                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
-                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
-                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
-                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $13)
-                       THEN 'expired' ELSE l.bodies END AS "bodies?"
-           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
-                LEFT JOIN request_bodies b ON b.id = l.id
-           WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)
-             AND ($3::uuid IS NULL OR l.key_id = $3)
-             AND (NOT $4 OR l.status_code >= 400)
-             AND ($5::timestamptz IS NULL OR l.ts >= $5)
-             AND ($6::timestamptz IS NULL OR l.ts < $6)
-             AND ($7::uuid[] IS NULL OR l.project_id = ANY($7))
-             AND ($8::jsonb IS NULL OR l.labels @> $8)
-             AND (NOT $9 OR (l.key_id IS NOT NULL AND k.id IS NULL))
-             AND (NOT $10 OR b.id IS NOT NULL)
-             AND ($11::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $11))
-             AND ($12::text IS NULL OR b.tool_calls @> ARRAY[$12::text] OR l.tool = $12)
-             AND ($14::text[] IS NULL OR l.guardrails->>'action' = ANY($14))
-           ORDER BY l.ts DESC LIMIT $1"#,
-        f.limit,
-        f.model,
-        f.key_id,
-        f.errors_only,
-        f.since,
-        f.until,
-        f.projects,
-        f.labels,
-        f.deleted_keys,
-        f.bodies,
-        f.text,
-        f.tool,
-        f.body_days as i32,
-        f.guardrail,
-    )
-    .fetch_all(pool)
-    .await?;
+    let mut rows = match f.errors_only {
+        true => error_logs(pool, f).await?,
+        false => all_logs(pool, f).await?,
+    };
     let mut seen: std::collections::HashSet<Uuid> = rows.iter().map(|r| r.id).collect();
     if f.by_content() {
         let parents: Vec<Uuid> = rows.iter().filter_map(|r| r.parent_id).filter(|p| !seen.contains(p)).collect();
@@ -2166,6 +2128,97 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
     .await?;
     rows.extend(children.into_iter().filter(|c| seen.insert(c.id)));
     Ok(rows)
+}
+
+/// The failed requests of the log, newest first: `all_logs` with `status_code >= 400` written out,
+/// so Postgres walks the partial index of failed entries (`request_logs_errors_ts_idx`) rather than
+/// every entry until it has found enough failures.
+async fn error_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<LogRow>> {
+    sqlx::query_as!(
+        LogRow,
+        r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
+                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
+                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
+                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
+                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
+                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $12)
+                       THEN 'expired' ELSE l.bodies END AS "bodies?"
+           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
+                LEFT JOIN request_bodies b ON b.id = l.id
+           WHERE l.status_code >= 400
+             AND ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)
+             AND ($3::uuid IS NULL OR l.key_id = $3)
+             AND ($4::timestamptz IS NULL OR l.ts >= $4)
+             AND ($5::timestamptz IS NULL OR l.ts < $5)
+             AND ($6::uuid[] IS NULL OR l.project_id = ANY($6))
+             AND ($7::jsonb IS NULL OR l.labels @> $7)
+             AND (NOT $8 OR (l.key_id IS NOT NULL AND k.id IS NULL))
+             AND (NOT $9 OR b.id IS NOT NULL)
+             AND ($10::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $10))
+             AND ($11::text IS NULL OR b.tool_calls @> ARRAY[$11::text] OR l.tool = $11)
+             AND ($13::text[] IS NULL OR l.guardrails->>'action' = ANY($13))
+           ORDER BY l.ts DESC LIMIT $1"#,
+        f.limit,
+        f.model,
+        f.key_id,
+        f.since,
+        f.until,
+        f.projects,
+        f.labels,
+        f.deleted_keys,
+        f.bodies,
+        f.text,
+        f.tool,
+        f.body_days as i32,
+        f.guardrail,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// The request log, newest first, by `f` except `errors_only`.
+async fn all_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<LogRow>> {
+    sqlx::query_as!(
+        LogRow,
+        r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
+                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
+                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
+                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
+                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
+                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $12)
+                       THEN 'expired' ELSE l.bodies END AS "bodies?"
+           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id
+                LEFT JOIN request_bodies b ON b.id = l.id
+           WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)
+             AND ($3::uuid IS NULL OR l.key_id = $3)
+             AND ($4::timestamptz IS NULL OR l.ts >= $4)
+             AND ($5::timestamptz IS NULL OR l.ts < $5)
+             AND ($6::uuid[] IS NULL OR l.project_id = ANY($6))
+             AND ($7::jsonb IS NULL OR l.labels @> $7)
+             AND (NOT $8 OR (l.key_id IS NOT NULL AND k.id IS NULL))
+             AND (NOT $9 OR b.id IS NOT NULL)
+             AND ($10::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $10))
+             AND ($11::text IS NULL OR b.tool_calls @> ARRAY[$11::text] OR l.tool = $11)
+             AND ($13::text[] IS NULL OR l.guardrails->>'action' = ANY($13))
+           ORDER BY l.ts DESC LIMIT $1"#,
+        f.limit,
+        f.model,
+        f.key_id,
+        f.since,
+        f.until,
+        f.projects,
+        f.labels,
+        f.deleted_keys,
+        f.bodies,
+        f.text,
+        f.tool,
+        f.body_days as i32,
+        f.guardrail,
+    )
+    .fetch_all(pool)
+    .await
 }
 
 async fn logs_by_id(pool: &PgPool, ids: &[Uuid], body_days: u32) -> sqlx::Result<Vec<LogRow>> {

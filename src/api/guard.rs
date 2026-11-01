@@ -6,6 +6,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::Inbound;
 use crate::{
@@ -110,8 +111,66 @@ fn prompt_texts(inbound: Inbound, raw: &Value) -> Vec<String> {
     out
 }
 
+/// How long a guardrail's verdict on a text is remembered. A conversation sends its earlier turns
+/// with every request: within this time each text is screened once, not on every turn.
+const REMEMBER: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// A remembered verdict: `PASSED` alone, or `MASKED` followed by the masked text, sealed with the
+/// gateway's encryption key so no prompt text is kept in Valkey in the clear.
+const PASSED: u8 = b'p';
+const MASKED: u8 = b'm';
+
+/// A keyed hash of `text` as `g` screens it, for its remembered verdict. The guardrail's last
+/// change is part of it, so editing a guardrail forgets its verdicts; the key (derived from the
+/// encryption key) keeps the hash of a short text from giving the text away.
+fn text_hash(state: &AppState, g: &Active, text: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(state.cfg.affinity_salt);
+    h.update(b"guardrail verdict\n");
+    h.update(g.row.updated_at.timestamp_micros().to_le_bytes());
+    h.update(text.as_bytes());
+    hex::encode(&h.finalize()[..16])
+}
+
+/// The text as a remembered verdict leaves it, if one is remembered and can be read.
+fn recall(state: &AppState, text: &str, remembered: Option<Vec<u8>>) -> Option<String> {
+    let remembered = remembered?;
+    match remembered.split_first()? {
+        (&PASSED, []) => Some(text.to_string()),
+        (&MASKED, sealed) => String::from_utf8(state.cfg.secret_box.open(sealed).ok()?).ok(),
+        _ => None,
+    }
+}
+
+/// Remembers what `g` did to the texts it was sent (`todo`, indexes into `texts` and `after`),
+/// in the background. A guardrail answers for all the texts it gets at once, so a text is only
+/// remembered when its verdict is known on its own: every text when nothing was found, and the
+/// texts it changed when it masked. Flagged texts, and unchanged texts next to masked ones, may
+/// have been what the guardrail found, so they are screened again.
+fn remember(state: &AppState, g: &Active, action: Action, todo: &[usize], hashes: &[String], texts: &[String], after: &[String]) {
+    let verdicts: Vec<(String, Vec<u8>)> = match action {
+        Action::Passed => todo.iter().map(|&i| (hashes[i].clone(), vec![PASSED])).collect(),
+        Action::Masked => todo
+            .iter()
+            .filter(|&&i| after[i] != texts[i])
+            .map(|&i| {
+                let mut v = vec![MASKED];
+                v.extend(state.cfg.secret_box.seal(after[i].as_bytes()));
+                (hashes[i].clone(), v)
+            })
+            .collect(),
+        Action::Flagged | Action::Blocked => return,
+    };
+    if verdicts.is_empty() {
+        return;
+    }
+    let (state, id) = (state.clone(), g.row.id);
+    tokio::spawn(async move { state.cache.save_guard_verdicts(id, verdicts, REMEMBER).await });
+}
+
 /// Screens the prompt of `raw` with `guards`, in order, and masks it in place: each guardrail sees
-/// the text as the ones before it left it. A guardrail that blocks refuses the request with its
+/// the text as the ones before it left it. Texts a guardrail screened in an earlier request keep
+/// its verdict (see `REMEMBER`), so a conversation's earlier turns are not screened again. A guardrail that blocks refuses the request with its
 /// message; one that cannot be reached refuses it too, as the text would otherwise pass unscreened.
 /// Either way the charge for the guardrails that ran comes along, for the request log.
 ///
@@ -146,60 +205,86 @@ pub(crate) async fn screen_prompt(
             continue;
         }
         let started = std::time::Instant::now();
-        let v = match guardrails::check(state, &g.callable(), Source::Input, &texts).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(guardrail = %g.row.name, error = %e.message, "guardrail failed; refusing the request");
-                let mut s = step("failed");
-                s["duration_ms"] = (started.elapsed().as_millis() as u64).into();
-                s["error"] = e.message.clone().into();
-                steps.push(s);
-                let e = GatewayError::unavailable(format!("guardrail '{}' could not screen the request: {}", g.row.name, e.message));
-                return Err((charge(&applied, action, &findings, cost, steps), e));
-            }
+        // Texts this guardrail screened in an earlier request (a conversation's earlier turns)
+        // keep their verdict; only the others are sent. Blank texts need no screening.
+        let hashes: Vec<String> = texts.iter().map(|t| text_hash(state, g, t)).collect();
+        let remembered = state.cache.guard_verdicts(g.row.id, &hashes).await;
+        let known: Vec<Option<String>> =
+            texts.iter().zip(remembered).map(|(t, r)| if t.trim().is_empty() { Some(t.clone()) } else { recall(state, t, r) }).collect();
+        let todo: Vec<usize> = (0..texts.len()).filter(|&i| known[i].is_none()).collect();
+        let fresh: Vec<String> = todo.iter().map(|&i| texts[i].clone()).collect();
+        let verdict = match fresh.is_empty() {
+            true => None,
+            false => match guardrails::check(state, &g.callable(), Source::Input, &fresh).await {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(guardrail = %g.row.name, error = %e.message, "guardrail failed; refusing the request");
+                    let mut s = step("failed");
+                    s["duration_ms"] = (started.elapsed().as_millis() as u64).into();
+                    s["error"] = e.message.clone().into();
+                    steps.push(s);
+                    let e = GatewayError::unavailable(format!("guardrail '{}' could not screen the request: {}", g.row.name, e.message));
+                    return Err((charge(&applied, action, &findings, cost, steps), e));
+                }
+            },
         };
-        cost += v.cost_usd;
-        action = action.max(v.action);
-        findings.extend(v.findings.iter().map(|f| format!("{}:{}", f.policy, f.kind)));
+        let masked_before = known.iter().zip(&texts).any(|(k, t)| k.as_ref().is_some_and(|k| k != t));
+        let mut g_action = verdict.as_ref().map_or(Action::Passed, |v| v.action);
+        if masked_before {
+            g_action = g_action.max(Action::Masked);
+        }
+        let fresh_masked = verdict.as_ref().is_some_and(|v| v.action == Action::Masked);
+        let bad_answer = verdict.as_ref().filter(|v| fresh_masked && v.outputs.len() != fresh.len()).map(|v| v.outputs.len());
+        // The texts as this guardrail leaves them.
+        let mut after: Vec<String> = known.into_iter().map(Option::unwrap_or_default).collect();
+        for (n, &i) in todo.iter().enumerate() {
+            after[i] = match &verdict {
+                Some(v) if fresh_masked && bad_answer.is_none() => v.outputs[n].clone(),
+                _ => texts[i].clone(),
+            };
+        }
+        if let Some(v) = &verdict {
+            cost += v.cost_usd;
+            findings.extend(v.findings.iter().map(|f| format!("{}:{}", f.policy, f.kind)));
+        }
+        action = action.max(g_action);
         if trace {
-            let mut s = step(v.action.as_str());
+            let mut s = step(g_action.as_str());
             s["duration_ms"] = (started.elapsed().as_millis() as u64).into();
-            s["findings"] = serde_json::to_value(&v.findings).unwrap_or_default();
-            s["usage"] = serde_json::to_value(v.usage).unwrap_or_default();
-            s["cost_usd"] = v.cost_usd.into();
-            if v.action == Action::Blocked {
-                s["message"] = v.outputs.first().cloned().into();
+            s["remembered"] = (texts.len() - todo.len()).into();
+            if let Some(v) = &verdict {
+                s["findings"] = serde_json::to_value(&v.findings).unwrap_or_default();
+                s["usage"] = serde_json::to_value(v.usage).unwrap_or_default();
+                s["cost_usd"] = v.cost_usd.into();
+                if v.action == Action::Blocked {
+                    s["message"] = v.outputs.first().cloned().into();
+                }
+                s["provider_response"] = v.raw.clone().unwrap_or_default();
             }
-            if v.action == Action::Masked && v.outputs.len() == texts.len() {
+            if g_action == Action::Masked && bad_answer.is_none() {
                 let changes: Vec<Value> = pointers
                     .iter()
-                    .zip(texts.iter().zip(&v.outputs))
+                    .zip(texts.iter().zip(&after))
                     .filter(|(_, (before, after))| before != after)
                     .map(|(p, (before, after))| json!({ "pointer": p, "before": before, "after": after }))
                     .collect();
                 s["changes"] = changes.into();
             }
-            s["provider_response"] = v.raw.clone().unwrap_or_default();
             steps.push(s);
         }
-        match v.action {
-            Action::Blocked => {
-                let message = v.outputs.first().cloned().unwrap_or_else(|| "The request was blocked.".into());
-                let e = GatewayError::content_filter(format!("{message} (blocked by guardrail '{}')", g.row.name));
-                return Err((charge(&applied, action, &findings, cost, steps), e));
-            }
-            Action::Masked if v.outputs.len() == texts.len() => texts = v.outputs,
-            Action::Masked => {
-                let e = GatewayError::unavailable(format!(
-                    "guardrail '{}' answered with {} texts for {}",
-                    g.row.name,
-                    v.outputs.len(),
-                    texts.len()
-                ));
-                return Err((charge(&applied, action, &findings, cost, steps), e));
-            }
-            Action::Passed | Action::Flagged => {}
+        if let Some(v) = verdict.as_ref().filter(|v| v.action == Action::Blocked) {
+            let message = v.outputs.first().cloned().unwrap_or_else(|| "The request was blocked.".into());
+            let e = GatewayError::content_filter(format!("{message} (blocked by guardrail '{}')", g.row.name));
+            return Err((charge(&applied, action, &findings, cost, steps), e));
         }
+        if let Some(n) = bad_answer {
+            let e = GatewayError::unavailable(format!("guardrail '{}' answered with {n} texts for {}", g.row.name, fresh.len()));
+            return Err((charge(&applied, action, &findings, cost, steps), e));
+        }
+        if let Some(v) = &verdict {
+            remember(state, g, v.action, &todo, &hashes, &texts, &after);
+        }
+        texts = after;
     }
     if action == Action::Masked {
         for (p, t) in pointers.iter().zip(&texts) {
