@@ -3,12 +3,14 @@ import { useIsUser } from "../access";
 import {
   api,
   callsModels,
+  loadPages,
   setListParam,
   type BudgetPeriod,
   type GatewaySettingsView,
   type Guardrail,
   type KeyInput,
   type KeyScope,
+  type NamedItem,
   type Project,
   type PromptLogging,
   type TagInfo,
@@ -64,6 +66,15 @@ const NO_PROJECT = " none";
 
 const TABS = ["keys", "users"] as const;
 
+/** Keys, and project cards, shown at first and added by each "Show more". */
+const PAGE = 100;
+
+/** Projects by name, each once. */
+function byName(lists: Project[][]): Project[] {
+  const all = new Map(lists.flat().map((p) => [p.id, p]));
+  return [...all.values()].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id));
+}
+
 export function Keys() {
   const [tab, setTab] = useHashTab("access", TABS);
   const [projectFilter, setProjectFilter] = useState<string[]>([]);
@@ -94,9 +105,16 @@ export function Keys() {
 function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; onProjectFilter: (ids: string[]) => void }) {
   const user = useIsUser();
   const [keys, setKeys] = useState<VirtualKey[]>([]);
-  // Null until loaded, so that a project filter is kept until it can be checked.
-  const [projectList, setProjects] = useState<Project[] | null>(null);
-  const projects = projectList ?? [];
+  const [moreKeys, setMoreKeys] = useState(false);
+  // Project cards: a page of projects by name, and the projects of shown keys beyond it.
+  const [projectList, setProjects] = useState<Project[]>([]);
+  const [moreProjects, setMoreProjects] = useState(false);
+  const [projectLimit, setProjectLimit] = useState(PAGE);
+  const [keyProjects, setKeyProjects] = useState<Project[]>([]);
+  const projects = byName([projectList, keyProjects]);
+  // Every project's name, for the filter. Null until loaded, so that a project filter is kept
+  // until it can be checked.
+  const [projectNames, setProjectNames] = useState<NamedItem[] | null>(null);
   const [tags, setTags] = useState<TagInfo[]>([]);
   // Only admins choose guardrails, and only they can list them.
   const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
@@ -116,8 +134,8 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   const search = useDebounced(query.trim());
 
   // A filter for a project deleted meanwhile matches nothing; it is dropped instead.
-  const projectIds = new Set(projects.map((p) => p.id));
-  const projectsPicked = projectList ? projectFilter.filter((id) => id === NO_PROJECT || projectIds.has(id)) : projectFilter;
+  const projectIds = new Set((projectNames ?? []).map((p) => p.id));
+  const projectsPicked = projectNames ? projectFilter.filter((id) => id === NO_PROJECT || projectIds.has(id)) : projectFilter;
   // The server filters the keys.
   const keyQuery = new URLSearchParams();
   if (search) keyQuery.set("q", search);
@@ -126,40 +144,80 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   if (loggingOnly) keyQuery.set("logging", "true");
   const filters = keyQuery.toString().replace(/%2C/g, ",");
 
+  // How many keys to show: a page more with each "Show more", back to one when the filters change.
+  const [keyLimit, setKeyLimit] = useState({ filters, n: PAGE });
+  const keyCount = keyLimit.filters === filters ? keyLimit.n : PAGE;
+
   const loadKeys = useCallback(async () => {
     try {
-      setKeys(await api<VirtualKey[]>(`/keys${filters ? `?${filters}` : ""}`));
+      const { items, more } = await loadPages<VirtualKey>(`/keys${filters ? `?${filters}` : ""}`, keyCount);
+      setKeys(items);
+      setMoreKeys(more);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [filters]);
+  }, [filters, keyCount]);
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const [{ items, more }, names] = await Promise.all([
+        loadPages<Project>("/projects", projectLimit),
+        api<NamedItem[]>("/projects/options"),
+      ]);
+      setProjects(items);
+      setMoreProjects(more);
+      setProjectNames(names);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [projectLimit]);
+
+  // Cards for shown keys whose project is not on the loaded pages.
+  useEffect(() => {
+    const loaded = new Set(projectList.map((p) => p.id));
+    const missing = [...new Set(keys.map((k) => k.project_id).filter((id): id is string => !!id && !loaded.has(id)))];
+    if (missing.length === 0) {
+      setKeyProjects([]);
+      return;
+    }
+    api<Project[]>(`/projects?ids=${missing.join(",")}`)
+      .then(setKeyProjects)
+      .catch((e) => setError((e as Error).message));
+  }, [keys, projectList]);
+
+  const showMore = () => {
+    if (moreKeys) setKeyLimit({ filters, n: keyCount + PAGE });
+    if (moreProjects) setProjectLimit((n) => n + PAGE);
+  };
 
   // What the cards and the editors need besides the keys: not reloaded as the filters change.
   const loadContext = useCallback(async () => {
     try {
-      const [t, p, g, s] = await Promise.all([
+      const [t, g, s] = await Promise.all([
         api<TagInfo[]>("/tags"),
-        api<Project[]>("/projects"),
         user ? Promise.resolve([]) : api<Guardrail[]>("/guardrails"),
         user ? Promise.resolve(null) : api<GatewaySettingsView>("/settings"),
       ]);
       setGuardrails(g);
       if (s) setGatewayLogging(s.settings.prompt_logging);
       setTags(t);
-      setProjects(p);
     } catch (e) {
       setError((e as Error).message);
     }
   }, [user]);
 
   const load = useCallback(async () => {
-    await Promise.all([loadKeys(), loadContext()]);
-  }, [loadKeys, loadContext]);
+    await Promise.all([loadKeys(), loadProjects(), loadContext()]);
+  }, [loadKeys, loadProjects, loadContext]);
 
   useEffect(() => {
     loadKeys();
   }, [loadKeys]);
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
 
   useEffect(() => {
     loadContext();
@@ -377,11 +435,11 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
         {(keys.length > 0 || filtering) && (
           <div className="filters">
             <TextInput caption="Search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="name or key" />
-            {projects.length > 0 && (
+            {(projectNames ?? []).length > 0 && (
               <MultiSelect
                 caption="Project"
                 // A user's keys are always in one of their projects.
-                options={[...projects.map((p) => ({ value: p.id, label: p.name })), ...(user ? [] : [{ value: NO_PROJECT, label: "No project" }])]}
+                options={[...(projectNames ?? []).map((p) => ({ value: p.id, label: p.name })), ...(user ? [] : [{ value: NO_PROJECT, label: "No project" }])]}
                 values={projectsPicked}
                 onChange={onProjectFilter}
               />
@@ -395,7 +453,8 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
             <Toggle caption="Logging" hint="Only the keys whose prompts and responses are logged now." checked={loggingOnly} onChange={setLoggingOnly} />
             {filtering && (
               <span className="muted small">
-                {shown.length} {shown.length === 1 ? "key matches" : "keys match"}
+                {shown.length}
+                {moreKeys ? "+ keys match" : shown.length === 1 ? " key matches" : " keys match"}
               </span>
             )}
           </div>
@@ -420,7 +479,11 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
           // An inactive project's keys are refused; its card shows them greyed out.
           <section key={g.id} className={g.project && !g.project.enabled ? "card list-card key-group inactive" : "card list-card key-group"}>
             {cardHead(g)}
-            {g.keys.length > 0 ? <ul className="list">{g.keys.map(keyItem)}</ul> : <p className="empty">No keys in this project yet.</p>}
+            {g.keys.length > 0 ? (
+              <ul className="list">{g.keys.map(keyItem)}</ul>
+            ) : (
+              <p className="empty">{moreKeys ? "Its keys come with Show more." : "No keys in this project yet."}</p>
+            )}
           </section>
         ))
       ) : shown.length === 0 ? (
@@ -431,6 +494,11 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
         <section className="card list-card key-group">
           <ul className="list">{shown.map(keyItem)}</ul>
         </section>
+      )}
+      {(moreKeys || moreProjects) && (
+        <div className="panel-actions">
+          <Button onClick={showMore}>Show more</Button>
+        </div>
       )}
 
       {editing && (

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::model::{KeyScope, VirtualKey};
 
-use super::AnyOf;
+use super::{AnyOf, Page};
 
 pub async fn list_keys(pool: &PgPool) -> sqlx::Result<Vec<VirtualKey>> {
     sqlx::query_as!(
@@ -37,6 +37,7 @@ pub async fn search_keys(
     visible: Option<&[Uuid]>,
     logging: bool,
     gateway_allows: bool,
+    page: Page,
 ) -> sqlx::Result<Vec<VirtualKey>> {
     sqlx::query_as!(
         VirtualKey,
@@ -54,7 +55,8 @@ pub async fn search_keys(
              AND ($6::uuid[] IS NULL OR (k.project_id = ANY($6) AND k.scope IN ('inference', 'project')))
              AND (NOT $7 OR p.prompt_logging = 'force'
                   OR (k.prompt_logging AND (p.prompt_logging = 'allow' OR (k.project_id IS NULL AND $8))))
-           ORDER BY k.created_at DESC"#,
+           ORDER BY lower(p.name) NULLS LAST, p.id, k.created_at DESC, k.id
+           LIMIT $9 OFFSET $10"#,
         search,
         tags.any.as_deref(),
         tags.none,
@@ -63,6 +65,8 @@ pub async fn search_keys(
         visible,
         logging,
         gateway_allows,
+        page.limit,
+        page.offset,
     )
     .fetch_all(pool)
     .await

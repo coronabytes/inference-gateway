@@ -120,6 +120,7 @@ On EKS, Bedrock credentials can use the pod's IAM role (IRSA or Pod Identity) th
 ## Reverse proxy
 
 - Terminate TLS in front of the gateway. The console's session cookie is `Secure`, so it needs HTTPS (or `http://localhost`).
+- Set `X-Forwarded-Host` and `X-Forwarded-Proto` to the address clients use, replacing any a client sent: the gateway trusts them for the addresses it publishes (OAuth metadata, sign-in links).
 - Allow long requests: a model call may take minutes. Set the proxy's read timeout at least as high as the longest deployment timeout (600 s by default).
 - Streamed responses are sent with `X-Accel-Buffering: no`, so nginx does not buffer them. Other proxies should not buffer `text/event-stream` responses either.
 - Request bodies are limited by the gateway itself (32 MB by default, a [setting](configuration.md#settings)); keep the proxy's limit at least as high.

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::{LIST_BUDGET_LOOKUPS, R, project_filter, search_text, tag_filter, valid_model_name, yes};
+use super::{LIST_BUDGET_LOOKUPS, R, page, project_filter, search_text, tag_filter, valid_model_name, yes};
 use crate::{
     admin::auth::Access,
     audit::{self, Actor},
@@ -250,6 +250,11 @@ pub(crate) struct KeyQuery {
     projects: Option<String>,
     /// Just the keys whose prompts and responses are logged now.
     logging: Option<bool>,
+    /// At most this many keys (1 to 1000); all without it. Keys come by project name (keys
+    /// without a project last), newest first, so pages fill the console's project cards in order.
+    limit: Option<i64>,
+    /// Keys to skip, with `limit`.
+    offset: Option<i64>,
 }
 
 /// List virtual keys
@@ -270,8 +275,9 @@ pub(super) async fn list_keys(
     let (tags, projects) = (tag_filter(q.tags.as_deref())?, project_filter(q.projects.as_deref())?);
     let settings = state.settings.get();
     let (logging, gateway_allows) = (q.logging.unwrap_or(false), settings.prompt_logging == PromptLogging::Allow);
-    let keys = db::search_keys(&state.db, search.as_deref(), &tags, &projects, access.projects(), logging, gateway_allows).await?;
-    let keys: Vec<VirtualKey> = keys.into_iter().filter(|k| sees_key(&access, k)).collect();
+    let page = page(q.limit, q.offset)?;
+    // The query keeps to what the caller sees (`sees_key`), so pages are whole.
+    let keys = db::search_keys(&state.db, search.as_deref(), &tags, &projects, access.projects(), logging, gateway_allows, page).await?;
     // A few at a time: missing counters are rebuilt from Postgres, which the request path shares.
     let mut budgets = Vec::with_capacity(keys.len());
     for chunk in keys.chunks(LIST_BUDGET_LOOKUPS) {

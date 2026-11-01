@@ -50,6 +50,13 @@ pub async fn connect(url: &str, max_connections: u32) -> Result<PgPool, sqlx::Er
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
+/// One page of a list: at most `limit` rows (all when `None`) after skipping `offset`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Page {
+    pub limit: Option<i64>,
+    pub offset: i64,
+}
+
 /// A list filter on a text array column (tags, projects): rows holding any of `any`, or, with
 /// `none`, rows holding nothing. The default does not narrow the list.
 #[derive(Default)]

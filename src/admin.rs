@@ -124,6 +124,17 @@ fn csv(s: Option<&str>) -> Option<Vec<&str>> {
 }
 
 /// A comma-separated list of ids; `None` when empty.
+/// A list's page from its `limit` (1 to 1000; all without it) and `offset` parameters.
+fn page(limit: Option<i64>, offset: Option<i64>) -> R<db::Page> {
+    if limit.is_some_and(|l| !(1..=1000).contains(&l)) {
+        return Err(AdminError::bad_request("limit must be 1 to 1000"));
+    }
+    if offset.is_some_and(|o| o < 0) {
+        return Err(AdminError::bad_request("offset must not be negative"));
+    }
+    Ok(db::Page { limit, offset: offset.unwrap_or(0) })
+}
+
 fn csv_ids(s: Option<&str>, what: &str) -> R<Option<Vec<Uuid>>> {
     csv(s)
         .map(|items| items.into_iter().map(|v| v.parse().map_err(|_| AdminError::bad_request(format!("{what} must be ids")))).collect())

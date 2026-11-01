@@ -57,6 +57,30 @@ return {1, est}
     )
 });
 
+/// A deployment's token and request rates in one call (see `RATE_SCRIPT` for the windows).
+/// KEYS: tokens this and last minute, requests this and last minute, all under the deployment's
+/// hash tag. ARGV: the token limit and the request limit (-1 for none), and the last minute's
+/// weight in thousandths. Refuses when the tokens are used up or one more request would pass its
+/// limit; otherwise counts the request.
+static DEPLOYMENT_RATE_SCRIPT: LazyLock<Script> = LazyLock::new(|| {
+    Script::new(
+        r"
+local weight = tonumber(ARGV[3])
+local function est(cur, prev)
+  return math.floor(tonumber(redis.call('GET', prev) or '0') * weight / 1000) + tonumber(redis.call('GET', cur) or '0')
+end
+local tpm, rpm = tonumber(ARGV[1]), tonumber(ARGV[2])
+if tpm >= 0 and est(KEYS[1], KEYS[2]) >= tpm then return 0 end
+if rpm >= 0 then
+  if est(KEYS[3], KEYS[4]) + 1 > rpm then return 0 end
+  redis.call('INCRBY', KEYS[3], 1)
+  redis.call('EXPIRE', KEYS[3], 130)
+end
+return 1
+",
+    )
+});
+
 /// Conversation storage quota. KEYS[1] holds the size of each of a virtual key's conversations
 /// (hash, field = root), KEYS[2] when each expires (sorted set, score = Unix seconds). Drops the
 /// conversations expired by ARGV[4] (now), then adds ARGV[2] bytes to conversation ARGV[1] if
@@ -314,10 +338,45 @@ impl Cache {
         }
     }
 
+    /// A deployment's per-minute counter (`tpm` or `rpm`). Both share the deployment's hash tag,
+    /// so `deployment_capacity` reads them in one script in any cluster.
+    fn deployment_rate_key(id: Uuid, metric: &str, window: i64) -> String {
+        format!("gw:rl:{{d:{id}}}:{metric}:{window}")
+    }
+
+    /// Whether a deployment has room for one more request under its token and request limits, in
+    /// one round trip; when it has, the request is counted. Allows the request if Valkey fails.
+    pub async fn deployment_capacity(&self, id: Uuid, tpm: Option<u64>, rpm: Option<u64>) -> RateDecision {
+        let now_ms = crate::util::now_ms();
+        let window = now_ms / 60_000;
+        let prev_weight = 1000 - (now_ms % 60_000) / 60;
+        let limit = |l: Option<u64>| l.map_or(-1, |l| l as i64);
+        let res: RedisResult<i64> = DEPLOYMENT_RATE_SCRIPT
+            .key(Self::deployment_rate_key(id, "tpm", window))
+            .key(Self::deployment_rate_key(id, "tpm", window - 1))
+            .key(Self::deployment_rate_key(id, "rpm", window))
+            .key(Self::deployment_rate_key(id, "rpm", window - 1))
+            .arg(limit(tpm))
+            .arg(limit(rpm))
+            .arg(prev_weight)
+            .invoke_async(&mut self.conn())
+            .await;
+        match res {
+            Ok(allowed) => RateDecision { allowed: allowed == 1, retry_after: (60 - (now_ms % 60_000) / 1000).max(1) as u64 },
+            Err(e) => {
+                tracing::warn!(error = %e, "valkey rate check failed; allowing request");
+                RateDecision { allowed: true, retry_after: 0 }
+            }
+        }
+    }
+
     /// Record consumption after the fact (token counts are known only at the end).
     async fn rate_add(&self, scope: &str, amount: u64) {
         let window = crate::util::now_ms() / 60_000;
-        let key = format!("gw:rl:{{{scope}}}:{window}");
+        self.count(format!("gw:rl:{{{scope}}}:{window}"), amount).await;
+    }
+
+    async fn count(&self, key: String, amount: u64) {
         let r: RedisResult<()> = redis::pipe().incr(&key, amount).ignore().expire(&key, 130).ignore().query_async(&mut self.conn()).await;
         if let Err(e) = r {
             tracing::warn!(error = %e, "failed to record token usage in valkey");
@@ -555,7 +614,7 @@ impl Cache {
             if let Some(d) = rec.deployment_id
                 && tokens > 0
             {
-                self.rate_add(&format!("d:{d}:tpm"), tokens).await;
+                self.count(Self::deployment_rate_key(d, "tpm", crate::util::now_ms() / 60_000), tokens).await;
             }
         };
         // Add spend to the key's and its project's day/week/month counters, but only to counters
@@ -691,6 +750,23 @@ mod tests {
         let url = std::env::var("GATEWAY_TEST_VALKEY_URL").ok()?;
         let cluster = std::env::var("GATEWAY_TEST_VALKEY_CLUSTER").is_ok_and(|v| v == "true");
         Some(Cache::new(&url, cluster).unwrap())
+    }
+
+    /// A random deployment; its counters expire within two minutes.
+    #[tokio::test]
+    async fn deployment_capacity_checks_tokens_and_counts_requests() {
+        let Some(cache) = test_cache() else { return };
+        let d = Uuid::new_v4();
+        // Two requests a minute: the third is refused, and an unlimited deployment never is.
+        assert!(cache.deployment_capacity(d, None, Some(2)).await.allowed);
+        assert!(cache.deployment_capacity(d, None, Some(2)).await.allowed);
+        assert!(!cache.deployment_capacity(d, None, Some(2)).await.allowed);
+        assert!(cache.deployment_capacity(d, None, None).await.allowed);
+        // Tokens recorded after a request use up the token limit; a refused request is not counted.
+        let e = Uuid::new_v4();
+        cache.count(Cache::deployment_rate_key(e, "tpm", crate::util::now_ms() / 60_000), 1000).await;
+        assert!(!cache.deployment_capacity(e, Some(1000), Some(1)).await.allowed);
+        assert!(cache.deployment_capacity(e, Some(5000), Some(1)).await.allowed, "the refused request was not counted");
     }
 
     /// Uses a random key id and removes its counters afterwards.

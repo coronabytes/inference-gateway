@@ -164,20 +164,14 @@ fn weighted_index(weights: &[f64], r: f64) -> usize {
     weights.len() - 1
 }
 
+/// Room for one more request under the deployment's token and request limits (one Valkey call);
+/// `Err` holds the seconds until the window moves on.
 async fn has_capacity(state: &AppState, d: &Deployment) -> Result<(), u64> {
-    if let Some(limit) = d.tpm_limit {
-        let r = state.cache.rate_check(&format!("d:{}:tpm", d.id), limit, 0).await;
-        if !r.allowed {
-            return Err(r.retry_after);
-        }
+    if d.tpm_limit.is_none() && d.rpm_limit.is_none() {
+        return Ok(());
     }
-    if let Some(limit) = d.rpm_limit {
-        let r = state.cache.rate_check(&format!("d:{}:rpm", d.id), limit, 1).await;
-        if !r.allowed {
-            return Err(r.retry_after);
-        }
-    }
-    Ok(())
+    let r = state.cache.deployment_capacity(d.id, d.tpm_limit, d.rpm_limit).await;
+    if r.allowed { Ok(()) } else { Err(r.retry_after) }
 }
 
 #[cfg(test)]
