@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, setListParam, type AwsRegion, type Credential, type CredentialInput, type CredentialSettings, type Provider, type Secrets } from "../api";
-import { Button, FileButton, MultiSelect, Segmented, Select, TextInput, useDebounced } from "../components/controls";
+import { Button, FileButton, MultiSelect, PageActions, Segmented, Select, TextInput, useDebounced } from "../components/controls";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, Modal, type ConfirmRequest } from "../components/ui";
 import { dateTime } from "../format";
 import { MISTRAL_REGIONS, PROVIDERS, PROVIDER_LABEL, VERTEX_REGIONS } from "../providers";
+import { useAdminData } from "../useAdminData";
 
 type BedrockAuth = "chain" | "keys" | "api_key";
 type AzureAuth = "api_key" | "entra" | "environment";
@@ -269,8 +270,6 @@ function BedrockPolicyDialog({ region, partition, onClose }: { region: string; p
 }
 
 export function Credentials() {
-  const [creds, setCreds] = useState<Credential[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Credential | "new" | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
   const [nameFilter, setNameFilter] = useState("");
@@ -283,18 +282,8 @@ export function Credentials() {
   setListParam(query, "provider", providerFilter);
   const filters = query.toString().replace(/%2C/g, ",");
 
-  const load = useCallback(async () => {
-    try {
-      setCreds(await api<Credential[]>(`/credentials${filters ? `?${filters}` : ""}`));
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [filters]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data, error, setError, reload: load } = useAdminData<Credential[]>(`/credentials${filters ? `?${filters}` : ""}`);
+  const creds = data ?? [];
 
   const remove = (c: Credential) =>
     setConfirming({
@@ -331,9 +320,7 @@ export function Credentials() {
             )}
           </div>
         )}
-        <button type="button" className="primary" onClick={() => setEditing("new")}>
-          New credential
-        </button>
+        <PageActions actions={[{ label: "New credential", onClick: () => setEditing("new"), primary: true }]} />
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="table-wrap">

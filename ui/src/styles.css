@@ -606,9 +606,9 @@ button.tag-toggle.on:hover:not(:disabled) { background: var(--accent); filter: b
 /* playground */
 .playground { height: calc(100vh - 175px); min-height: 480px; }
 .system-prompt summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
-.system-prompt > textarea { width: 100%; margin-top: 6px; }
-/* Structured output: the JSON schema, in a captioned box under its summary. */
-.schema-input { margin-top: 6px; }
+/* The system prompt and the JSON schema, in captioned boxes under their summaries. */
+.system-input, .schema-input { margin-top: 6px; }
+.system-input .control.multiline > textarea { max-height: 140px; overflow-y: auto; }
 /* It grows with the schema up to a few lines, then scrolls: the chat below keeps its room. */
 .schema-input .control.multiline > textarea { font-family: var(--mono); font-size: 12.5px; max-height: 140px; overflow-y: auto; }
 .schema-error { margin: 4px 0 0; color: var(--critical-text); font-size: 12.5px; }

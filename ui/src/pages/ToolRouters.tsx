@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Deployment, type McpServer, type McpServerTestResult, type ToolRoute, type ToolRouter, type ToolRouterInput } from "../api";
 import { Banner, Button, MenuButton, MultiSelect, PageActions, Select, TextArea, TextInput, Toggle } from "../components/controls";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TrashIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime } from "../format";
+import { useAdminData } from "../useAdminData";
 
 /** A router as the admin API takes it back. */
 const toInput = (r: ToolRouter): ToolRouterInput => ({
@@ -21,29 +22,12 @@ const DEFAULT_QUESTION = "Will answering the conversation's latest request need 
 /** Tool routers: a name requests use like an MCP server's, whose decision model picks which routes'
  *  tools each request gets. */
 export function ToolRouters() {
-  const [rows, setRows] = useState<ToolRouter[]>([]);
-  const [servers, setServers] = useState<McpServer[]>([]);
-  const [decisionModels, setDecisionModels] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, setError, reload: load } = useAdminData<[ToolRouter[], McpServer[], Deployment[]]>(["/tool-routers", "/mcp-servers", "/deployments"]);
+  const [rows, servers, deployments] = data ?? [[], [], []];
+  const decisionModels = [...new Set(deployments.filter((x) => x.mode === "decision").map((x) => x.model_name))].sort();
   const [editing, setEditing] = useState<ToolRouter | "new" | null>(null);
   const [copyOf, setCopyOf] = useState<ToolRouter | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const [r, s, d] = await Promise.all([api<ToolRouter[]>("/tool-routers"), api<McpServer[]>("/mcp-servers"), api<Deployment[]>("/deployments")]);
-      setRows(r);
-      setServers(s);
-      setDecisionModels([...new Set(d.filter((x) => x.mode === "decision").map((x) => x.model_name))].sort());
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const serverName = (id: string) => servers.find((s) => s.id === id)?.name ?? "missing server";
 

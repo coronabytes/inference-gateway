@@ -5,6 +5,7 @@ import { Button } from "../components/controls";
 import { Badge, ErrorBanner, Modal } from "../components/ui";
 import { dateTime } from "../format";
 import { labelQuery, type Labels } from "../labels";
+import { useAdminData } from "../useAdminData";
 
 const KIND_LABEL = { mcp: "MCP server", a2a: "A2A agent" } as const;
 
@@ -14,27 +15,12 @@ const KIND_LABEL = { mcp: "MCP server", a2a: "A2A agent" } as const;
  * the key chosen (`back`).
  */
 export function KeySignIns({ keyItem: k, back, onClose }: { keyItem: Pick<VirtualKey, "id" | "name">; back?: "playground"; onClose: () => void }) {
-  const [rows, setRows] = useState<KeyConnection[] | null>(null);
-  /** The MCP clients signed in to the gateway as this key. */
-  const [apps, setApps] = useState<ClientGrant[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, setError, reload: load } = useAdminData<[KeyConnection[], ClientGrant[]]>([`/keys/${k.id}/connections`, `/keys/${k.id}/apps`]);
+  // The upstreams the key signs in to, and the MCP clients signed in to the gateway as this key.
+  const [rows, apps] = data ?? [null, null];
   const [busy, setBusy] = useState<string | null>(null);
   /** The upstream whose sign-ins per tenant or user are shown. */
   const [open, setOpen] = useState<KeyConnection | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const [c, a] = await Promise.all([api<KeyConnection[]>(`/keys/${k.id}/connections`), api<ClientGrant[]>(`/keys/${k.id}/apps`)]);
-      setRows(c);
-      setApps(a);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [k.id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const path = (c: KeyConnection) => `/keys/${k.id}/connections/${c.kind}/${c.upstream_id}`;
   const signIn = async (c: KeyConnection) => {

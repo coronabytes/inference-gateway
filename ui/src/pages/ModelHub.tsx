@@ -9,7 +9,7 @@ import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
 import { GUARDRAIL_LABEL } from "./Guardrails";
-import { MODES } from "./Models";
+import { MODES } from "./DeploymentForm";
 
 /** Capabilities the hub shows, by path in a model's `capabilities`: an icon, named by its label. */
 const CAPABILITIES: { path: string; label: string; icon: ReactNode }[] = [

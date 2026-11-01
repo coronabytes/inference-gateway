@@ -1,26 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type AdminUser, type NamedItem, type OidcSettings, type OidcSettingsInput } from "../api";
 import { Banner, Button, MultiSelect, TextInput, Toggle } from "../components/controls";
 import { Badge, ConfirmDialog, ErrorBanner, IconButton, TrashIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, relative } from "../format";
+import { useAdminData } from "../useAdminData";
 
 /** Cluster → Single sign-on: the OpenID Connect provider admins sign in with. */
 export function SingleSignOn() {
-  const [settings, setSettings] = useState<OidcSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setSettings(await api<OidcSettings>("/settings/oidc"));
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: settings, error, setError, reload: load } = useAdminData<OidcSettings>("/settings/oidc");
 
   return (
     <div className="page">
@@ -32,25 +19,9 @@ export function SingleSignOn() {
 
 /** Access → Users: everyone who signed in, admins and users, and the projects each user works in. */
 export function Admins() {
-  const [admins, setAdmins] = useState<AdminUser[]>([]);
-  const [projects, setProjects] = useState<NamedItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, setError, reload: load } = useAdminData<[AdminUser[], NamedItem[]]>(["/admins", "/projects/options"]);
+  const [admins, projects] = data ?? [[], []];
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const [a, p] = await Promise.all([api<AdminUser[]>("/admins"), api<NamedItem[]>("/projects/options")]);
-      setAdmins(a);
-      setProjects(p);
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   return (
     <div className="page">
