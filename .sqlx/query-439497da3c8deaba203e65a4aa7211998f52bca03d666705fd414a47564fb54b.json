@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT gw_request_log_partitions($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "gw_request_log_partitions",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "439497da3c8deaba203e65a4aa7211998f52bca03d666705fd414a47564fb54b"
+}
