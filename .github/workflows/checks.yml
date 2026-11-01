@@ -1,7 +1,8 @@
 # Checks formatting and lints, tests the gateway and the admin UI, checks the sqlx query metadata against a live database and
 # the committed OpenAPI document and console API types against the handlers, and scans the dependencies for advisories.
 #
-# Runs on pushes to main and on pull requests, and as the first stage of the release workflow.
+# Runs on pushes to main and on pull requests, and as the first stage of a release run by hand. A tag
+# release does not run it again: it waits for the run of the tagged commit's push to main.
 # Actions are pinned to commit SHAs (Dependabot proposes the bumps); the comment names the version.
 name: Checks
 
