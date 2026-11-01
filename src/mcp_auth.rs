@@ -233,6 +233,8 @@ impl Store {
             reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .dns_resolver(state.cfg.upstream_policy.resolver())
+                // Not through an environment proxy, which would resolve hostnames past the policy.
+                .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()
                 .expect("HTTP client")

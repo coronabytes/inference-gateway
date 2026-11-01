@@ -21,6 +21,14 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     Sha256::digest(data).into()
 }
 
+/// Whether two URLs share scheme, host and port: a secret sent to one goes to the same place.
+pub fn same_origin(a: &str, b: &str) -> bool {
+    match (reqwest::Url::parse(a.trim()), reqwest::Url::parse(b.trim())) {
+        (Ok(a), Ok(b)) => a.origin().is_tuple() && a.origin() == b.origin(),
+        _ => false,
+    }
+}
+
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -35,4 +43,20 @@ pub fn truncate(s: &str, max: usize) -> String {
         end -= 1;
     }
     format!("{}…", &s[..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_origin_compares_scheme_host_and_port() {
+        assert!(same_origin("https://api.example.com/v1", "https://api.example.com/other/"));
+        assert!(same_origin("https://api.example.com", "https://api.example.com:443/v1"));
+        assert!(!same_origin("https://api.example.com", "https://evil.example.com"));
+        assert!(!same_origin("https://api.example.com", "http://api.example.com"));
+        assert!(!same_origin("https://api.example.com", "https://api.example.com:8443"));
+        assert!(!same_origin("not a url", "not a url"));
+        assert!(!same_origin("data:text/plain,x", "data:text/plain,x"));
+    }
 }

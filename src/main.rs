@@ -133,6 +133,9 @@ async fn run() -> Result<(), String> {
         // Upstream URLs are admin-configured: resolve them only to allowed addresses, and do not
         // follow redirects, which could lead to an address the resolver never saw.
         .dns_resolver(cfg.upstream_policy.resolver())
+        // A proxy from the environment (HTTPS_PROXY, ALL_PROXY) would resolve hostnames itself,
+        // past the resolver above.
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| format!("http client: {e}"))?;

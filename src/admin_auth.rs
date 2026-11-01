@@ -893,6 +893,8 @@ impl HttpClient {
             reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .dns_resolver(policy.resolver())
+                // Not through an environment proxy, which would resolve hostnames past the policy.
+                .no_proxy()
                 .timeout(StdDuration::from_secs(15))
                 .build()
                 .expect("http client"),
@@ -1020,7 +1022,13 @@ async fn put_settings(
     let existing = db::get_oidc_settings(&state.db).await?;
     let issuer_url = i.issuer_url.trim().trim_end_matches('/').to_string();
     let public_url = i.public_url.trim().trim_end_matches('/').to_string();
+    // The stored secret goes to the issuer's token endpoint: a provider on another host needs it
+    // entered again, so changing the issuer cannot collect it.
+    let moved = existing.as_ref().is_some_and(|e| e.client_secret.is_some() && !crate::util::same_origin(&e.issuer_url, &issuer_url));
     let client_secret = match i.client_secret {
+        None if moved => {
+            return Err(AdminError::bad_request("the issuer is on another host now: enter the client secret again"));
+        }
         None => existing.as_ref().and_then(|e| e.client_secret.clone()),
         Some(s) if s.is_empty() => None,
         Some(s) => Some(state.cfg.secret_box.seal(s.as_bytes())),
