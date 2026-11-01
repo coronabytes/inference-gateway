@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT gw_drop_request_log_partitions(now() - make_interval(days => $1))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "gw_drop_request_log_partitions",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "002844912fbee201ad2fa4d961adb34fe2c98d4ab0ff523732409dfeceeaa2b6"
+}

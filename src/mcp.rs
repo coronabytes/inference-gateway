@@ -820,8 +820,14 @@ async fn rpc(state: &AppState, server: &McpServer, session: &Session, msg: &Valu
     let mut body = resp.bytes_stream();
     let mut parser = SseParser::default();
     let mut buf = Vec::new();
+    let mut read = 0;
     while let Some(chunk) = body.next().await {
         let chunk = chunk.map_err(failed)?;
+        // Events before the reply count too: a server cannot keep the call reading forever.
+        read += chunk.len();
+        if read > MAX_READ {
+            return Err(RpcError::other(format!("{method}: the answer is too large")));
+        }
         if sse {
             // An event stream may carry requests and notifications before the reply.
             for event in parser.feed(&chunk) {
@@ -829,8 +835,6 @@ async fn rpc(state: &AppState, server: &McpServer, session: &Session, msg: &Valu
                     return Ok((session, reply));
                 }
             }
-        } else if buf.len() + chunk.len() > MAX_READ {
-            return Err(RpcError::other(format!("{method}: the answer is too large")));
         } else {
             buf.extend_from_slice(&chunk);
         }

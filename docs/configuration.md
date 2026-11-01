@@ -76,7 +76,7 @@ Changed in the console under **Cluster → Settings**, or with `GET`/`PUT /admin
 | Full reload every | `reload_secs` | 60 s | 5–3600 | Periodic reload from Postgres, which catches any change a replica missed over Valkey. |
 | Adaptive routing | `adaptive_routing` | on | | Deployments get less traffic while their recent calls fail or are slow. Off, requests spread by the configured weights only. |
 | Sticky routing | `sticky_routing` | on | | Conversations stay on the deployment, and on an auto router the route, that served them. Off, every request is balanced on its own. |
-| Request log | `request_log_retention_days` | 90 days | 0 or 7–1080 | How long request logs, and so metrics, are kept. `0` keeps them forever. The request log cannot be turned off. |
+| Request log | `request_log_retention_days` | 90 days | 0 or 7–1080 | How long request logs, and so metrics, are kept. `0` keeps them forever. The log is stored in daily (UTC) partitions, and an expired day is dropped as a whole. The request log cannot be turned off. |
 | Audit log | `audit_log_retention_days` | 90 days | 0 or 7–1080 | How long audit log entries are kept, independently of the request log. `0` keeps them forever. The audit log cannot be turned off. |
 | Conversation state, idle | `response_ttl_minutes` | 15 min | 1–10080 | How long a `previous_response_id` conversation can go unused and still be continued. Each continuation starts the time again. |
 | Conversation state per key | `conversation_quota_mb` | 64 MB | 0–16384 | History one key may keep in Valkey: the size of its conversations that have not expired. Turns beyond it are answered but cannot be continued. |
