@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   api,
   type Credential,
@@ -13,6 +13,7 @@ import { Button, MenuButton, MultiSelect, PageActions, Segmented, Select, TextAr
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, ms, usd } from "../format";
 import { PROVIDER_LABEL } from "../providers";
+import { useAdminData } from "../useAdminData";
 
 const PROVIDERS: GuardrailProvider[] = ["bedrock", "mistral", "model_armor"];
 
@@ -106,28 +107,12 @@ function target(g: Guardrail): string {
 }
 
 export function Guardrails() {
-  const [rows, setRows] = useState<GuardrailListItem[]>([]);
-  const [creds, setCreds] = useState<Credential[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, setError, reload: load } = useAdminData<[GuardrailListItem[], Credential[]]>(["/guardrails", "/credentials"]);
+  const [rows, creds] = data ?? [[], []];
   const [editing, setEditing] = useState<Guardrail | "new" | null>(null);
   const [copyOf, setCopyOf] = useState<Guardrail | null>(null);
   const [trying, setTrying] = useState<Guardrail | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const [g, c] = await Promise.all([api<GuardrailListItem[]>("/guardrails"), api<Credential[]>("/credentials")]);
-      setRows(g);
-      setCreds(c);
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const remove = (g: Guardrail) =>
     setConfirming({

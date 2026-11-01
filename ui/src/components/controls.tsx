@@ -28,7 +28,8 @@ function Textarea(props: ComponentProps<"textarea">) {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    // Hidden (in a closed <details>) it has no height to measure; `rows` sizes it until it changes.
+    if (el.scrollHeight) el.style.height = `${el.scrollHeight}px`;
   }, [props.value]);
   return <textarea ref={ref} aria-describedby={useHint()?.id} {...props} />;
 }
@@ -107,6 +108,27 @@ export function TextArea({ caption, hint, className, ...props }: Omit<ComponentP
         <Textarea {...props} />
       </label>
     </WithHint>
+  );
+}
+
+/**
+ * The message box of a chat composer, beside its buttons: no caption (`aria-label` names it), one
+ * line that grows with the text. Enter calls `onSend`, Shift+Enter starts a new line.
+ */
+export function MessageInput({ onSend, onKeyDown, ...props }: Omit<ComponentProps<"textarea">, "children"> & { onSend: () => void }) {
+  return (
+    <textarea
+      rows={1}
+      aria-describedby={useHint()?.id}
+      {...props}
+      onKeyDown={(e) => {
+        onKeyDown?.(e);
+        if (!e.defaultPrevented && e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          onSend();
+        }
+      }}
+    />
   );
 }
 

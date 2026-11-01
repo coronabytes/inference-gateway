@@ -4,8 +4,8 @@ import { Button, MenuButton, MultiSelect, PageActions, TextInput, Toggle } from 
 import { TagEditor, TagList } from "../components/Tags";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, ms, usd } from "../format";
+import { useAdminData } from "../useAdminData";
 import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState, signInPer, withClient } from "./UpstreamAuth";
-
 
 /** Where clients find an agent's card through the gateway. */
 const cardUrl = (name: string) => `${location.origin}/a2a/${name}/.well-known/agent-card.json`;
@@ -27,30 +27,13 @@ const toInput = (a: A2aAgent): A2aAgentInput => ({
 
 /** A2A agents: agents the gateway proxies at `/a2a/{name}`, with its own credentials for them. */
 export function A2aAgents() {
-  const [rows, setRows] = useState<A2aAgent[]>([]);
-  const [projects, setProjects] = useState<NamedItem[]>([]);
-  const [tags, setTags] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, setError, reload: load } = useAdminData<[A2aAgent[], NamedItem[], TagInfo[]]>(["/a2a-agents", "/projects/options", "/tags"]);
+  const [rows, projects, tagInfo] = data ?? [[], [], []];
+  const tags = tagInfo.map((t) => t.tag);
   const [editing, setEditing] = useState<A2aAgent | "new" | null>(null);
   const [copyOf, setCopyOf] = useState<A2aAgent | null>(null);
   const [trying, setTrying] = useState<A2aAgent | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const [a, p, t] = await Promise.all([api<A2aAgent[]>("/a2a-agents"), api<NamedItem[]>("/projects/options"), api<TagInfo[]>("/tags")]);
-      setRows(a);
-      setProjects(p);
-      setTags(t.map((x) => x.tag));
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const toggle = async (a: A2aAgent) => {
     try {

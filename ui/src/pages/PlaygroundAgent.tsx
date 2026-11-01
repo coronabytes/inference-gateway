@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { adminFetch, api } from "../api";
-import { Banner, SplitButton } from "../components/controls";
+import { Banner, MessageInput, SplitButton } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { ErrorBanner } from "../components/ui";
 import { ms } from "../format";
@@ -195,13 +195,6 @@ export function AgentPanel({ keyId, keyName, agent, labels }: { keyId: string; k
     }
   };
 
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  };
-
   const restart = () => {
     abort.current?.abort();
     setTurns([]);
@@ -276,11 +269,10 @@ export function AgentPanel({ keyId, keyName, agent, labels }: { keyId: string; k
           ))}
         </div>
         <div className="composer">
-          <textarea
-            rows={1}
+          <MessageInput
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKey}
+            onSend={send}
             placeholder={rpc ? "Message… (Enter to send, Shift+Enter for a new line)" : "The agent offers no JSON-RPC interface"}
             disabled={!rpc}
             aria-label="Message"

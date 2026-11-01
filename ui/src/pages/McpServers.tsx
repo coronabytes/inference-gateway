@@ -4,8 +4,8 @@ import { Button, MenuButton, MultiSelect, PageActions, Segmented, Switch, TextIn
 import { TagEditor, TagList } from "../components/Tags";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TryIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime, ms, usd } from "../format";
+import { useAdminData } from "../useAdminData";
 import { AUTH_LABEL, AuthFields, type AuthState, authInput, authMissing, authState, signInPer, withClient } from "./UpstreamAuth";
-
 
 /** Where clients reach one server through the gateway, or every server with no name. */
 const endpoint = (name?: string) => `${location.origin}/mcp${name ? `/${name}` : ""}`;
@@ -40,30 +40,13 @@ function toolsSummary(s: McpServer): string {
 
 /** MCP servers: upstreams the gateway proxies at `/mcp/{name}` and combines at `/mcp`, with its own credentials for them. */
 export function McpServers() {
-  const [rows, setRows] = useState<McpServer[]>([]);
-  const [projects, setProjects] = useState<NamedItem[]>([]);
-  const [tags, setTags] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, setError, reload: load } = useAdminData<[McpServer[], NamedItem[], TagInfo[]]>(["/mcp-servers", "/projects/options", "/tags"]);
+  const [rows, projects, tagInfo] = data ?? [[], [], []];
+  const tags = tagInfo.map((t) => t.tag);
   const [editing, setEditing] = useState<McpServer | "new" | null>(null);
   const [copyOf, setCopyOf] = useState<McpServer | null>(null);
   const [tools, setTools] = useState<McpServer | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const [s, p, t] = await Promise.all([api<McpServer[]>("/mcp-servers"), api<NamedItem[]>("/projects/options"), api<TagInfo[]>("/tags")]);
-      setRows(s);
-      setProjects(p);
-      setTags(t.map((x) => x.tag));
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const update = async (s: McpServer, changes: Partial<McpServerInput>) => {
     await api(`/mcp-servers/${s.id}`, { method: "PUT", json: { ...toInput(s), ...changes } });

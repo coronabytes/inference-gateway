@@ -1,6 +1,6 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminFetch, api, GUARDRAILS_HEADER, type Mode, type NamedItem, type PlaygroundOptions, type ReasoningEffort } from "../api";
-import { Banner, Button, FileButton, MenuButton, MultiSelect, SplitButton, TextArea } from "../components/controls";
+import { Banner, Button, FileButton, MenuButton, MessageInput, MultiSelect, SplitButton, TextArea } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { LabelEditor } from "../components/LabelInput";
 import { SearchSelect } from "../components/SearchSelect";
@@ -10,11 +10,25 @@ import { bytes, compact, ms } from "../format";
 import { labelHeaders, type Labels } from "../labels";
 import { sse } from "../sse";
 import { KeySignIns, takeSignInResult } from "./KeySignIns";
-import { MODES } from "./Models";
+import { MODES } from "./DeploymentForm";
 import { AgentPanel } from "./PlaygroundAgent";
 import { DecisionPanel, EmbeddingPanel, RerankPanel } from "./PlaygroundPanels";
-
-type Api = "chat" | "responses" | "messages";
+import {
+  APIS,
+  applyEvent,
+  buildBody,
+  dataUrl,
+  indented,
+  isImage,
+  parseFull,
+  type Api,
+  type Attachment,
+  type ChatOptions,
+  type McpView,
+  type Result,
+  type Source,
+  type Turn,
+} from "./playground/protocol";
 
 /** Structured output: the contact the Structured sample asks for. Strict, as OpenAI requires: every
  *  property required and no others. */
@@ -59,30 +73,10 @@ const MCP_PICKED = "playground.mcp";
 
 const NO_OPTIONS: PlaygroundOptions = { models: [], guardrails: [], mcp_servers: [], a2a_agents: [] };
 
-const APIS: { id: Api; label: string; path: string }[] = [
-  { id: "responses", label: "Responses", path: "/v1/responses" },
-  { id: "chat", label: "Chat Completions", path: "/v1/chat/completions" },
-  { id: "messages", label: "Anthropic Messages", path: "/v1/messages" },
-];
-
 /** What every chat API takes inline: the common image types and PDFs. */
 const ATTACHABLE = ["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"];
 /** Per file; the whole request must stay under the gateway's body limit (32 MB by default). */
 const MAX_ATTACHMENT = 20 * 1024 * 1024;
-
-/** A file sent with a user turn, inline as base64. */
-interface Attachment {
-  name: string;
-  type: string;
-  size: number;
-  data: string;
-}
-
-interface Turn {
-  role: "user" | "assistant";
-  text: string;
-  files?: Attachment[];
-}
 
 /** `x-gateway-guardrail-prompt`: the masked prompt, base64 of its UTF-8. */
 function maskedPrompt(res: Response): string | undefined {
@@ -95,9 +89,6 @@ function maskedPrompt(res: Response): string | undefined {
   }
 }
 
-const dataUrl = (f: Attachment) => `data:${f.type};base64,${f.data}`;
-const isImage = (f: Attachment) => f.type.startsWith("image/");
-
 function readAttachment(file: File): Promise<Attachment> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -109,47 +100,6 @@ function readAttachment(file: File): Promise<Attachment> {
     r.readAsDataURL(file);
   });
 }
-
-/** A turn's content in the API's shape: plain text, or its files and then its text as parts. */
-function content(apiId: Api, t: Turn) {
-  if (!t.files?.length) return t.text;
-  const text = t.text ? [t.text] : [];
-  switch (apiId) {
-    case "chat":
-      return [
-        ...t.files.map((f) =>
-          isImage(f) ? { type: "image_url", image_url: { url: dataUrl(f) } } : { type: "file", file: { filename: f.name, file_data: dataUrl(f) } },
-        ),
-        ...text.map((s) => ({ type: "text", text: s })),
-      ];
-    case "responses":
-      return [
-        ...t.files.map((f) => (isImage(f) ? { type: "input_image", image_url: dataUrl(f) } : { type: "input_file", filename: f.name, file_data: dataUrl(f) })),
-        ...text.map((s) => ({ type: "input_text", text: s })),
-      ];
-    case "messages":
-      return [
-        ...t.files.map((f) => {
-          const source = { type: "base64", media_type: f.type, data: f.data };
-          return isImage(f) ? { type: "image", source } : { type: "document", title: f.name, source };
-        }),
-        ...text.map((s) => ({ type: "text", text: s })),
-      ];
-  }
-}
-
-
-/** A web page an answer cites. */
-interface Source {
-  url: string;
-  title?: string;
-}
-
-/** What the gateway did with an MCP server's tools for a reply, as the API returned it: the tools
- *  the server offered (Responses only), or a call with its arguments and result. */
-type McpView =
-  | { kind: "tools"; server: string; tools: string[] }
-  | { kind: "call"; id?: string; server: string; tool: string; arguments: string; output?: string; error?: string };
 
 interface Msg extends Turn {
   pending?: boolean;
@@ -181,232 +131,6 @@ interface Msg extends Turn {
     toolRoutes?: string;
     toolRoute?: string;
   };
-}
-
-interface Result {
-  text: string;
-  input?: number;
-  output?: number;
-  /** Web searches the model ran, where the API reports them. */
-  searches?: number;
-  sources: Source[];
-  mcp: McpView[];
-  responseId?: string;
-  error?: string;
-}
-
-/** JSON indented for reading; `null` for anything else, such as a truncated answer or one from a
- *  model that ignored the schema. */
-function indented(text: string): string | null {
-  try {
-    return JSON.stringify(JSON.parse(text), null, 2);
-  } catch {
-    return null;
-  }
-}
-
-/** Adds the pages not cited yet. */
-function cite(r: Result, sources: (Source | undefined)[]) {
-  for (const s of sources) if (s?.url && !r.sources.some((x) => x.url === s.url)) r.sources.push({ url: s.url, title: s.title });
-}
-
-/** A Responses API output item of the gateway's MCP tools: `mcp_list_tools` or `mcp_call`. */
-function responsesMcp(o: any): McpView | null {
-  if (o?.type === "mcp_list_tools") return { kind: "tools", server: o.server_label, tools: (o.tools ?? []).map((t: any) => t.name) };
-  if (o?.type === "mcp_call")
-    return { kind: "call", server: o.server_label, tool: o.name, arguments: o.arguments ?? "", output: o.output ?? undefined, error: o.error ?? undefined };
-  return null;
-}
-
-/** Anthropic's MCP blocks: `mcp_tool_use` starts a call, the `mcp_tool_result` after it completes it. */
-function messagesMcp(r: Result, b: any) {
-  if (b?.type === "mcp_tool_use") r.mcp.push({ kind: "call", id: b.id, server: b.server_name, tool: b.name, arguments: JSON.stringify(b.input ?? {}) });
-  if (b?.type !== "mcp_tool_result") return;
-  const call = r.mcp.find((m) => m.kind === "call" && m.id === b.tool_use_id);
-  if (call?.kind !== "call") return;
-  const text = (b.content ?? []).map((c: any) => c.text ?? JSON.stringify(c)).join("\n");
-  if (b.is_error) call.error = text;
-  else call.output = text;
-}
-
-/** What a Responses API output cites, and how many web searches it ran. */
-function responsesOutput(output: any[] | undefined, r: Result) {
-  const items = output ?? [];
-  r.searches = items.filter((o) => o.type === "web_search_call").length || r.searches;
-  cite(r, items.flatMap((o) => o.content ?? []).flatMap((c: any) => c.annotations ?? []).filter((a: any) => a.type === "url_citation"));
-}
-
-/** Options sent with every chat request, in the chosen API's own fields. */
-interface ChatOptions {
-  effort: ReasoningEffort | "";
-  /** Let the model search the web: the API's own web search tool. */
-  webSearch: boolean;
-  /** Gateway MCP servers whose tools the model gets: the gateway runs the calls. */
-  mcp: string[];
-  /** Structured output: the answer is JSON matching this schema. */
-  schema: object | null;
-}
-
-/** A reasoning effort in each API's own fields; Anthropic's `none` turns thinking off. */
-function effortFields(apiId: Api, effort: ReasoningEffort | "") {
-  if (!effort) return {};
-  switch (apiId) {
-    case "chat":
-      return { reasoning_effort: effort };
-    case "responses":
-      return { reasoning: { effort } };
-    case "messages":
-      return effort === "none" ? { thinking: { type: "disabled" } } : { thinking: { type: "adaptive" }, output_config: { effort } };
-  }
-}
-
-/** Web search, MCP servers and a JSON schema for the answer in each API's own fields, with the effort's.
- *  MCP servers are OpenAI's `mcp` tools in Responses and Chat Completions, Anthropic's `mcp_servers` in Messages. */
-function optionFields(apiId: Api, { effort, webSearch, mcp, schema }: ChatOptions) {
-  const fields: Record<string, unknown> = effortFields(apiId, effort);
-  const tools: object[] = [];
-  const mcpTools = mcp.map((server_label) => ({ type: "mcp", server_label, require_approval: "never" }));
-  switch (apiId) {
-    case "chat":
-      if (webSearch) fields.web_search_options = {};
-      tools.push(...mcpTools);
-      if (schema) fields.response_format = { type: "json_schema", json_schema: { name: "output", schema, strict: true } };
-      break;
-    case "responses":
-      if (webSearch) tools.push({ type: "web_search" });
-      tools.push(...mcpTools);
-      if (schema) fields.text = { format: { type: "json_schema", name: "output", schema, strict: true } };
-      break;
-    case "messages":
-      if (webSearch) tools.push({ type: "web_search_20250305", name: "web_search", max_uses: 5 });
-      if (mcp.length) fields.mcp_servers = mcp.map((name) => ({ type: "url", name }));
-      // Beside the effort, if one is set.
-      if (schema) fields.output_config = { ...(fields.output_config as object), format: { type: "json_schema", schema } };
-      break;
-  }
-  if (tools.length) fields.tools = tools;
-  return fields;
-}
-
-/** Chat requests always stream: every chat API supports it, and replies appear as they are written. */
-function buildBody(apiId: Api, model: string, system: string, history: Turn[], previousId: string | null, store: boolean, options: ChatOptions) {
-  const sys = system.trim();
-  switch (apiId) {
-    case "chat":
-      return {
-        model,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...optionFields(apiId, options),
-        messages: [...(sys ? [{ role: "system", content: sys }] : []), ...history.map((t) => ({ role: t.role, content: content(apiId, t) }))],
-      };
-    case "responses": {
-      // Chained: only the new user turn plus previous_response_id; the gateway holds the rest.
-      const turns = previousId ? history.slice(-1) : history;
-      return {
-        model,
-        stream: true,
-        store,
-        ...optionFields(apiId, options),
-        ...(sys && { instructions: sys }),
-        ...(previousId && { previous_response_id: previousId }),
-        input: turns.map((t) => ({ role: t.role, content: content(apiId, t) })),
-      };
-    }
-    case "messages":
-      return {
-        model,
-        stream: true,
-        max_tokens: 4096,
-        ...optionFields(apiId, options),
-        ...(sys && { system: sys }),
-        messages: history.map((t) => ({ role: t.role, content: content(apiId, t) })),
-      };
-  }
-}
-
-/** Applies one stream event to the running result. */
-function applyEvent(apiId: Api, ev: { event?: string; data: string }, r: Result) {
-  if (ev.data === "[DONE]") return;
-  let v: any;
-  try {
-    v = JSON.parse(ev.data);
-  } catch {
-    return;
-  }
-  if (v.error) r.error = v.error.message ?? String(v.error);
-  switch (apiId) {
-    case "chat":
-      r.text += v.choices?.[0]?.delta?.content ?? "";
-      cite(r, (v.choices?.[0]?.delta?.annotations ?? []).map((a: any) => a.url_citation));
-      if (v.usage) Object.assign(r, { input: v.usage.prompt_tokens, output: v.usage.completion_tokens });
-      break;
-    case "responses":
-      if (v.type === "response.output_text.delta") r.text += v.delta ?? "";
-      if (v.type === "response.output_text.annotation.added" && v.annotation?.type === "url_citation") cite(r, [v.annotation]);
-      if (v.type === "response.output_item.done") {
-        const m = responsesMcp(v.item);
-        if (m) r.mcp.push(m);
-      }
-      if (v.type === "response.completed" || v.type === "response.incomplete") {
-        r.responseId = v.response?.id;
-        Object.assign(r, { input: v.response?.usage?.input_tokens, output: v.response?.usage?.output_tokens });
-        responsesOutput(v.response?.output, r);
-      }
-      if (v.type === "response.failed") r.error = v.response?.error?.message ?? "response failed";
-      if (v.type === "error") r.error = v.message ?? r.error;
-      break;
-    case "messages": {
-      if (v.type === "content_block_delta" && v.delta?.type === "text_delta") r.text += v.delta.text;
-      if (v.type === "content_block_delta" && v.delta?.type === "citations_delta") cite(r, [v.delta.citation]);
-      if (v.type === "content_block_start") messagesMcp(r, v.content_block);
-      const u = v.type === "message_start" ? v.message?.usage : v.type === "message_delta" ? v.usage : null;
-      if (u) {
-        const input = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
-        if (input) r.input = input;
-        if (u.output_tokens) r.output = u.output_tokens;
-        if (u.server_tool_use?.web_search_requests) r.searches = u.server_tool_use.web_search_requests;
-      }
-      break;
-    }
-  }
-}
-
-function parseFull(apiId: Api, v: any): Result {
-  switch (apiId) {
-    case "chat": {
-      const m = v.choices?.[0]?.message;
-      const r: Result = { text: m?.content ?? "", input: v.usage?.prompt_tokens, output: v.usage?.completion_tokens, sources: [], mcp: [] };
-      cite(r, (m?.annotations ?? []).map((a: any) => a.url_citation));
-      return r;
-    }
-    case "responses": {
-      const text = (v.output ?? [])
-        .filter((o: any) => o.type === "message")
-        .flatMap((o: any) => o.content ?? [])
-        .map((c: any) => c.text ?? c.refusal ?? "")
-        .join("");
-      const mcp = (v.output ?? []).map(responsesMcp).filter((m: McpView | null): m is McpView => !!m);
-      const r: Result = { text, responseId: v.id, input: v.usage?.input_tokens, output: v.usage?.output_tokens, sources: [], mcp };
-      responsesOutput(v.output, r);
-      return r;
-    }
-    case "messages": {
-      const u = v.usage ?? {};
-      const blocks = (v.content ?? []).filter((c: any) => c.type === "text");
-      const r: Result = {
-        text: blocks.map((c: any) => c.text).join(""),
-        input: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
-        output: u.output_tokens,
-        searches: u.server_tool_use?.web_search_requests,
-        sources: [],
-        mcp: [],
-      };
-      for (const b of v.content ?? []) messagesMcp(r, b);
-      cite(r, blocks.flatMap((c: any) => c.citations ?? []));
-      return r;
-    }
-  }
 }
 
 /** What the gateway did with MCP tools for a reply: the tools each server offered, and each call
@@ -444,6 +168,70 @@ function McpItems({ items }: { items: McpView[] }) {
     </div>
   );
 }
+
+/**
+ * One message with its files, MCP items, sources and meta line. Memoized: a reply's updates replace
+ * only the last message, so the finished ones above it do not render again while it streams.
+ */
+const Bubble = memo(function Bubble({ m }: { m: Msg }) {
+  return (
+    <div className={`bubble-row ${m.role}`}>
+      <div className={`bubble ${m.role}${m.error ? " failed" : ""}${m.json ? " json" : ""}`}>
+        {!!m.files?.length && (
+          <div className="bubble-files">
+            {m.files.map((f, j) =>
+              isImage(f) ? (
+                <img key={j} src={dataUrl(f)} alt={f.name} title={f.name} />
+              ) : (
+                <span key={j} className="tag" title={`${f.name} · ${bytes(f.size)}`}>
+                  PDF · {f.name}
+                </span>
+              ),
+            )}
+          </div>
+        )}
+        {!!m.mcp?.length && <McpItems items={m.mcp} />}
+        {m.text || (m.pending ? <span className="typing" aria-label="Waiting for response">…</span> : null)}
+        {m.error && <div className="bubble-error">{m.error}</div>}
+        {!!m.sources?.length && (
+          <div className="bubble-sources">
+            Sources:{" "}
+            {m.sources.map((s, j) => (
+              <Fragment key={s.url}>
+                {j > 0 && " · "}
+                <a href={s.url} target="_blank" rel="noreferrer">
+                  {s.title || s.url}
+                </a>
+              </Fragment>
+            ))}
+          </div>
+        )}
+      </div>
+      {m.masked !== undefined && (
+        <div className="bubble masked" title="What the guardrails passed on to the model">
+          <span className="masked-label">Sent as</span>
+          {m.masked}
+        </div>
+      )}
+      {m.meta && (
+        <div className="bubble-meta" title={m.meta.requestId ? `x-request-id: ${m.meta.requestId}` : undefined}>
+          {APIS.find((a) => a.id === m.meta!.api)?.label} · {m.meta.model} · {ms(m.meta.latency)}
+          {m.meta.input != null && ` · ${compact(m.meta.input)} in / ${compact(m.meta.output ?? 0)} out`}
+          {!!m.meta.searches && ` · ${m.meta.searches} web search${m.meta.searches === 1 ? "" : "es"}`}
+          {(() => {
+            const calls = m.mcp?.filter((x) => x.kind === "call").length ?? 0;
+            return calls ? ` · ${calls} MCP call${calls === 1 ? "" : "s"}` : "";
+          })()}
+          {m.meta.toolRoute !== undefined && ` · tool routes: ${m.meta.toolRoutes || "none"} (${m.meta.toolRoute})`}
+          {m.meta.mcpUnseen && " · MCP calls are in the request log (Chat Completions has no place for them)"}
+          {m.meta.routedTo && ` · routed to ${m.meta.routedTo}${m.meta.routeName ? ` via ${m.meta.routeName}` : ""}${m.meta.route?.startsWith("decision:") ? ` (confidence ${Math.round(Number(m.meta.route.slice(9)) * 100)}%)` : m.meta.route ? ` (${m.meta.route})` : ""}`}
+          {m.meta.chained && " · continued via previous_response_id"}
+          {m.meta.guardrail && ` · guardrails: ${m.meta.guardrail}`}
+        </div>
+      )}
+    </div>
+  );
+});
 
 /** The model and key the address asks for, as the hub's play button links them: `#/models/playground?model=…&key=…`. */
 function askedInHash(): { model: string | null; key: string | null } {
@@ -654,6 +442,18 @@ export function Playground() {
     let guardrail: string | undefined;
     let toolRoutes: string | undefined;
     let toolRoute: string | undefined;
+    // Events can arrive many times a frame: the reply so far is shown once per animation frame, and
+    // what is still waiting when the stream ends or fails is shown before the final update.
+    let frame = 0;
+    const showStreamed = () => {
+      frame = 0;
+      updateLast({ text: result.text, sources: [...result.sources], mcp: [...result.mcp] });
+    };
+    const flushStreamed = () => {
+      if (!frame) return;
+      cancelAnimationFrame(frame);
+      showStreamed();
+    };
     try {
       const res = await adminFetch(`/playground/${apiId}?key_id=${encodeURIComponent(keyId)}`, body, controller.signal, {
         ...labelHeaders(labels),
@@ -677,8 +477,9 @@ export function Playground() {
       if (res.headers.get("content-type")?.includes("event-stream")) {
         for await (const ev of sse(res)) {
           applyEvent(apiId, ev, result);
-          updateLast({ text: result.text, sources: [...result.sources], mcp: [...result.mcp] });
+          if (!frame) frame = requestAnimationFrame(showStreamed);
         }
+        flushStreamed();
       } else {
         Object.assign(result, parseFull(apiId, await res.json()));
       }
@@ -710,18 +511,12 @@ export function Playground() {
         },
       });
     } catch (e) {
+      flushStreamed();
       const aborted = (e as Error).name === "AbortError";
       updateLast({ pending: false, text: result.text, mcp: result.mcp, error: aborted ? "Stopped." : (e as Error).message });
     } finally {
       setBusy(false);
       abort.current = null;
-    }
-  };
-
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
     }
   };
 
@@ -850,7 +645,15 @@ export function Playground() {
         <>
           <details className="system-prompt">
             <summary>System prompt{system.trim() ? " (set)" : ""}</summary>
-            <textarea rows={3} value={system} onChange={(e) => setSystem(e.target.value)} placeholder="e.g. You are a helpful assistant." />
+            <TextArea
+              caption="System prompt"
+              hint="Sent before the conversation, in the chosen API's own field: a system message, instructions or system."
+              className="system-input"
+              rows={3}
+              value={system}
+              onChange={(e) => setSystem(e.target.value)}
+              placeholder="e.g. You are a helpful assistant."
+            />
           </details>
           <details className="system-prompt" open={schemaOpen} onToggle={(e) => setSchemaOpen(e.currentTarget.open)}>
             <summary>Structured output{schemaText.trim() ? " (set)" : ""}</summary>
@@ -865,7 +668,6 @@ export function Playground() {
             />
             {schema.error && <p className="schema-error">{schema.error}</p>}
           </details>
-    
           <div
             className="chat"
             // Images and PDFs dropped anywhere on the chat are attached.
@@ -883,63 +685,7 @@ export function Playground() {
                   access, limits and budget, and show up in the request log.
                 </div>
               )}
-              {messages.map((m, i) => (
-                <div key={i} className={`bubble-row ${m.role}`}>
-                  <div className={`bubble ${m.role}${m.error ? " failed" : ""}${m.json ? " json" : ""}`}>
-                    {!!m.files?.length && (
-                      <div className="bubble-files">
-                        {m.files.map((f, j) =>
-                          isImage(f) ? (
-                            <img key={j} src={dataUrl(f)} alt={f.name} title={f.name} />
-                          ) : (
-                            <span key={j} className="tag" title={`${f.name} · ${bytes(f.size)}`}>
-                              PDF · {f.name}
-                            </span>
-                          ),
-                        )}
-                      </div>
-                    )}
-                    {!!m.mcp?.length && <McpItems items={m.mcp} />}
-                    {m.text || (m.pending ? <span className="typing" aria-label="Waiting for response">…</span> : null)}
-                    {m.error && <div className="bubble-error">{m.error}</div>}
-                    {!!m.sources?.length && (
-                      <div className="bubble-sources">
-                        Sources:{" "}
-                        {m.sources.map((s, j) => (
-                          <Fragment key={s.url}>
-                            {j > 0 && " · "}
-                            <a href={s.url} target="_blank" rel="noreferrer">
-                              {s.title || s.url}
-                            </a>
-                          </Fragment>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {m.masked !== undefined && (
-                    <div className="bubble masked" title="What the guardrails passed on to the model">
-                      <span className="masked-label">Sent as</span>
-                      {m.masked}
-                    </div>
-                  )}
-                  {m.meta && (
-                    <div className="bubble-meta" title={m.meta.requestId ? `x-request-id: ${m.meta.requestId}` : undefined}>
-                      {APIS.find((a) => a.id === m.meta!.api)?.label} · {m.meta.model} · {ms(m.meta.latency)}
-                      {m.meta.input != null && ` · ${compact(m.meta.input)} in / ${compact(m.meta.output ?? 0)} out`}
-                      {!!m.meta.searches && ` · ${m.meta.searches} web search${m.meta.searches === 1 ? "" : "es"}`}
-                      {(() => {
-                        const calls = m.mcp?.filter((x) => x.kind === "call").length ?? 0;
-                        return calls ? ` · ${calls} MCP call${calls === 1 ? "" : "s"}` : "";
-                      })()}
-                      {m.meta.toolRoute !== undefined && ` · tool routes: ${m.meta.toolRoutes || "none"} (${m.meta.toolRoute})`}
-                      {m.meta.mcpUnseen && " · MCP calls are in the request log (Chat Completions has no place for them)"}
-                      {m.meta.routedTo && ` · routed to ${m.meta.routedTo}${m.meta.routeName ? ` via ${m.meta.routeName}` : ""}${m.meta.route?.startsWith("decision:") ? ` (confidence ${Math.round(Number(m.meta.route.slice(9)) * 100)}%)` : m.meta.route ? ` (${m.meta.route})` : ""}`}
-                      {m.meta.chained && " · continued via previous_response_id"}
-                      {m.meta.guardrail && ` · guardrails: ${m.meta.guardrail}`}
-                    </div>
-                  )}
-                </div>
-              ))}
+              {messages.map((m, i) => <Bubble key={i} m={m} />)}
             </div>
             {messages.length === 0 && models.length > 0 && (
               <div className="chat-bar">
@@ -1019,12 +765,11 @@ export function Playground() {
                   <EffortIcon />
                 </MenuButton>
               )}
-              <textarea
+              <MessageInput
                 ref={composer}
-                rows={1}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={onKey}
+                onSend={send}
                 onPaste={(e) => {
                   // Pasted images are attached rather than typed.
                   if (!e.clipboardData.files.length) return;

@@ -6,7 +6,13 @@ use serde_json::Value;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
-use crate::{db, error::AdminError, state::AppState};
+use crate::{
+    audit::{self, Actor},
+    db,
+    error::AdminError,
+    state::AppState,
+    sync::broadcast_reload,
+};
 
 pub(crate) mod a2a;
 mod aliases;
@@ -110,6 +116,16 @@ pub fn router(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         None => guarded,
     };
     guarded.merge(crate::admin::auth::api_routes())
+}
+
+/// After a configuration change: every replica reloads, the gateway log notes it, and the audit
+/// log records `event` (none for an update that changed nothing an admin sees).
+async fn after_change(state: &AppState, actor: &Actor, what: &str, id: Uuid, event: Option<audit::Event>) {
+    broadcast_reload(state, what).await;
+    tracing::info!(%id, "{what}");
+    if let Some(event) = event {
+        event.record(state, actor).await;
+    }
 }
 
 /// A list page's search text, trimmed and in lower case; `None` when empty.

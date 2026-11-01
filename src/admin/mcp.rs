@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::R;
+use super::{R, after_change};
 use crate::{
     audit::{self, Actor},
     db,
@@ -21,7 +21,6 @@ use crate::{
     model::normalize_tags,
     oauth::OAuthConfig,
     state::AppState,
-    sync::broadcast_reload,
 };
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -424,10 +423,9 @@ pub(crate) async fn create_mcp_server(
 ) -> R<(StatusCode, Json<McpServerView>)> {
     let row = row(&state, i, None).await?;
     db::insert_mcp_server(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("an MCP server"))?;
-    broadcast_reload(&state, "MCP server created").await;
-    tracing::info!(mcp_server = %row.id, name = %row.name, "MCP server created");
     let v = view(row);
-    audit::Event::new("mcp_server", "create").on(v.id, &v.name).details(audit::snapshot(&v)).record(&state, &actor).await;
+    let event = audit::Event::new("mcp_server", "create").on(v.id, &v.name).details(audit::snapshot(&v));
+    after_change(&state, &actor, "MCP server created", v.id, Some(event)).await;
     Ok((StatusCode::CREATED, Json(v)))
 }
 
@@ -462,8 +460,6 @@ pub(crate) async fn update_mcp_server(
         (&row.auth, row.oauth.as_deref()),
     )
     .await?;
-    broadcast_reload(&state, "MCP server updated").await;
-    tracing::info!(mcp_server = %id, "MCP server updated");
     let v = view(row);
     let mut changes = audit::changes(&before, &v);
     if secret_changed {
@@ -472,9 +468,8 @@ pub(crate) async fn update_mcp_server(
     if dropped > 0 {
         changes.insert("sign_ins".into(), format!("{dropped} removed").into());
     }
-    if !changes.is_empty() {
-        audit::Event::new("mcp_server", "update").on(id, &v.name).details(changes.into()).record(&state, &actor).await;
-    }
+    let event = (!changes.is_empty()).then(|| audit::Event::new("mcp_server", "update").on(id, &v.name).details(changes.into()));
+    after_change(&state, &actor, "MCP server updated", id, event).await;
     Ok(Json(v))
 }
 
@@ -498,9 +493,7 @@ pub(crate) async fn delete_mcp_server(
     if !db::delete_mcp_server(&state.db, id).await? {
         return Err(AdminError::not_found());
     }
-    broadcast_reload(&state, "MCP server deleted").await;
-    tracing::info!(mcp_server = %id, "MCP server deleted");
-    audit::Event::new("mcp_server", "delete").on(id, name).record(&state, &actor).await;
+    after_change(&state, &actor, "MCP server deleted", id, Some(audit::Event::new("mcp_server", "delete").on(id, name))).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

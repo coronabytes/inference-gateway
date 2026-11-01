@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type GatewaySettings as Settings, type GatewaySettingsView } from "../api";
 import { Banner, Button, Segmented, TextInput, Toggle } from "../components/controls";
 import { ErrorBanner } from "../components/ui";
 import { dateTime, relative } from "../format";
+import { useAdminData } from "../useAdminData";
 
 type NumberKey = { [K in keyof Settings]: Settings[K] extends number ? K : never }[keyof Settings];
 type ToggleKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
@@ -158,21 +159,7 @@ const shown = (i: Item, v: Draft[keyof Draft]) =>
 
 /** Cluster → Settings: the gateway settings every replica applies, without a restart. */
 export function GatewaySettings() {
-  const [view, setView] = useState<GatewaySettingsView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setView(await api<GatewaySettingsView>("/settings"));
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: view, setData: setView, error, setError } = useAdminData<GatewaySettingsView>("/settings");
 
   return (
     <div className="page">
