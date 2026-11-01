@@ -10,11 +10,10 @@
 //! key's answers are recorded, and a call about another key's task is answered as if it did not exist.
 
 use std::{
-    collections::HashMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use axum::{
@@ -39,6 +38,7 @@ use crate::{
     oauth::{Kind, OAuthConfig, UpstreamAuth, Who},
     sse::SseParser,
     state::AppState,
+    util::TtlCache,
 };
 
 /// An A2A agent as stored.
@@ -252,25 +252,27 @@ impl Card {
 /// Agents' cards in this replica's memory, fetched again after `CARD_FRESH` or when the agent's
 /// settings change. Where each key signs in on its own, the card is fetched with the key's token
 /// and may be that account's own, so it is kept per key.
-#[derive(Default)]
-pub struct Cards(std::sync::Mutex<HashMap<(Uuid, Option<Uuid>), (Arc<A2aAgent>, Instant, Arc<Card>)>>);
+pub struct Cards(TtlCache<(Uuid, Option<Uuid>), (Arc<A2aAgent>, Arc<Card>)>);
 
 const CARD_FRESH: Duration = Duration::from_secs(300);
+
+impl Default for Cards {
+    fn default() -> Self {
+        Self(TtlCache::new(CARD_FRESH, 10_000))
+    }
+}
 
 impl Cards {
     /// `who`: who asks, for an agent whose keys sign in on their own and whose card needs it.
     pub async fn get(&self, state: &AppState, agent: &Arc<A2aAgent>, who: Option<Who<'_>>) -> Result<Arc<Card>, String> {
         let slot = (agent.id, if agent.auth.per_key() { who.as_ref().map(|w| w.key) } else { None });
-        if let Some((a, at, card)) = self.0.lock().expect("cards lock").get(&slot)
-            && Arc::ptr_eq(a, agent)
-            && at.elapsed() < CARD_FRESH
+        if let Some((a, card)) = self.0.get(&slot)
+            && Arc::ptr_eq(&a, agent)
         {
-            return Ok(card.clone());
+            return Ok(card);
         }
         let card = Arc::new(fetch_card(state, agent, who).await?);
-        let mut cards = self.0.lock().expect("cards lock");
-        cards.retain(|_, (_, at, _)| at.elapsed() < CARD_FRESH);
-        cards.insert(slot, (agent.clone(), Instant::now(), card.clone()));
+        self.0.insert(slot, (agent.clone(), card.clone()));
         Ok(card)
     }
 }

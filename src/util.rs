@@ -1,3 +1,11 @@
+use std::{
+    borrow::Borrow,
+    collections::HashMap,
+    hash::Hash,
+    sync::{Mutex, MutexGuard, PoisonError},
+    time::{Duration, Instant},
+};
+
 use sha2::{Digest, Sha256};
 
 pub fn random_bytes<const N: usize>() -> [u8; N] {
@@ -45,6 +53,87 @@ pub fn truncate(s: &str, max: usize) -> String {
     format!("{}…", &s[..end])
 }
 
+/// A map in memory whose entries expire: `ttl` after they are stored (or, made with `idle`, after
+/// they were last read), or at the time given to `insert_until`. It holds at most `max` entries:
+/// storing past that drops the expired ones, then those expiring soonest. Expired entries are
+/// never returned. A lock poisoned by a panic elsewhere is taken over, since every entry is whole.
+pub struct TtlCache<K, V> {
+    entries: Mutex<HashMap<K, (V, Instant)>>,
+    ttl: Duration,
+    idle: bool,
+    max: usize,
+}
+
+impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
+    pub fn new(ttl: Duration, max: usize) -> Self {
+        Self { entries: Mutex::new(HashMap::new()), ttl, idle: false, max }
+    }
+
+    /// Entries expire `ttl` after they were last read or stored.
+    pub fn idle(ttl: Duration, max: usize) -> Self {
+        Self { idle: true, ..Self::new(ttl, max) }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, HashMap<K, (V, Instant)>> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn get<Q: Eq + Hash + ?Sized>(&self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+    {
+        let mut entries = self.lock();
+        let now = Instant::now();
+        match entries.get_mut(key) {
+            Some((v, expires)) if *expires > now => {
+                if self.idle {
+                    *expires = now + self.ttl;
+                }
+                Some(v.clone())
+            }
+            Some(_) => {
+                entries.remove(key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    pub fn insert(&self, key: K, value: V) {
+        self.insert_until(key, value, Instant::now() + self.ttl);
+    }
+
+    /// Stores `value` until `expires`, such as a token's own expiry.
+    pub fn insert_until(&self, key: K, value: V, expires: Instant) {
+        let mut entries = self.lock();
+        if entries.len() >= self.max && !entries.contains_key(&key) {
+            let now = Instant::now();
+            entries.retain(|_, (_, e)| *e > now);
+            while entries.len() >= self.max {
+                let Some(soonest) = entries.iter().min_by_key(|(_, (_, e))| *e).map(|(k, _)| k.clone()) else { break };
+                entries.remove(&soonest);
+            }
+        }
+        entries.insert(key, (value, expires));
+    }
+
+    pub fn remove<Q: Eq + Hash + ?Sized>(&self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+    {
+        self.lock().remove(key).map(|(v, _)| v)
+    }
+
+    /// Keeps only the entries `keep` accepts.
+    pub fn retain(&self, mut keep: impl FnMut(&K, &V) -> bool) {
+        self.lock().retain(|k, (v, _)| keep(k, v));
+    }
+
+    pub fn clear(&self) {
+        self.lock().clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,5 +147,33 @@ mod tests {
         assert!(!same_origin("https://api.example.com", "https://api.example.com:8443"));
         assert!(!same_origin("not a url", "not a url"));
         assert!(!same_origin("data:text/plain,x", "data:text/plain,x"));
+    }
+
+    #[test]
+    fn ttl_cache_entries_expire_and_make_room() {
+        let c = TtlCache::new(Duration::from_secs(60), 2);
+        c.insert("a", 1);
+        c.insert_until("gone", 0, Instant::now() - Duration::from_secs(1));
+        assert_eq!(c.get("a"), Some(1));
+        assert_eq!(c.get("gone"), None, "expired");
+        // Full: the expired entry goes first, then the one expiring soonest.
+        c.insert_until("soon", 2, Instant::now() + Duration::from_secs(5));
+        c.insert("b", 3);
+        assert_eq!((c.get("a"), c.get("soon"), c.get("b")), (Some(1), None, Some(3)));
+        c.retain(|k, _| *k != "a");
+        assert_eq!(c.get("a"), None);
+        assert_eq!(c.remove("b"), Some(3));
+    }
+
+    #[test]
+    fn an_idle_ttl_cache_keeps_what_is_read() {
+        let c = TtlCache::idle(Duration::from_millis(50), 10);
+        c.insert(1, "x");
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(c.get(&1), Some("x"));
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(c.get(&1), Some("x"), "reading kept it");
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(c.get(&1), None);
     }
 }

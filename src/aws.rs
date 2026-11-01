@@ -14,7 +14,6 @@
 //! SDK cannot send, are signed or sent here by hand.
 
 use std::{
-    collections::HashMap,
     sync::OnceLock,
     time::{Duration, SystemTime},
 };
@@ -41,6 +40,7 @@ use crate::{
     error::{ErrorKind, GatewayError},
     model::{CredentialSettings, Deployment, Secrets},
     state::AppState,
+    util::TtlCache,
 };
 
 pub mod models;
@@ -68,19 +68,33 @@ pub fn regions() -> &'static [AwsRegion] {
 
 /// Clients for one region, endpoint and set of credentials.
 type ClientKey = (String, Option<String>, [u8; 32]);
-/// Built clients are kept; past this many (credentials rotated many times) they are rebuilt.
+/// Built clients are kept while they are used, at most this many (credentials rotated many times).
 const MAX_CLIENTS: usize = 256;
+/// A client unused this long is dropped.
+const CLIENT_IDLE: Duration = Duration::from_secs(3600);
 
-#[derive(Default)]
 pub struct Aws {
     sdk: OnceCell<SdkConfig>,
     cached: Mutex<Option<Credentials>>,
     /// The SDK clients' HTTP client, resolving through the network guard.
     http: OnceLock<SharedHttpClient>,
-    runtime: std::sync::Mutex<HashMap<ClientKey, aws_sdk_bedrockruntime::Client>>,
-    agent: std::sync::Mutex<HashMap<ClientKey, aws_sdk_bedrockagentruntime::Client>>,
+    runtime: TtlCache<ClientKey, aws_sdk_bedrockruntime::Client>,
+    agent: TtlCache<ClientKey, aws_sdk_bedrockagentruntime::Client>,
     /// The console's Bedrock model lists, per credential, for five minutes.
     pub models: models::Cache,
+}
+
+impl Default for Aws {
+    fn default() -> Self {
+        Self {
+            sdk: OnceCell::new(),
+            cached: Mutex::new(None),
+            http: OnceLock::new(),
+            runtime: TtlCache::idle(CLIENT_IDLE, MAX_CLIENTS),
+            agent: TtlCache::idle(CLIENT_IDLE, MAX_CLIENTS),
+            models: models::Cache::default(),
+        }
+    }
 }
 
 impl Aws {
@@ -180,8 +194,8 @@ impl Aws {
         endpoint: Option<String>,
     ) -> Result<aws_sdk_bedrockruntime::Client, GatewayError> {
         let key = self.client_key(state, settings, secrets, endpoint.clone()).await?;
-        if let Some(c) = self.runtime.lock().expect("clients").get(&key) {
-            return Ok(c.clone());
+        if let Some(c) = self.runtime.get(&key) {
+            return Ok(c);
         }
         let mut config = aws_sdk_bedrockruntime::config::Builder::from(&self.service_config(state, settings, secrets).await?);
         if let Some(e) = endpoint {
@@ -193,11 +207,7 @@ impl Aws {
                 .auth_scheme_preference([aws_smithy_runtime_api::client::auth::http::HTTP_BEARER_AUTH_SCHEME_ID]);
         }
         let client = aws_sdk_bedrockruntime::Client::from_conf(config.build());
-        let mut cache = self.runtime.lock().expect("clients");
-        if cache.len() >= MAX_CLIENTS {
-            cache.clear();
-        }
-        cache.insert(key, client.clone());
+        self.runtime.insert(key, client.clone());
         Ok(client)
     }
 
@@ -206,19 +216,15 @@ impl Aws {
     pub async fn agent_runtime(&self, state: &AppState, d: &Deployment) -> Result<aws_sdk_bedrockagentruntime::Client, GatewayError> {
         let endpoint = d.connection.base_url.as_ref().map(|u| u.replacen("bedrock-runtime", "bedrock-agent-runtime", 1));
         let key = self.client_key(state, &d.connection, &d.secrets, endpoint.clone()).await?;
-        if let Some(c) = self.agent.lock().expect("clients").get(&key) {
-            return Ok(c.clone());
+        if let Some(c) = self.agent.get(&key) {
+            return Ok(c);
         }
         let mut config = aws_sdk_bedrockagentruntime::config::Builder::from(&self.service_config(state, &d.connection, &d.secrets).await?);
         if let Some(e) = endpoint {
             config = config.endpoint_url(e);
         }
         let client = aws_sdk_bedrockagentruntime::Client::from_conf(config.build());
-        let mut cache = self.agent.lock().expect("clients");
-        if cache.len() >= MAX_CLIENTS {
-            cache.clear();
-        }
-        cache.insert(key, client.clone());
+        self.agent.insert(key, client.clone());
         Ok(client)
     }
 

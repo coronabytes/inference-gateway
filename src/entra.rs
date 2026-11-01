@@ -19,11 +19,7 @@
 //! Services User includes read access), so the console can fill in a deployment's name, model and
 //! rate limits.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use azure_core::credentials::{Secret, TokenCredential};
 use azure_identity::{
@@ -39,6 +35,7 @@ use crate::{
     error::GatewayError,
     model::{ApiStyle, CredentialSettings, Identity, Mode, Secrets},
     state::AppState,
+    util::TtlCache,
 };
 
 const ARM_HOST: &str = "https://management.azure.com";
@@ -93,12 +90,21 @@ pub fn scope_for(base_url: Option<&str>) -> &'static str {
     if serverless { ML_SCOPE } else { COGNITIVE_SCOPE }
 }
 
-/// Credentials per source, kept for their token caches. A stored secret is part of the key (as a
-/// hash), so a credential with a wrong secret never gets another credential's token.
-#[derive(Default)]
+/// Credentials per source, kept for their token caches while they are used. A stored secret is
+/// part of the key (as a hash), so a credential with a wrong secret never gets another credential's
+/// token, and one whose secret was replaced is let go once unused for `IDLE`.
 pub struct Entra {
-    credentials: Mutex<HashMap<String, Arc<dyn TokenCredential>>>,
+    credentials: TtlCache<String, Arc<dyn TokenCredential>>,
 }
+
+impl Default for Entra {
+    fn default() -> Self {
+        Self { credentials: TtlCache::idle(IDLE, 1000) }
+    }
+}
+
+/// A credential unused this long is dropped, with its tokens.
+const IDLE: std::time::Duration = std::time::Duration::from_secs(3600);
 
 impl Entra {
     pub async fn access_token(&self, source: &Source<'_>, scope: &str) -> Result<String, GatewayError> {
@@ -110,7 +116,7 @@ impl Entra {
             Err(_) => format!("no answer within {} s", TOKEN_TIMEOUT.as_secs()),
         };
         // The next request builds the credential anew, so fixing the environment takes effect.
-        self.credentials.lock().expect("entra credentials").remove(&key);
+        self.credentials.remove(&key);
         tracing::error!(error = %why, source = source.describe(), "Entra ID token request failed");
         Err(GatewayError::unavailable(format!("could not get an Entra ID access token for {}: {why}", source.describe())))
     }
@@ -130,8 +136,8 @@ impl Entra {
     }
 
     fn credential(&self, key: &str, source: &Source<'_>) -> Result<Arc<dyn TokenCredential>, GatewayError> {
-        if let Some(c) = self.credentials.lock().expect("entra credentials").get(key) {
-            return Ok(c.clone());
+        if let Some(c) = self.credentials.get(key) {
+            return Ok(c);
         }
         let built: azure_core::Result<Arc<dyn TokenCredential>> = match source {
             Source::Secret { tenant_id, client_id, secret } => {
@@ -146,7 +152,7 @@ impl Entra {
                 e.to_string().lines().next().unwrap_or_default()
             ))
         })?;
-        self.credentials.lock().expect("entra credentials").insert(key.to_string(), built.clone());
+        self.credentials.insert(key.to_string(), built.clone());
         Ok(built)
     }
 }

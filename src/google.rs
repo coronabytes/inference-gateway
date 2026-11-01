@@ -7,8 +7,6 @@
 //! Compute Engine). With a key file the crate signs its own JWT access tokens and calls no token
 //! endpoint, so the file's `token_uri` is never used. Both kinds cache their tokens.
 
-use std::{collections::HashMap, sync::Mutex};
-
 use aws_lc_rs::signature::RsaKeyPair;
 use base64::Engine;
 use google_cloud_auth::credentials::{AccessTokenCredentials, Builder, service_account};
@@ -19,6 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     error::GatewayError,
     model::{CredentialSettings, Identity, Secrets},
+    util::TtlCache,
 };
 
 const SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
@@ -77,11 +76,20 @@ pub fn project(settings: &CredentialSettings, secrets: &Secrets) -> Result<Strin
         .ok_or_else(|| GatewayError::internal("google credential has no project_id and its key file names none"))
 }
 
-/// Built credentials per key file (by hash) or for the environment, kept for their token caches.
-#[derive(Default)]
+/// Built credentials per key file (by hash) or for the environment, kept for their token caches
+/// while they are used: one whose key file was replaced is let go once unused for `IDLE`.
 pub struct Google {
-    credentials: Mutex<HashMap<Option<[u8; 32]>, AccessTokenCredentials>>,
+    credentials: TtlCache<Option<[u8; 32]>, AccessTokenCredentials>,
 }
+
+impl Default for Google {
+    fn default() -> Self {
+        Self { credentials: TtlCache::idle(IDLE, 1000) }
+    }
+}
+
+/// A credential unused this long is dropped, with its tokens.
+const IDLE: std::time::Duration = std::time::Duration::from_secs(3600);
 
 impl Google {
     /// An access token for a credential: its key file's, or the environment's.
@@ -95,7 +103,7 @@ impl Google {
         };
         // A failed credential stays failed ("subsequent calls will also fail"): the next request
         // builds a new one, so fixing the environment (a new login, a granted role) takes effect.
-        self.credentials.lock().expect("google credentials").remove(&key);
+        self.credentials.remove(&key);
         tracing::error!(error = %why, environment = uses_environment(settings), "Google access token request failed");
         Err(GatewayError::unavailable(format!("could not get a Google access token: {why}")))
     }
@@ -113,8 +121,8 @@ impl Google {
     }
 
     fn credentials(&self, key: Option<[u8; 32]>, secrets: &Secrets) -> Result<AccessTokenCredentials, GatewayError> {
-        if let Some(c) = self.credentials.lock().expect("google credentials").get(&key) {
-            return Ok(c.clone());
+        if let Some(c) = self.credentials.get(&key) {
+            return Ok(c);
         }
         let built = match key {
             None => Builder::default().with_scopes([SCOPE]).build_access_token_credentials().map_err(|e| {
@@ -132,7 +140,7 @@ impl Google {
                     .map_err(|e| GatewayError::internal(format!("google credential: {}", first_line(&e.to_string()))))?
             }
         };
-        self.credentials.lock().expect("google credentials").insert(key, built.clone());
+        self.credentials.insert(key, built.clone());
         Ok(built)
     }
 }
