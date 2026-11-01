@@ -5,7 +5,6 @@ use std::collections::{BTreeSet, HashMap};
 use axum::{
     Extension, Json,
     extract::{Query, State},
-    http::StatusCode,
 };
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
@@ -147,11 +146,11 @@ pub(super) async fn metrics(
     Extension(access): Extension<Access>,
     Query(q): Query<RangeQuery>,
 ) -> R<Json<Value>> {
-    let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError(StatusCode::SERVICE_UNAVAILABLE, "shutting down".into()))?;
+    let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
     let Window { label, step, stamps, since, until } = window(&q, Utc::now())?;
     let projects = access.projects();
     if q.project_id.is_some_and(|p| !access.sees(Some(p))) {
-        return Err(AdminError(StatusCode::FORBIDDEN, "not your project".into()));
+        return Err(AdminError::forbidden("not your project"));
     }
     // The traffic counted: the picked project's, within what the caller may see.
     let picked = q.project_id.map(|p| [p]);

@@ -86,10 +86,6 @@ fn project_fields(i: ProjectInput) -> R<(String, Option<String>)> {
     Ok((name, description))
 }
 
-fn duplicate_project(e: sqlx::Error) -> AdminError {
-    if db::is_unique_violation(&e) { AdminError::conflict("a project with this name already exists") } else { e.into() }
-}
-
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct ProjectQuery {
@@ -133,7 +129,7 @@ pub(super) async fn create_project(
         created_at: now,
         updated_at: now,
     };
-    db::upsert_project(&state.db, &p).await.map_err(duplicate_project)?;
+    db::upsert_project(&state.db, &p).await.map_err(AdminError::conflict_on_duplicate("a project"))?;
     tracing::info!(project = %p.id, name = %p.name, "project created");
     audit::Event::new("project", "create").on(p.id, &p.name).details(audit::snapshot(&p)).record(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(ProjectView::new(&state, p, 0).await)))
@@ -163,7 +159,7 @@ pub(super) async fn update_project(
         updated_at: Utc::now(),
         ..before.clone()
     };
-    db::upsert_project(&state.db, &p).await.map_err(duplicate_project)?;
+    db::upsert_project(&state.db, &p).await.map_err(AdminError::conflict_on_duplicate("a project"))?;
     // Keys carry whether their project is active, and requests check the project's budget in
     // the registry: every replica reloads to apply either.
     if before.enabled != p.enabled {

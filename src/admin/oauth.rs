@@ -332,7 +332,7 @@ pub(crate) async fn connect(
     let client = client(&state, &key, kind, upstream).ok_or_else(AdminError::not_found)?;
     let slot = slot_for(&client, id, q.labels.as_deref())?;
     let (authorization_url, pending) = start(&client, &slot, &headers, &uri, &actor, q.back.unwrap_or_default(), false)?;
-    session.insert(PENDING_KEY, pending).await.map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    session.insert(PENDING_KEY, pending).await.map_err(|e| AdminError::internal(e.to_string()))?;
     Ok(Json(ConnectStart { authorization_url }))
 }
 

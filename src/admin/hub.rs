@@ -8,7 +8,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use axum::{
     Extension, Json,
     extract::{Query, State},
-    http::StatusCode,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -233,7 +232,7 @@ async fn stats(state: &AppState, models: &[String], key_id: Option<Uuid>, projec
     let now = Utc::now().timestamp();
     let first = now - now.rem_euclid(3600) - (STATS_HOURS - 1) * 3600;
     let since = chrono::DateTime::from_timestamp(first, 0).unwrap_or_default();
-    let _scan = super::LOG_SCANS.acquire().await.map_err(|_| AdminError(StatusCode::SERVICE_UNAVAILABLE, "shutting down".into()))?;
+    let _scan = super::LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
     let (hours, speeds) = tokio::try_join!(
         db::model_hours(&state.db, since, models, key_id, projects),
         db::model_speeds(&state.db, since, models, key_id, projects),
@@ -356,7 +355,7 @@ pub(crate) async fn hub(
     // their projects' keys' hubs; admins any.
     let key_id = match own {
         Some(Extension(OwnKey(id))) if q.key.is_none_or(|k| k == id) => Some(id),
-        Some(_) => return Err(AdminError(StatusCode::FORBIDDEN, "this key may see only its own models".into())),
+        Some(_) => return Err(AdminError::forbidden("this key may see only its own models")),
         None if access.projects().is_some() && q.key.is_none() => return Err(AdminError::bad_request("pick a key of your project")),
         None => q.key,
     };

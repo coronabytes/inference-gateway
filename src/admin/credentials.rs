@@ -225,10 +225,6 @@ fn validate_credential(provider: ProviderKind, name: &str, s: &Secrets, settings
     Ok(())
 }
 
-fn conflict_on_duplicate_name(e: sqlx::Error) -> AdminError {
-    if db::is_unique_violation(&e) { AdminError::conflict("a credential with this name already exists") } else { e.into() }
-}
-
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct CredentialQuery {
@@ -276,7 +272,7 @@ pub(super) async fn create_credential(
         created_at: now,
         updated_at: now,
     };
-    db::insert_credential(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::insert_credential(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("a credential"))?;
     tracing::info!(credential = %row.id, provider = %row.provider, "credential created");
     let view = credential_view(&state, row, 0);
     audit::Event::new("credential", "create").on(view.id, &view.name).details(audit::snapshot(&view)).record(&state, &actor).await;
@@ -295,8 +291,7 @@ pub(super) async fn update_credential(
         return Err(AdminError::bad_request("a credential's provider cannot be changed; create a new credential"));
     }
     let provider = ProviderKind::parse(&row.provider).ok_or_else(|| AdminError::bad_request("unknown provider"))?;
-    let stored = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref())
-        .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let stored = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref()).map_err(AdminError::internal)?;
     let secrets_replaced = i.secrets.values().next().is_some();
     let settings = clean_settings(&state, provider, i.settings)?;
     // Stored secrets only go where they went before. Pointed at another host, the credential
@@ -319,7 +314,7 @@ pub(super) async fn update_credential(
     row.settings = sqlx::types::Json(settings);
     row.name = i.name.trim().to_string();
     row.secrets = registry::encrypt_secrets(&state.cfg.secret_box, &secrets);
-    db::update_credential(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::update_credential(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("a credential"))?;
     // Deployments using this credential pick up the new secrets and settings on every replica.
     broadcast_reload(&state, "credential updated").await;
     tracing::info!(credential = %id, "credential updated");
@@ -372,13 +367,12 @@ pub(super) async fn foundry_deployments(State(state): State<AppState>, Path(id):
     if row.provider != ProviderKind::Azure.as_str() {
         return Err(AdminError::bad_request("only Azure credentials have Foundry deployments"));
     }
-    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref())
-        .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref()).map_err(AdminError::internal)?;
     let settings = &row.settings.0;
     let source = crate::entra::source(settings, &secrets)
         .ok_or_else(|| AdminError::bad_request("listing deployments needs a credential that uses Entra ID; an API key cannot read them"))?;
     let base = settings.base_url.as_deref().ok_or_else(|| AdminError::bad_request("the credential has no resource endpoint"))?;
-    let found = crate::entra::list_deployments(&state, &source, base).await.map_err(|e| AdminError(StatusCode::BAD_GATEWAY, e))?;
+    let found = crate::entra::list_deployments(&state, &source, base).await.map_err(AdminError::bad_gateway)?;
     Ok(Json(found))
 }
 
@@ -394,8 +388,7 @@ pub(super) async fn bedrock_models(State(state): State<AppState>, Path(id): Path
     if row.provider != ProviderKind::Bedrock.as_str() {
         return Err(AdminError::bad_request("only Bedrock credentials have Bedrock models"));
     }
-    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref())
-        .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref()).map_err(AdminError::internal)?;
     if secrets.api_key.is_some() {
         return Err(AdminError::bad_request("a Bedrock API key cannot list models or quotas; use AWS credentials for that"));
     }
@@ -404,7 +397,7 @@ pub(super) async fn bedrock_models(State(state): State<AppState>, Path(id): Path
         .models
         .get(&state, row.id, row.updated_at, &row.settings.0, &secrets)
         .await
-        .map_err(|e| AdminError(StatusCode::BAD_GATEWAY, e.message))?;
+        .map_err(|e| AdminError::bad_gateway(e.message))?;
     Ok(Json(found))
 }
 

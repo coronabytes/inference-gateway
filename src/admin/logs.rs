@@ -4,7 +4,6 @@
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
-    http::StatusCode,
 };
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
@@ -63,7 +62,7 @@ pub(super) async fn logs(
     let errors = q.errors.unwrap_or(false);
     let labels = label_filter(q.labels.as_deref())?;
     if q.project_id.is_some_and(|p| !access.sees(Some(p))) {
-        return Err(AdminError(StatusCode::FORBIDDEN, "not your project".into()));
+        return Err(AdminError::forbidden("not your project"));
     }
     let text = q.q.as_deref().map(str::trim).filter(|t| !t.is_empty());
     if text.is_some_and(|t| t.chars().count() > 200) {
@@ -225,7 +224,7 @@ async fn remove_bodies(state: &AppState, of: db::BodiesOf) -> R<u64> {
     let lock = 0x626f_6469_6573_0000 ^ (id.as_u128() as i64 & 0xffff_ffff); // "bodies"
     let state = state.clone();
     let task = tokio::spawn(async move { db::with_lock(&state.db, lock, db::delete_bodies(&state.db, of)).await });
-    let done = task.await.map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, format!("deleting the bodies failed: {e}")))?;
+    let done = task.await.map_err(|e| AdminError::internal(format!("deleting the bodies failed: {e}")))?;
     match done? {
         Some(deleted) => Ok(deleted?),
         None => Err(AdminError::conflict("these bodies are already being deleted")),

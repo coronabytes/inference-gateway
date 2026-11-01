@@ -396,10 +396,6 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
     })
 }
 
-fn conflict_on_duplicate_name(e: sqlx::Error) -> AdminError {
-    if db::is_unique_violation(&e) { AdminError::conflict("an MCP server with this name already exists") } else { e.into() }
-}
-
 pub(crate) async fn list_mcp_servers(State(state): State<AppState>) -> R<Json<Vec<McpServerView>>> {
     Ok(Json(db::list_mcp_servers(&state.db).await?.into_iter().map(view).collect()))
 }
@@ -410,7 +406,7 @@ pub(crate) async fn create_mcp_server(
     Json(i): Json<McpServerInput>,
 ) -> R<(StatusCode, Json<McpServerView>)> {
     let row = row(&state, i, None).await?;
-    db::insert_mcp_server(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::insert_mcp_server(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("an MCP server"))?;
     broadcast_reload(&state, "MCP server created").await;
     tracing::info!(mcp_server = %row.id, name = %row.name, "MCP server created");
     let v = view(row);
@@ -428,7 +424,7 @@ pub(crate) async fn update_mcp_server(
     let secret_changed = i.secret.as_deref().is_some_and(|s| !s.trim().is_empty());
     let before = view(existing.clone());
     let row = row(&state, i, Some(&existing)).await?;
-    db::update_mcp_server(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::update_mcp_server(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("an MCP server"))?;
     let dropped = super::oauth::drop_stale_sign_ins(
         &state,
         crate::oauth::Kind::Mcp,
@@ -492,7 +488,7 @@ pub(crate) struct McpServerTestResult {
 /// disconnects. Nothing is logged or charged to a key.
 pub(crate) async fn test_mcp_server(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<McpServerTestResult>> {
     let row = db::get_mcp_server(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
-    let server = McpServer::build(row, &state.cfg.secret_box).map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let server = McpServer::build(row, &state.cfg.secret_box).map_err(AdminError::internal)?;
     let started = std::time::Instant::now();
     let result = crate::mcp::probe(&state, &server).await;
     let latency_ms = started.elapsed().as_millis() as u64;

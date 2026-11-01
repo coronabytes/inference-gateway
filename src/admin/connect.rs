@@ -45,8 +45,7 @@ fn host(url: &str) -> String {
 }
 
 async fn pending(state: &AppState, id: &str) -> R<Pending> {
-    let saved =
-        state.cache.peek(&mcp_auth::request_key(id)).await.map_err(|e| AdminError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
+    let saved = state.cache.peek(&mcp_auth::request_key(id)).await.map_err(|e| AdminError::unavailable(e.to_string()))?;
     saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or_else(|| {
         AdminError(StatusCode::NOT_FOUND, "this sign-in has expired or was answered already; start it again in the app".into())
     })
@@ -54,8 +53,7 @@ async fn pending(state: &AppState, id: &str) -> R<Pending> {
 
 /// Takes the request: it is answered once.
 async fn take(state: &AppState, id: &str) -> R<Pending> {
-    let saved =
-        state.cache.take(&mcp_auth::request_key(id)).await.map_err(|e| AdminError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
+    let saved = state.cache.take(&mcp_auth::request_key(id)).await.map_err(|e| AdminError::unavailable(e.to_string()))?;
     saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or_else(|| {
         AdminError(StatusCode::NOT_FOUND, "this sign-in has expired or was answered already; start it again in the app".into())
     })
@@ -105,7 +103,7 @@ pub(crate) async fn approve(
     let p = take(&state, &id).await?;
     let (client, resource) = (p.client_name.clone().unwrap_or_else(|| p.client_id.clone()), p.resource.clone());
     let by = actor.name.clone().unwrap_or_else(|| actor.kind.to_string());
-    let redirect = mcp_auth::approve(&state, p, key.id, Some(by)).await.map_err(|e| AdminError(StatusCode::SERVICE_UNAVAILABLE, e))?;
+    let redirect = mcp_auth::approve(&state, p, key.id, Some(by)).await.map_err(AdminError::unavailable)?;
     audit::Event::new("key", "connect_app")
         .on(key.id, &key.name)
         .details(serde_json::json!({ "client": client, "resource": resource }))

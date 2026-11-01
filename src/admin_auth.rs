@@ -417,7 +417,7 @@ fn unauthenticated() -> AdminError {
 pub async fn require_admin(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     match authenticated_via(&state, &req).await {
         Some((Via::Session | Via::Dev | Via::DevUser, _)) if !csrf_ok(&req) => {
-            AdminError(StatusCode::FORBIDDEN, format!("missing {CSRF_HEADER} header")).into_response()
+            AdminError::forbidden(format!("missing {CSRF_HEADER} header")).into_response()
         }
         Some((via, dev_user)) => {
             let signed_in = req.extensions().get::<Auth>().and_then(|a| a.user.clone());
@@ -426,7 +426,7 @@ pub async fn require_admin(State(state): State<AppState>, mut req: Request, next
                 Err(e) => return e.into_response(),
             };
             if matches!(access, Access::User { .. }) && !may_call(&req, USER_ROUTES) {
-                return AdminError(StatusCode::FORBIDDEN, "only admins may do this".into()).into_response();
+                return AdminError::forbidden("only admins may do this").into_response();
             }
             let Some(actor) = actor(&state, &req, via, dev_user) else {
                 return unauthenticated().into_response();
@@ -449,7 +449,7 @@ pub async fn require_admin(State(state): State<AppState>, mut req: Request, next
                 req.extensions_mut().insert(OwnKey(k.id));
                 next.run(req).await
             }
-            Some(_) => AdminError(StatusCode::FORBIDDEN, "this key's scope does not include the admin API".into()).into_response(),
+            Some(_) => AdminError::forbidden("this key's scope does not include the admin API").into_response(),
             None => unauthenticated().into_response(),
         },
     }
@@ -573,9 +573,9 @@ async fn dev_login(
         return Err(AdminError::not_found());
     }
     if !req_headers.contains_key(CSRF_HEADER) {
-        return Err(AdminError(StatusCode::FORBIDDEN, format!("missing {CSRF_HEADER} header")));
+        return Err(AdminError::forbidden(format!("missing {CSRF_HEADER} header")));
     }
-    let fail = |e: tower_sessions::session::Error| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    let fail = |e: tower_sessions::session::Error| AdminError::internal(e.to_string());
     // A new session id on sign-in, as for single sign-on.
     session.cycle_id().await.map_err(fail)?;
     let actor = if q.role.as_deref() == Some("user") {
@@ -597,9 +597,9 @@ async fn dev_login(
 
 async fn logout(State(state): State<AppState>, mut auth: Auth, session: Session, req_headers: axum::http::HeaderMap) -> R<StatusCode> {
     if !req_headers.contains_key(CSRF_HEADER) {
-        return Err(AdminError(StatusCode::FORBIDDEN, format!("missing {CSRF_HEADER} header")));
+        return Err(AdminError::forbidden(format!("missing {CSRF_HEADER} header")));
     }
-    let fail = |e: String| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e);
+    let fail = |e: String| AdminError::internal(e);
     let dev = session.remove::<bool>(DEV_KEY).await.map_err(|e| fail(e.to_string()))? == Some(true);
     let dev_user = session.remove::<Uuid>(DEV_USER_KEY).await.map_err(|e| fail(e.to_string()))?;
     let actor = match auth.logout().await.map_err(|e| fail(e.to_string()))? {

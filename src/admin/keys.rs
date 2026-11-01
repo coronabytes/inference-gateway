@@ -109,7 +109,7 @@ pub(super) async fn pick_guardrails(state: &AppState, access: Option<&Access>, w
         return Ok(held.to_vec());
     }
     if access.is_some_and(|a| a.projects().is_some()) {
-        return Err(AdminError(StatusCode::FORBIDDEN, "only admins choose a key's guardrails".into()));
+        return Err(AdminError::forbidden("only admins choose a key's guardrails"));
     }
     let known = db::list_guardrails(&state.db).await?;
     if let Some(id) = ids.iter().find(|id| !known.iter().any(|g| g.id == **id)) {
@@ -207,7 +207,7 @@ fn check_user_key(access: &Access, i: &KeyInput) -> R<()> {
         return Ok(());
     }
     if !access.sees(i.project_id) {
-        return Err(AdminError(StatusCode::FORBIDDEN, "put the key in one of your projects".into()));
+        return Err(AdminError::forbidden("put the key in one of your projects"));
     }
     Ok(())
 }
