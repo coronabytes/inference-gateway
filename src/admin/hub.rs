@@ -233,6 +233,7 @@ async fn stats(state: &AppState, models: &[String], key_id: Option<Uuid>, projec
     let now = Utc::now().timestamp();
     let first = now - now.rem_euclid(3600) - (STATS_HOURS - 1) * 3600;
     let since = chrono::DateTime::from_timestamp(first, 0).unwrap_or_default();
+    let _scan = super::LOG_SCANS.acquire().await.map_err(|_| AdminError(StatusCode::SERVICE_UNAVAILABLE, "shutting down".into()))?;
     let (hours, speeds) = tokio::try_join!(
         db::model_hours(&state.db, since, models, key_id, projects),
         db::model_speeds(&state.db, since, models, key_id, projects),

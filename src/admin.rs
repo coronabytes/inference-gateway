@@ -1770,7 +1770,11 @@ async fn list_keys(
     let (logging, gateway_allows) = (q.logging.unwrap_or(false), settings.prompt_logging == PromptLogging::Allow);
     let keys = db::search_keys(&state.db, search.as_deref(), &tags, &projects, access.projects(), logging, gateway_allows).await?;
     let keys: Vec<VirtualKey> = keys.into_iter().filter(|k| sees_key(&access, k)).collect();
-    let budgets = futures::future::join_all(keys.iter().map(|k| crate::budget::status(&state, k))).await;
+    // A few at a time: missing counters are rebuilt from Postgres, which the request path shares.
+    let mut budgets = Vec::with_capacity(keys.len());
+    for chunk in keys.chunks(LIST_BUDGET_LOOKUPS) {
+        budgets.extend(futures::future::join_all(chunk.iter().map(|k| crate::budget::status(&state, k))).await);
+    }
     let snap = state.registry.snapshot();
     let view = |(key, budget)| KeyView { prompt_logged: crate::api::prompt_logged(&snap, &settings, &key), key, budget };
     Ok(Json(keys.into_iter().zip(budgets).map(view).collect()))
@@ -2003,6 +2007,9 @@ pub(crate) struct ProjectInput {
     prompt_logging: PromptLogging,
 }
 
+/// Budgets a key or project list reads at once.
+const LIST_BUDGET_LOOKUPS: usize = 8;
+
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct ProjectView {
     #[serde(flatten)]
@@ -2051,7 +2058,8 @@ async fn list_projects(
 ) -> R<Json<Vec<ProjectView>>> {
     let search = search_text(q.q.as_deref());
     let projects = db::list_projects(&state.db, search.as_deref(), access.projects()).await?;
-    Ok(Json(futures::future::join_all(projects.into_iter().map(|(project, keys)| ProjectView::new(&state, project, keys))).await))
+    let views = futures::stream::iter(projects.into_iter().map(|(project, keys)| ProjectView::new(&state, project, keys)));
+    Ok(Json(views.buffered(LIST_BUDGET_LOOKUPS).collect().await))
 }
 
 async fn create_project(
@@ -2276,7 +2284,6 @@ struct Totals {
     cache_write_tokens: i64,
     cost_usd: f64,
     avg_latency_ms: Option<f64>,
-    p50_latency_ms: Option<i32>,
     p95_latency_ms: Option<i32>,
     avg_ttft_ms: Option<f64>,
 }
@@ -2292,7 +2299,6 @@ fn totals(t: Option<&db::LogTotals>) -> Totals {
         cache_write_tokens: t.cache_write_tokens,
         cost_usd: t.cost_usd,
         avg_latency_ms: (t.requests > 0).then(|| t.latency_ms_sum as f64 / t.requests as f64),
-        p50_latency_ms: t.p50_latency_ms,
         p95_latency_ms: t.p95_latency_ms,
         avg_ttft_ms: (t.ttft_count > 0).then(|| t.ttft_ms_sum as f64 / t.ttft_count as f64),
     }
@@ -2320,9 +2326,14 @@ fn series_json(stamps: &[i64], buckets: &HashMap<i64, &db::LogTotals>) -> Vec<Va
         .collect()
 }
 
+/// Metrics requests aggregating the request log at once on this replica. Each runs three scans,
+/// so open Metrics pages cannot take the connection pool the request path writes through.
+pub(crate) static LOG_SCANS: std::sync::LazyLock<tokio::sync::Semaphore> = std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(3));
+
 /// Metrics come from the request log in Postgres, so they cover its whole retention and every
 /// replica's traffic.
 async fn metrics(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<RangeQuery>) -> R<Json<Value>> {
+    let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError(StatusCode::SERVICE_UNAVAILABLE, "shutting down".into()))?;
     let Window { label, step, stamps, since, until } = window(&q, Utc::now())?;
     let projects = access.projects();
     if q.project_id.is_some_and(|p| !access.sees(Some(p))) {

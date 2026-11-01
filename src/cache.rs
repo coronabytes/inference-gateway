@@ -445,9 +445,10 @@ impl Cache {
         }
     }
 
-    /// Spend in one budget period, or `None` if the counter does not exist (yet).
-    pub async fn period_spend(&self, who: Spender, window_id: &str) -> Option<f64> {
-        self.conn().get::<_, Option<f64>>(Self::spend_key(who, window_id)).await.ok().flatten()
+    /// Spend in one budget period, or `None` if the counter does not exist (yet). An error means
+    /// Valkey could not be read, not that the counter is missing.
+    pub async fn period_spend(&self, who: Spender, window_id: &str) -> RedisResult<Option<f64>> {
+        self.conn().get::<_, Option<f64>>(Self::spend_key(who, window_id)).await
     }
 
     /// Create a period counter from Postgres. NX: another replica may have seeded it already.

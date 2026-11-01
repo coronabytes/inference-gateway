@@ -338,8 +338,9 @@ pub(crate) async fn run_model(
         None => (None, state.settings.get().max_attempts as usize),
     };
     // Sticky routing: a conversation goes back to the deployment that served its earlier turns,
-    // where the provider's prompt cache for it is. Stored conversations already know theirs.
-    let affinity = previous.is_none().then(|| Affinity::of(state, &raw, inbound)).flatten();
+    // where the provider's prompt cache for it is. Stored conversations already know theirs, and
+    // a model with one deployment has nowhere else to go.
+    let affinity = (previous.is_none() && candidates.len() > 1).then(|| Affinity::of(state, &raw, inbound)).flatten();
     let sticky = match &affinity {
         Some(a) => a.deployment(state, &model).await,
         None => None,

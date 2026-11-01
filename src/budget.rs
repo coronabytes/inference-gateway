@@ -5,6 +5,12 @@
 //! missing (a new period, or Valkey lost its data) it is rebuilt from the request logs in
 //! Postgres, so budgets survive restarts.
 
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+    time::Instant,
+};
+
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
 use serde::Serialize;
 
@@ -16,7 +22,7 @@ use crate::{
 };
 
 /// Whose spend a budget counts: one key's, or that of every request made in a project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Spender {
     Key(Uuid),
     Project(Uuid),
@@ -127,24 +133,71 @@ async fn period_status(
     let now = Utc::now();
     let w = period.window(now);
     let spent = match state.cache.period_spend(who, &w.id).await {
-        Some(v) => v,
-        None => {
-            // Rebuild from Postgres. "Reset spend" moves the start of the current period.
-            let since = spend_reset_at.map_or(w.start, |r| r.max(w.start));
-            let spent = match who {
-                Spender::Key(id) => crate::db::key_spend_since(&state.db, id, since).await,
-                Spender::Project(id) => crate::db::project_spend_since(&state.db, id, since).await,
-            };
-            let spent = spent.unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "could not read spend from the request log");
-                0.0
-            });
-            let ttl = (w.end - now).num_seconds().max(0) as u64 + 86_400;
-            state.cache.seed_period_spend(who, &w.id, spent, ttl).await;
-            spent
+        Ok(Some(v)) => v,
+        Ok(None) => rebuild(state, who, &w, spend_reset_at, None).await,
+        // Valkey is unreachable: a recent rebuild stands in, so an outage costs one Postgres query
+        // per spender and period every `RECENT`, not one per request.
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read spend from valkey; using the request log");
+            rebuild(state, who, &w, spend_reset_at, Some(RECENT)).await
         }
     };
     Some(BudgetStatus { period, limit_usd: limit, spent_usd: spent, resets_at: w.end })
+}
+
+/// How long spend rebuilt from Postgres stands in for Valkey while Valkey is unreachable.
+const RECENT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A spender's budget period: its counter in Valkey.
+type Counter = (Spender, String);
+/// Spend rebuilt from Postgres on this replica, and when.
+static REBUILT: LazyLock<std::sync::Mutex<HashMap<Counter, (f64, Instant)>>> = LazyLock::new(Default::default);
+/// One rebuild at a time per spender and period: requests arriving meanwhile wait for its result.
+type Gate = Arc<tokio::sync::Mutex<()>>;
+static REBUILDING: LazyLock<std::sync::Mutex<HashMap<Counter, Gate>>> = LazyLock::new(Default::default);
+
+/// The period's spend from the request log, seeded into Valkey. A rebuild finished after this call
+/// started is reused, as is one younger than `reuse` (while Valkey is unreachable).
+async fn rebuild(
+    state: &AppState,
+    who: Spender,
+    w: &Window,
+    spend_reset_at: Option<DateTime<Utc>>,
+    reuse: Option<std::time::Duration>,
+) -> f64 {
+    let started = Instant::now();
+    let k = (who, w.id.clone());
+    let fresh = |k: &Counter| {
+        let rebuilt = REBUILT.lock().expect("rebuilt spend");
+        rebuilt.get(k).filter(|(_, at)| *at >= started || reuse.is_some_and(|r| at.elapsed() < r)).map(|(v, _)| *v)
+    };
+    if let Some(v) = fresh(&k) {
+        return v;
+    }
+    let gate = REBUILDING.lock().expect("spend rebuilds").entry(k.clone()).or_default().clone();
+    let _turn = gate.lock().await;
+    if let Some(v) = fresh(&k) {
+        return v;
+    }
+    // "Reset spend" moves the start of the current period.
+    let since = spend_reset_at.map_or(w.start, |r| r.max(w.start));
+    let spent = match who {
+        Spender::Key(id) => crate::db::key_spend_since(&state.db, id, since).await,
+        Spender::Project(id) => crate::db::project_spend_since(&state.db, id, since).await,
+    };
+    let spent = spent.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "could not read spend from the request log");
+        0.0
+    });
+    let ttl = (w.end - Utc::now()).num_seconds().max(0) as u64 + 86_400;
+    state.cache.seed_period_spend(who, &w.id, spent, ttl).await;
+    {
+        let mut rebuilt = REBUILT.lock().expect("rebuilt spend");
+        rebuilt.retain(|_, (_, at)| at.elapsed() < RECENT);
+        rebuilt.insert(k.clone(), (spent, Instant::now()));
+    }
+    REBUILDING.lock().expect("spend rebuilds").remove(&k);
+    spent
 }
 
 #[cfg(test)]

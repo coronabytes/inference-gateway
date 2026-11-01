@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { SessionContext } from "./access";
 import { AuthError, api, setToken, type SessionInfo } from "./api";
 import { Banner } from "./components/controls";
 import { Galaxy } from "./components/Galaxy";
 import { DocsIcon, IconButton, MoonIcon, SunIcon } from "./components/ui";
 import { UserMenu } from "./components/UserMenu";
-import { Cluster } from "./pages/Cluster";
-import { Connect } from "./pages/Connect";
-import { Keys } from "./pages/Keys";
-import { Logs, RequestLog } from "./pages/Logs";
-import { Metrics } from "./pages/Metrics";
-import { Models } from "./pages/Models";
-import { Playground } from "./pages/Playground";
-import { Tools } from "./pages/Tools";
 import { useTheme } from "./theme";
+
+// Each page loads when it is first opened, so signing in does not download the whole console.
+const Cluster = lazy(() => import("./pages/Cluster").then((m) => ({ default: m.Cluster })));
+const Connect = lazy(() => import("./pages/Connect").then((m) => ({ default: m.Connect })));
+const Keys = lazy(() => import("./pages/Keys").then((m) => ({ default: m.Keys })));
+const Logs = lazy(() => import("./pages/Logs").then((m) => ({ default: m.Logs })));
+const RequestLog = lazy(() => import("./pages/Logs").then((m) => ({ default: m.RequestLog })));
+const Metrics = lazy(() => import("./pages/Metrics").then((m) => ({ default: m.Metrics })));
+const Models = lazy(() => import("./pages/Models").then((m) => ({ default: m.Models })));
+const Playground = lazy(() => import("./pages/Playground").then((m) => ({ default: m.Playground })));
+const Tools = lazy(() => import("./pages/Tools").then((m) => ({ default: m.Tools })));
 
 type PageId = "metrics" | "logs" | "access" | "models" | "tools" | "cluster";
 
@@ -202,17 +205,19 @@ export function App() {
         </div>
       </header>
       <main>
-        {connect ? (
-          <Connect id={connect} />
-        ) : idle ? (
-          <div className="empty-card">
-            You are signed in, but not part of any project yet. Once an admin adds you to one, you manage its keys here and see its
-            playground, request log and metrics.
-          </div>
-        ) : (
-          // A user who follows an admin's link to a page they do not have sees the metrics.
-          (pages[page] ?? PAGES.metrics).el
-        )}
+        <Suspense fallback={null}>
+          {connect ? (
+            <Connect id={connect} />
+          ) : idle ? (
+            <div className="empty-card">
+              You are signed in, but not part of any project yet. Once an admin adds you to one, you manage its keys here and see its
+              playground, request log and metrics.
+            </div>
+          ) : (
+            // A user who follows an admin's link to a page they do not have sees the metrics.
+            (pages[page] ?? PAGES.metrics).el
+          )}
+        </Suspense>
       </main>
     </div>
     </SessionContext.Provider>
