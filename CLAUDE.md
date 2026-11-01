@@ -8,9 +8,9 @@ committed.
 
 ## Pull requests
 
-Keep pull request descriptions to a single line naming the features added or bugs fixed. No
-detailed write-ups, no test plans, and never mention the data, hosts, accounts, keys or systems used
-while testing.
+Write pull request descriptions as a short bullet list, one bullet per feature added or bug fixed,
+each a single line. No detailed write-ups, no test plans, and never mention the data, hosts,
+accounts, keys or systems used while testing.
 
 ## Admin API and console data
 
