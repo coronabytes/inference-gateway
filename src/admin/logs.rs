@@ -51,6 +51,12 @@ pub(crate) struct LogQuery {
     guardrail: Option<String>,
 }
 
+/// Request log
+///
+/// Newest first. Routed requests come with the calls they made.
+#[utoipa::path(get, path = "/logs", tag = "Usage", params(LogQuery),
+    responses((status = 200, description = "Log entries.", body = Vec<crate::db::LogRow>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn logs(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -103,8 +109,13 @@ pub(super) async fn logs(
 /// What the latest logged responses' tools are sampled from.
 const TOOL_SAMPLE: i64 = 1000;
 
-/// `GET /logs/tools`: the tools the latest logged responses called, most used first, for the
-/// request log's tool filter.
+/// Tools in logged responses
+///
+/// The tools the latest 1000 logged responses called, at most 100, most used first. The
+/// console offers them in its tool filter.
+#[utoipa::path(get, path = "/logs/tools", tag = "Usage",
+    responses((status = 200, description = "Tools, most used first.", body = Vec<crate::db::ToolUse>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn log_tools(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<db::ToolUse>>> {
     Ok(Json(db::recent_tools(&state.db, TOOL_SAMPLE, access.projects()).await?))
 }
@@ -135,8 +146,18 @@ pub(crate) struct BodiesView {
     next: Option<Uuid>,
 }
 
-/// `GET /logs/{id}/bodies`: a logged request's prompt and response. An entry the caller may not
-/// see looks like one without bodies.
+/// A logged request's prompt and response
+///
+/// For keys with prompt logging on: the request as sent and as the model got it, what each
+/// guardrail did, the response, and the turns before and after it.
+#[utoipa::path(get, path = "/logs/{id}/bodies", tag = "Usage",
+    params(("id" = Uuid, Path, description = "Request log entry id")),
+    responses(
+        (status = 200, description = "The stored bodies.", body = BodiesView),
+        (status = 404, description = "No stored bodies, or not the caller's project.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// An entry the caller may not see looks like one without bodies.
 pub(super) async fn log_bodies(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -169,7 +190,11 @@ pub(crate) struct DeletedBodies {
     deleted: u64,
 }
 
-/// `GET /keys/{id}/bodies`: how many of the key's prompts and responses are stored.
+/// Count a key's stored prompts
+#[utoipa::path(get, path = "/keys/{id}/bodies", tag = "Virtual keys",
+    params(("id" = Uuid, Path, description = "Key id")),
+    responses((status = 200, description = "How many are stored.", body = StoredBodies), (status = 404, description = "No such key.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn key_bodies(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -180,8 +205,18 @@ pub(super) async fn key_bodies(
     Ok(Json(StoredBodies { stored: db::count_bodies(&state.db, db::BodiesOf::Key(id)).await? }))
 }
 
-/// `DELETE /keys/{id}/bodies`: deletes the key's stored prompts and responses now, rather than
-/// at the end of their retention.
+/// Delete a key's stored prompts
+///
+/// Deletes the key's logged prompts and responses now, rather than at the end of their
+/// retention. Their entries stay in the request log, marked `deleted`.
+#[utoipa::path(delete, path = "/keys/{id}/bodies", tag = "Virtual keys",
+    params(("id" = Uuid, Path, description = "Key id")),
+    responses(
+        (status = 200, description = "How many were deleted.", body = DeletedBodies),
+        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+        (status = 409, description = "Already being deleted.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_key_bodies(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -195,15 +230,28 @@ pub(super) async fn delete_key_bodies(
     Ok(Json(DeletedBodies { deleted }))
 }
 
-/// `GET /projects/{id}/bodies`: how many prompts and responses of requests made in the project
-/// are stored.
+/// Count a project's stored prompts
+#[utoipa::path(get, path = "/projects/{id}/bodies", tag = "Virtual keys",
+    params(("id" = Uuid, Path, description = "Project id")),
+    responses((status = 200, description = "How many are stored.", body = StoredBodies), (status = 404, description = "No such project.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn project_bodies(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<StoredBodies>> {
     db::get_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     Ok(Json(StoredBodies { stored: db::count_bodies(&state.db, db::BodiesOf::Project(id)).await? }))
 }
 
-/// `DELETE /projects/{id}/bodies`: deletes the stored prompts and responses of every request made
-/// in the project, also by keys that have left it since.
+/// Delete a project's stored prompts
+///
+/// Deletes the logged prompts and responses of every request made in the project, also by
+/// keys that have left it since.
+#[utoipa::path(delete, path = "/projects/{id}/bodies", tag = "Virtual keys",
+    params(("id" = Uuid, Path, description = "Project id")),
+    responses(
+        (status = 200, description = "How many were deleted.", body = DeletedBodies),
+        (status = 404, description = "No such project.", body = crate::openapi::AdminError),
+        (status = 409, description = "Already being deleted.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_project_bodies(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -251,6 +299,13 @@ pub(crate) struct LabelValue {
     requests: i64,
 }
 
+/// Request labels in use
+///
+/// The label keys of the latest 1000 labelled requests, each with up to 50 of its values,
+/// most used first. The console suggests them in its label filters.
+#[utoipa::path(get, path = "/logs/labels", tag = "Usage",
+    responses((status = 200, description = "Label keys, by name.", body = Vec<LabelKey>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn log_labels(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<LabelKey>>> {
     let mut keys: Vec<LabelKey> = Vec::new();
     for u in db::recent_labels(&state.db, LABEL_SAMPLE, access.projects()).await? {
@@ -281,6 +336,16 @@ pub(crate) struct AuditQuery {
     to: Option<chrono::NaiveDate>,
 }
 
+/// Audit log
+///
+/// Newest first: who created, changed or deleted credentials, deployments, routers and keys,
+/// imported configuration or prices, changed single sign-on, and signed in or out.
+#[utoipa::path(get, path = "/audit", tag = "Usage", params(AuditQuery),
+    responses(
+        (status = 200, description = "Audit log entries.", body = Vec<crate::db::AuditEntry>),
+        (status = 400, description = "Invalid range.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn audit_log(State(state): State<AppState>, Query(q): Query<AuditQuery>) -> R<Json<Vec<db::AuditEntry>>> {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     let target_type = q.target_type.as_deref().map(str::trim).filter(|t| !t.is_empty());

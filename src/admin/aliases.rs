@@ -132,6 +132,10 @@ pub(crate) struct AliasQuery {
     q: Option<String>,
 }
 
+/// List model aliases
+#[utoipa::path(get, path = "/aliases", tag = "Model aliases", params(AliasQuery),
+    responses((status = 200, description = "The aliases.", body = Vec<AliasView>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_aliases(State(state): State<AppState>, Query(q): Query<AliasQuery>) -> R<Json<Vec<AliasView>>> {
     let search = search_text(q.q.as_deref());
     let (aliases, deployments, routers) =
@@ -139,6 +143,18 @@ pub(super) async fn list_aliases(State(state): State<AppState>, Query(q): Query<
     Ok(Json(aliases.into_iter().map(|a| alias_view(a, &deployments, &routers)).collect()))
 }
 
+/// Create model alias
+///
+/// A model name that serves the model of a deployment or auto router, named by its id so the
+/// alias follows a rename. Keys reach it by its own name in `allowed_models`, and by their tags
+/// through the target's deployments or router.
+#[utoipa::path(post, path = "/aliases", tag = "Model aliases", request_body = AliasInput,
+    responses(
+        (status = 201, description = "The new alias.", body = AliasView),
+        (status = 400, description = "Invalid alias, or the model name is taken.", body = crate::openapi::AdminError),
+        (status = 409, description = "An alias with that name exists.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_alias(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -156,6 +172,18 @@ pub(super) async fn create_alias(
     Ok((StatusCode::CREATED, Json(view)))
 }
 
+/// Update model alias
+///
+/// A renamed alias is followed by keys and its model metadata.
+#[utoipa::path(put, path = "/aliases/{id}", tag = "Model aliases", params(("id" = Uuid, Path)),
+    request_body = AliasInput,
+    responses(
+        (status = 200, description = "The alias.", body = AliasView),
+        (status = 400, description = "Invalid alias, or the model name is taken.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such alias.", body = crate::openapi::AdminError),
+        (status = 409, description = "Another alias has that name.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_alias(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -181,6 +209,10 @@ pub(super) async fn update_alias(
     Ok(Json(view))
 }
 
+/// Delete model alias
+#[utoipa::path(delete, path = "/aliases/{id}", tag = "Model aliases", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such alias.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_alias(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
     let existing = db::get_alias(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     if !db::delete_alias(&state.db, id).await? {

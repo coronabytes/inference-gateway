@@ -163,6 +163,13 @@ async fn known_tags(state: &AppState) -> R<BTreeMap<String, (usize, usize, usize
     Ok(tags)
 }
 
+/// List tags
+///
+/// Every tag on deployments, routers and MCP servers, and those keys still hold, with how many
+/// of each carry it.
+#[utoipa::path(get, path = "/tags", tag = "Configuration",
+    responses((status = 200, description = "The tags.", body = Vec<crate::openapi::TagUsage>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_tags(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Value>> {
     let (tags, held) = tokio::try_join!(known_tags(&state), async { Ok(db::key_tag_counts(&state.db, access.projects()).await?) })?;
     // Tags only keys still hold, once nothing carries them any more, come last.
@@ -226,6 +233,15 @@ pub(crate) struct KeyQuery {
     logging: Option<bool>,
 }
 
+/// List virtual keys
+///
+/// With their current budget period.
+#[utoipa::path(get, path = "/keys", tag = "Virtual keys", params(KeyQuery),
+    responses(
+        (status = 200, description = "The keys.", body = Vec<KeyView>),
+        (status = 400, description = "A project filter that is not ids.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_keys(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -257,7 +273,12 @@ pub(crate) struct KeyOptionsQuery {
     model: Option<String>,
 }
 
-/// `GET /keys/options`: the keys a picker offers, by name, without their settings or budgets.
+/// Key names
+///
+/// The keys a picker offers, by name: id, name and project, without settings or budgets.
+#[utoipa::path(get, path = "/keys/options", tag = "Virtual keys", params(KeyOptionsQuery),
+    responses((status = 200, description = "The keys.", body = Vec<crate::db::NamedItem>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn key_options(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -278,11 +299,25 @@ pub(super) async fn key_options(
     Ok(Json(keys))
 }
 
-/// `GET /projects/options`: the projects a picker offers, by name.
+/// Project names
+///
+/// The projects a picker offers, by name: id and name only.
+#[utoipa::path(get, path = "/projects/options", tag = "Virtual keys",
+    responses((status = 200, description = "The projects.", body = Vec<crate::db::NamedItem>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn project_options(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<db::NamedItem>>> {
     Ok(Json(db::project_names(&state.db, access.projects()).await?))
 }
 
+/// Create virtual key
+///
+/// The answer holds its secret, this once; the gateway keeps only a hash.
+#[utoipa::path(post, path = "/keys", tag = "Virtual keys", request_body = KeyInput,
+    responses(
+        (status = 201, description = "The new key and its secret.", body = crate::openapi::KeyCreated),
+        (status = 400, description = "Invalid key.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_key(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -332,6 +367,15 @@ pub(super) async fn create_key(
     Ok((StatusCode::CREATED, Json(json!({ "key": secret, "record": k }))))
 }
 
+/// Update virtual key
+#[utoipa::path(put, path = "/keys/{id}", tag = "Virtual keys", params(("id" = Uuid, Path)),
+    request_body = KeyInput,
+    responses(
+        (status = 200, description = "The key.", body = crate::model::VirtualKey),
+        (status = 400, description = "Invalid key.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_key(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -379,6 +423,10 @@ pub(super) async fn update_key(
     Ok(Json(k))
 }
 
+/// Delete virtual key
+#[utoipa::path(delete, path = "/keys/{id}", tag = "Virtual keys", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such key.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_key(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -396,8 +444,16 @@ pub(super) async fn delete_key(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// New secret for an existing key. The old secret stops working as soon as each replica
-/// reloads; the key keeps its id, limits and spend.
+/// Regenerate virtual key
+///
+/// Gives the key a new secret. It keeps its settings, spend and history.
+#[utoipa::path(post, path = "/keys/{id}/regenerate", tag = "Virtual keys", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The new secret.", body = crate::openapi::KeyRegenerated),
+        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// The old secret stops working as soon as each replica reloads.
 pub(super) async fn regenerate_key(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -418,6 +474,12 @@ pub(super) async fn regenerate_key(
     Ok(Json(json!({ "key": secret, "key_prefix": prefix })))
 }
 
+/// Reset spend
+///
+/// Starts the key's current budget period over.
+#[utoipa::path(post, path = "/keys/{id}/reset-spend", tag = "Virtual keys", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Reset.")),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn reset_spend(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,

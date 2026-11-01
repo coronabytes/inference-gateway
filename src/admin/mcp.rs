@@ -396,10 +396,24 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
     })
 }
 
+/// List MCP servers
+#[utoipa::path(get, path = "/mcp-servers", tag = "MCP",
+    responses((status = 200, description = "The MCP servers.", body = Vec<McpServerView>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_mcp_servers(State(state): State<AppState>) -> R<Json<Vec<McpServerView>>> {
     Ok(Json(db::list_mcp_servers(&state.db).await?.into_iter().map(view).collect()))
 }
 
+/// Create MCP server
+///
+/// An upstream MCP server, proxied at `/mcp/{name}`.
+#[utoipa::path(post, path = "/mcp-servers", tag = "MCP", request_body = McpServerInput,
+    responses(
+        (status = 201, description = "The new MCP server.", body = McpServerView),
+        (status = 400, description = "Invalid MCP server.", body = crate::openapi::AdminError),
+        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn create_mcp_server(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -414,6 +428,18 @@ pub(crate) async fn create_mcp_server(
     Ok((StatusCode::CREATED, Json(v)))
 }
 
+/// Update MCP server
+///
+/// Without a secret, the stored secret stays.
+#[utoipa::path(put, path = "/mcp-servers/{id}", tag = "MCP", params(("id" = Uuid, Path)),
+    request_body = McpServerInput,
+    responses(
+        (status = 200, description = "The MCP server.", body = McpServerView),
+        (status = 400, description = "Invalid MCP server.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such MCP server.", body = crate::openapi::AdminError),
+        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn update_mcp_server(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -449,6 +475,13 @@ pub(crate) async fn update_mcp_server(
     Ok(Json(v))
 }
 
+/// Delete MCP server
+#[utoipa::path(delete, path = "/mcp-servers/{id}", tag = "MCP", params(("id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Deleted."),
+        (status = 404, description = "No such MCP server.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn delete_mcp_server(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -484,8 +517,16 @@ pub(crate) struct McpServerTestResult {
     error: Option<String>,
 }
 
-/// Connects to the server as a client would (also while it is disabled), lists its tools and
-/// disconnects. Nothing is logged or charged to a key.
+/// Test MCP server
+///
+/// Connects as a client would, also while the server is disabled, and lists its tools. Nothing is
+/// logged or charged to a key.
+#[utoipa::path(post, path = "/mcp-servers/{id}/test", tag = "MCP", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The server's tools, or why it could not be used with `ok: false`.", body = McpServerTestResult),
+        (status = 404, description = "No such MCP server.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn test_mcp_server(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<McpServerTestResult>> {
     let row = db::get_mcp_server(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     let server = McpServer::build(row, &state.cfg.secret_box).map_err(AdminError::internal)?;

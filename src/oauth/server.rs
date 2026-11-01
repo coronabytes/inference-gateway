@@ -376,22 +376,37 @@ fn protected_resource(headers: &HeaderMap, uri: &Uri, path: &str) -> Response {
     )
 }
 
-/// `GET /.well-known/oauth-protected-resource`: every MCP endpoint of the gateway (RFC 9728).
+/// Protected resource metadata
+///
+/// RFC 9728: where MCP clients sign in to use the gateway's MCP endpoints (`authorization_servers`).
+/// Also at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-protected-resource/mcp/{server}`,
+/// for one endpoint. A refused MCP request names it in its `WWW-Authenticate` header.
+#[utoipa::path(get, path = "/.well-known/oauth-protected-resource", operation_id = "oauth_resource", tag = "MCP client sign-in",
+    responses((status = 200, description = "The metadata.", body = Object)))]
 pub async fn resource_root(headers: HeaderMap, uri: Uri) -> Response {
     protected_resource(&headers, &uri, "")
 }
 
-/// `GET /.well-known/oauth-protected-resource/mcp`.
+/// Protected resource metadata: `/mcp`
+#[utoipa::path(get, path = "/.well-known/oauth-protected-resource/mcp", operation_id = "oauth_resource_hub", tag = "MCP client sign-in",
+    responses((status = 200, description = "The metadata.", body = Object)))]
 pub async fn resource_hub(headers: HeaderMap, uri: Uri) -> Response {
     protected_resource(&headers, &uri, "/mcp")
 }
 
-/// `GET /.well-known/oauth-protected-resource/mcp/{server}`.
+/// Protected resource metadata: `/mcp/{server}`
+#[utoipa::path(get, path = "/.well-known/oauth-protected-resource/mcp/{server}", operation_id = "oauth_resource_server", tag = "MCP client sign-in", params(("server" = String, Path)),
+    responses((status = 200, description = "The metadata.", body = Object)))]
 pub async fn resource_server(headers: HeaderMap, uri: Uri, axum::extract::Path(server): axum::extract::Path<String>) -> Response {
     protected_resource(&headers, &uri, &format!("/mcp/{server}"))
 }
 
-/// `GET /.well-known/oauth-authorization-server` (RFC 8414).
+/// Authorization server metadata
+///
+/// RFC 8414. Clients identify with a Client ID Metadata Document (`client_id_metadata_document_supported`);
+/// there is no dynamic client registration. PKCE S256, public clients only.
+#[utoipa::path(get, path = "/.well-known/oauth-authorization-server", operation_id = "oauth_metadata", tag = "MCP client sign-in",
+    responses((status = 200, description = "The metadata.", body = Object)))]
 pub async fn metadata(headers: HeaderMap, uri: Uri) -> Response {
     let issuer = origin(&headers, &uri);
     cors(
@@ -506,8 +521,26 @@ pub fn resource_path(resource: Option<&str>, issuer: &str) -> Result<(String, St
     Ok((if path.is_empty() { "/".into() } else { path.to_string() }, r.to_string()))
 }
 
-/// `GET /oauth/authorize`: checks the client and its request, then sends the person to the console
-/// to approve it.
+/// Authorize an MCP client
+///
+/// Checks the client's metadata document and the request, then sends the browser to the console, where a
+/// signed-in person approves the client for one of their keys. Errors about the client or its redirect URI
+/// are shown, not sent back.
+#[utoipa::path(get, path = "/oauth/authorize", operation_id = "oauth_authorize", tag = "MCP client sign-in",
+    params(
+        ("response_type" = String, Query, description = "`code`."),
+        ("client_id" = String, Query, description = "The client's metadata document URL."),
+        ("redirect_uri" = Option<String>, Query, description = "One the document lists."),
+        ("code_challenge" = String, Query, description = "PKCE."),
+        ("code_challenge_method" = String, Query, description = "`S256`."),
+        ("resource" = Option<String>, Query, description = "The MCP endpoint: `{gateway}/mcp`, `{gateway}/mcp/{server}`, or the gateway for all of them. Default `/mcp`."),
+        ("scope" = Option<String>, Query, description = "`mcp`."),
+        ("state" = Option<String>, Query),
+    ),
+    responses(
+        (status = 302, description = "To the console's approval page, or back to the client with an error."),
+        (status = 400, description = "The client or its redirect URI cannot be used."),
+    ))]
 pub async fn authorize(State(state): State<AppState>, headers: HeaderMap, uri: Uri, Query(q): Query<HashMap<String, String>>) -> Response {
     let issuer = origin(&headers, &uri);
     let param = |k: &str| q.get(k).map(String::as_str).filter(|v| !v.is_empty());
@@ -624,7 +657,17 @@ fn later(d: Duration) -> DateTime<Utc> {
     Utc::now() + chrono::Duration::from_std(d).expect("short duration")
 }
 
-/// `POST /oauth/token`: a code for tokens, or a refresh token for new ones.
+/// Token
+///
+/// Form-encoded: `grant_type=authorization_code` with `code`, `client_id`, `redirect_uri`, `code_verifier`
+/// and `resource`, or `grant_type=refresh_token` with `refresh_token` and `client_id`. Access tokens last
+/// an hour; refresh tokens 30 days, and work once.
+#[utoipa::path(post, path = "/oauth/token", operation_id = "oauth_token", tag = "MCP client sign-in",
+    request_body(content = String, content_type = "application/x-www-form-urlencoded"),
+    responses(
+        (status = 200, description = "`access_token`, `token_type`, `expires_in`, `refresh_token`, `scope`.", body = Object),
+        (status = 400, description = "An OAuth error: `error` and `error_description`.", body = Object),
+    ))]
 pub async fn token(State(state): State<AppState>, headers: HeaderMap, uri: Uri, body: Bytes) -> Response {
     let f = form(&body);
     let param = |k: &str| f.get(k).map(String::as_str).filter(|v| !v.is_empty());
@@ -741,8 +784,12 @@ pub async fn token(State(state): State<AppState>, headers: HeaderMap, uri: Uri, 
     }
 }
 
-/// `POST /oauth/revoke` (RFC 7009): revokes the grant of an access or refresh token. Answers 200
-/// whether or not there was one.
+/// Revoke a token
+///
+/// RFC 7009, form-encoded `token` and `client_id`: signs the client out. Always 200.
+#[utoipa::path(post, path = "/oauth/revoke", operation_id = "oauth_revoke", tag = "MCP client sign-in",
+    request_body(content = String, content_type = "application/x-www-form-urlencoded"),
+    responses((status = 200, description = "Revoked, or there was nothing to revoke.")))]
 pub async fn revoke(State(state): State<AppState>, body: Bytes) -> Response {
     let f = form(&body);
     let (Some(token), Some(client_id)) = (f.get("token"), f.get("client_id")) else {

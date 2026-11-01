@@ -47,6 +47,19 @@ impl Route {
     }
 }
 
+/// System One
+///
+/// Decisions in TypeSafe's System One format. Also served at `/systemone`.
+#[utoipa::path(post, path = "/v1/systemone", tag = "Inference", request_body = crate::openapi::SystemOneRequest,
+    responses(
+        (status = 200, description = "The answers.", body = crate::openapi::ProviderAnswer),
+        (status = 400, description = "Invalid request.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::openapi::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::openapi::OpenAiError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn systemone(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -57,6 +70,20 @@ pub async fn systemone(
     serve(&state, key, labels, &headers, body, Route::SystemOne).await
 }
 
+/// Decisions
+///
+/// Calibrated answers to questions about an input, in the OpenAI Decisions format. Also
+/// served at `/decisions`.
+#[utoipa::path(post, path = "/v1/decisions", tag = "Inference", request_body = crate::openapi::DecisionsRequest,
+    responses(
+        (status = 200, description = "An answer per question.", body = crate::openapi::ProviderAnswer),
+        (status = 400, description = "Invalid request.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::openapi::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::openapi::OpenAiError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn decisions(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,

@@ -343,6 +343,20 @@ fn hub_deployments(ds: &[&Deployment]) -> Vec<HubDeployment> {
     out
 }
 
+/// Model hub
+///
+/// Every model the gateway serves, or with `key` those that key may use: token limits,
+/// capabilities and prices, per model and per deployment that may serve it, each model's
+/// metadata, and the guardrails the key's requests go through. `mode`, `vendor` and `q` narrow
+/// the models as the console's filters do. Besides admins, a project's users and keys may read
+/// the hub of their project's keys, and a key whose scope is the inference API its own.
+#[utoipa::path(get, path = "/hub", operation_id = "model_hub", tag = "Model hub", params(HubQuery),
+    responses(
+        (status = 200, description = "The models.", body = HubView),
+        (status = 400, description = "No such key, or an unknown mode.", body = crate::openapi::AdminError),
+        (status = 403, description = "A key whose scope is the inference API asked for another key.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("virtual_key" = []), ("admin_session" = [])))]
 pub(crate) async fn hub(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -541,6 +555,15 @@ pub(super) fn check_metadata(mut m: Map<String, Value>) -> R<Map<String, Value>>
     Ok(m)
 }
 
+/// Set model metadata
+///
+/// Replaces a model's metadata, such as `display_name` and `description`; `{}` removes it.
+#[utoipa::path(put, path = "/model-metadata", operation_id = "set_model_metadata", tag = "Model hub", request_body = MetadataInput,
+    responses(
+        (status = 200, description = "The stored metadata.", body = MetadataView),
+        (status = 400, description = "Invalid metadata, or no such model.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn set_metadata(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -565,9 +588,15 @@ pub(crate) async fn set_metadata(
     Ok(Json(MetadataView { model, metadata }))
 }
 
-/// `GET /admin/api/efforts`: the reasoning efforts each chat model takes, for the console's
-/// effort selectors, to everyone signed in (users included). Routers set their own per route and
-/// are left out, as are aliases of routers.
+/// Reasoning efforts
+///
+/// The reasoning efforts each chat model takes, by its price catalog entry: those every one of
+/// its deployments accepts. Aliases are listed with their target's; auto routers, which set
+/// their own per route, are left out. For everyone signed in to the console.
+#[utoipa::path(get, path = "/efforts", operation_id = "model_efforts", tag = "Model hub",
+    responses((status = 200, description = "Model name to its efforts, in order.", body = std::collections::BTreeMap<String, Vec<crate::model::ReasoningEffort>>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// Aliases of auto routers are left out with the routers.
 pub(crate) async fn efforts(State(state): State<AppState>) -> Json<BTreeMap<String, Vec<ReasoningEffort>>> {
     Json(efforts_by_model(&state.registry.snapshot()))
 }

@@ -15,6 +15,12 @@ use crate::{
     sync::broadcast_reload,
 };
 
+/// Cluster
+///
+/// Every replica, and the health of Postgres and Valkey.
+#[utoipa::path(get, path = "/cluster", tag = "Usage",
+    responses((status = 200, description = "The cluster.", body = Object)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn cluster(State(state): State<AppState>) -> Json<Value> {
     let (instances, valkey, pg) = tokio::join!(state.cache.instances(), state.cache.ping(), db::ping(&state.db));
     Json(json!({
@@ -55,12 +61,26 @@ async fn settings_view(state: &AppState) -> R<SettingsView> {
     Ok(SettingsView { settings, defaults: Settings::default(), updated_at })
 }
 
+/// Get gateway settings
+///
+/// The settings every replica applies, and their defaults.
+#[utoipa::path(get, path = "/settings", tag = "Settings",
+    responses((status = 200, description = "The settings.", body = SettingsView)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn get_settings(State(state): State<AppState>) -> R<Json<SettingsView>> {
     Ok(Json(settings_view(&state).await?))
 }
 
-/// Save the settings (all of them; missing fields take their defaults) and apply them on every
-/// replica.
+/// Save gateway settings
+///
+/// Replaces all settings (missing fields take their defaults) and applies them on every
+/// replica: at once for most, for new client connections for the timeouts and the body limit.
+#[utoipa::path(put, path = "/settings", tag = "Settings", request_body = crate::settings::Settings,
+    responses(
+        (status = 200, description = "The saved settings.", body = SettingsView),
+        (status = 400, description = "A setting is out of range.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn put_settings(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,

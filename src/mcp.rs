@@ -193,7 +193,24 @@ const SESSION: &str = "mcp-session-id";
 /// The answer to a POST is read up to this size for its replies; it is forwarded whole either way.
 const MAX_READ: usize = 8 * 1024 * 1024;
 
-/// `POST`, `GET` and `DELETE /mcp/{server}`.
+/// MCP: send messages
+///
+/// The MCP server named `server`, over Streamable HTTP: JSON-RPC messages as the MCP specification
+/// describes them, forwarded as they are, with the gateway's credentials for the server. The answer is
+/// JSON or server-sent events, as the server chooses. Each `tools/call` is an entry in the request log
+/// (api `mcp`) and counts against the key's limits and budgets.
+#[utoipa::path(post, path = "/mcp/{server}", operation_id = "mcp_post", tag = "MCP", request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 200, description = "The server's answer.", content((Object = "application/json"), (String = "text/event-stream"))),
+        (status = 202, description = "Accepted: notifications and responses have no answer."),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::openapi::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget, for a tool call; see `Retry-After`.", body = crate::openapi::OpenAiError),
+        (status = 502, description = "The server failed, or refused the gateway's credentials.", body = crate::openapi::OpenAiError),
+    ),
+    params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = crate::openapi::MCP_SESSION),
+        ("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn proxy(
     State(state): State<AppState>,
     McpKey(key): McpKey,
@@ -203,6 +220,49 @@ pub async fn proxy(
     body: Bytes,
 ) -> Response {
     forward(&state, &key, &name, method, &headers, body).await.unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
+}
+
+// `proxy` for the other methods, each with its own documentation.
+
+/// MCP: listen
+///
+/// The server's own messages to the client, as server-sent events, where the server offers them.
+#[utoipa::path(get, path = "/mcp/{server}", operation_id = "mcp_get", tag = "MCP",
+    responses(
+        (status = 200, description = "The server's messages.", content((String = "text/event-stream"))),
+        (status = 405, description = "The server does not offer this stream."),
+        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::openapi::OpenAiError),
+    ),
+    params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = crate::openapi::MCP_SESSION)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
+pub async fn proxy_get(
+    state: State<AppState>,
+    key: McpKey,
+    name: Path<String>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    proxy(state, key, name, method, headers, body).await
+}
+
+/// MCP: end session
+#[utoipa::path(delete, path = "/mcp/{server}", operation_id = "mcp_delete", tag = "MCP",
+    responses(
+        (status = 200, description = "The session ended."),
+        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::openapi::OpenAiError),
+    ),
+    params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = crate::openapi::MCP_SESSION)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
+pub async fn proxy_delete(
+    state: State<AppState>,
+    key: McpKey,
+    name: Path<String>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    proxy(state, key, name, method, headers, body).await
 }
 
 async fn forward(

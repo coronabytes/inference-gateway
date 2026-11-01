@@ -139,8 +139,16 @@ fn series_json(stamps: &[i64], buckets: &HashMap<i64, &db::LogTotals>) -> Vec<Va
 /// so open Metrics pages cannot take the connection pool the request path writes through.
 pub(crate) static LOG_SCANS: std::sync::LazyLock<tokio::sync::Semaphore> = std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(3));
 
-/// Metrics come from the request log in Postgres, so they cover its whole retention and every
-/// replica's traffic.
+/// Metrics
+///
+/// Requests, errors, tokens, latency and cost over time, and totals by model.
+#[utoipa::path(get, path = "/metrics", tag = "Usage", params(RangeQuery),
+    responses(
+        (status = 200, description = "Totals and series for the range.", body = Object),
+        (status = 400, description = "Invalid range.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// Metrics come from the request log in Postgres, so they cover its whole retention and every replica's traffic.
 pub(super) async fn metrics(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -205,6 +213,13 @@ pub(super) async fn metrics(
     })))
 }
 
+/// Usage by key
+///
+/// Spend by key, top 50.
+#[utoipa::path(get, path = "/usage/keys", tag = "Usage",
+    params(("range" = Option<String>, Query, description = "`1h`, `24h` (default), `7d` or `30d`.")),
+    responses((status = 200, description = "Usage per key.", body = Vec<crate::db::KeyUsageRow>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn key_usage(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,

@@ -242,7 +242,13 @@ pub(crate) struct ExportQuery {
     sections: Option<String>,
 }
 
-/// `GET /admin/api/config/export[?sections=…]`: the configuration as a JSON download.
+/// Export configuration
+///
+/// Credentials, MCP servers and A2A agents come without their secrets; keys with the hash of
+/// theirs, never the secret itself.
+#[utoipa::path(get, path = "/config/export", operation_id = "export_config", tag = "Configuration", params(ExportQuery),
+    responses((status = 200, description = "The configuration.", body = Document)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn export(State(state): State<AppState>, Query(q): Query<ExportQuery>) -> R<impl IntoResponse> {
     let wanted: HashSet<&str> = match q.sections.as_deref() {
         None => SECTIONS.into_iter().collect(),
@@ -378,7 +384,18 @@ fn claim(claimed: &mut HashSet<Uuid>, id: Uuid, what: &str) -> R<()> {
     }
 }
 
-/// `POST /admin/api/config/import[?dry_run=true]`.
+/// Import configuration
+///
+/// Merges a configuration file into this gateway, in one transaction. Entries update what has
+/// their id, or else what matches them by name; renames carry over to routers, keys and model
+/// metadata.
+#[utoipa::path(post, path = "/config/import", operation_id = "import_config", tag = "Configuration", params(ImportQuery),
+    request_body = Document,
+    responses(
+        (status = 200, description = "What changed, or would change with `dry_run`.", body = crate::openapi::ImportResult),
+        (status = 400, description = "The file is invalid or does not fit this gateway.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn import(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,

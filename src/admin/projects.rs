@@ -93,6 +93,13 @@ pub(crate) struct ProjectQuery {
     q: Option<String>,
 }
 
+/// List projects
+///
+/// Projects group keys in the console. An inactive project (`enabled: false`) blocks its keys,
+/// and its budget, if set, comes on top of theirs. By name, with key counts and budget status.
+#[utoipa::path(get, path = "/projects", tag = "Virtual keys", params(ProjectQuery),
+    responses((status = 200, description = "The projects.", body = Vec<ProjectView>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_projects(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -104,6 +111,14 @@ pub(super) async fn list_projects(
     Ok(Json(views.buffered(LIST_BUDGET_LOOKUPS).collect().await))
 }
 
+/// Create project
+#[utoipa::path(post, path = "/projects", tag = "Virtual keys", request_body = ProjectInput,
+    responses(
+        (status = 201, description = "Created.", body = ProjectView),
+        (status = 400, description = "Invalid project.", body = crate::openapi::AdminError),
+        (status = 409, description = "A project with this name exists.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -135,6 +150,16 @@ pub(super) async fn create_project(
     Ok((StatusCode::CREATED, Json(ProjectView::new(&state, p, 0).await)))
 }
 
+/// Update project
+#[utoipa::path(put, path = "/projects/{id}", tag = "Virtual keys", params(("id" = Uuid, Path)),
+    request_body = ProjectInput,
+    responses(
+        (status = 200, description = "The project.", body = ProjectView),
+        (status = 400, description = "Invalid project.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such project.", body = crate::openapi::AdminError),
+        (status = 409, description = "A project with this name exists.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -183,7 +208,12 @@ pub(super) async fn update_project(
     Ok(Json(ProjectView::new(&state, p, keys).await))
 }
 
-/// The current budget period of the project counts only spend from now on.
+/// Reset project spend
+///
+/// Starts the project's current budget period over. Its keys' own budgets are not affected.
+#[utoipa::path(post, path = "/projects/{id}/reset-spend", tag = "Virtual keys", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Reset."), (status = 404, description = "No such project.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn reset_project_spend(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -199,8 +229,13 @@ pub(super) async fn reset_project_spend(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Its keys are deleted with it. Refused while deployments are limited to it: without it they
-/// would be open to more keys, or to none.
+/// Delete project
+///
+/// Its keys are deleted with it. Refused (`409`) while deployments are limited to it.
+#[utoipa::path(delete, path = "/projects/{id}", tag = "Virtual keys", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such project.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// Without it, the deployments limited to it would be open to more keys, or to none.
 pub(super) async fn delete_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,

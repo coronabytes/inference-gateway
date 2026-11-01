@@ -38,6 +38,20 @@ const MAX_DOCUMENTS: usize = 1000;
 /// Documents per billed search.
 const DOCUMENTS_PER_SEARCH: usize = 100;
 
+/// Rerank
+///
+/// Ranks documents by relevance to a query, on Azure AI Foundry (Cohere), Amazon Bedrock and
+/// OpenAI-compatible rerank servers. Also served at `/v2/rerank` and `/rerank`.
+#[utoipa::path(post, path = "/v1/rerank", tag = "Inference", request_body = crate::openapi::RerankRequest,
+    responses(
+        (status = 200, description = "The documents, most relevant first.", body = crate::openapi::RerankResponse),
+        (status = 400, description = "Invalid request.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::openapi::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::openapi::OpenAiError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn rerank(State(state): State<AppState>, ClientKey(key): ClientKey, ClientLabels(labels): ClientLabels, body: Bytes) -> Response {
     serve(&state, key, labels, body).await.unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
 }

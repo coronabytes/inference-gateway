@@ -200,6 +200,12 @@ pub(crate) struct RouterListItem {
     missing: Vec<String>,
 }
 
+/// List auto routers
+///
+/// With the models each names that no deployment serves.
+#[utoipa::path(get, path = "/routers", tag = "Auto routers", params(RouterQuery),
+    responses((status = 200, description = "The routers.", body = Vec<RouterListItem>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_routers(State(state): State<AppState>, Query(q): Query<RouterQuery>) -> R<Json<Vec<RouterListItem>>> {
     let search = search_text(q.q.as_deref());
     let tags = tag_filter(q.tags.as_deref())?;
@@ -221,6 +227,14 @@ pub(super) async fn list_routers(State(state): State<AppState>, Query(q): Query<
     ))
 }
 
+/// Create auto router
+#[utoipa::path(post, path = "/routers", tag = "Auto routers", request_body = RouterInput,
+    responses(
+        (status = 201, description = "The new router.", body = RouterView),
+        (status = 400, description = "Invalid router.", body = crate::openapi::AdminError),
+        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_router(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -236,6 +250,15 @@ pub(super) async fn create_router(
     Ok((StatusCode::CREATED, Json(view)))
 }
 
+/// Update auto router
+#[utoipa::path(put, path = "/routers/{id}", tag = "Auto routers", params(("id" = Uuid, Path)),
+    request_body = RouterInput,
+    responses(
+        (status = 200, description = "The router.", body = RouterView),
+        (status = 400, description = "Invalid router.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such router.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_router(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -259,6 +282,10 @@ pub(super) async fn update_router(
     Ok(Json(view))
 }
 
+/// Delete auto router
+#[utoipa::path(delete, path = "/routers/{id}", tag = "Auto routers", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such router.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_router(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,

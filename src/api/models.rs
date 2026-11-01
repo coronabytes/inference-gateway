@@ -25,14 +25,31 @@ use crate::{
     state::AppState,
 };
 
-/// `GET /v1/models` — Anthropic-shaped when the client sends `anthropic-version`, OpenAI-shaped
-/// otherwise.
+/// List models
+///
+/// The models, auto routers and model aliases this key may use. With an `anthropic-version` header the list
+/// is Anthropic-shaped, and also gives each model's `max_input_tokens`, `max_tokens`,
+/// `capabilities` and `lifecycle`, as far as the price catalog and the gateway know them.
+#[utoipa::path(get, path = "/v1/models", tag = "Inference",
+    responses(
+        (status = 200, description = "The models.", body = crate::openapi::ModelList),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn list_models(State(state): State<AppState>, ClientKey(key): ClientKey, headers: HeaderMap) -> Response {
     serve(&state, &key, &headers)
 }
 
-/// `GET /v1/models-extended` — OpenAI-shaped, with each model's mode, token limits, structured
-/// output support and tags.
+/// List models with details
+///
+/// The models, auto routers and model aliases this key may use, as `GET /v1/models` lists them, with each
+/// model's mode, token limits, structured output support and tags.
+#[utoipa::path(get, path = "/v1/models-extended", tag = "Inference",
+    responses(
+        (status = 200, description = "The models.", body = crate::openapi::ModelExtendedList),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn list_models_extended(State(state): State<AppState>, ClientKey(key): ClientKey) -> Response {
     serve_extended(&state, &key)
 }

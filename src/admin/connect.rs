@@ -59,7 +59,15 @@ async fn take(state: &AppState, id: &str) -> R<Pending> {
     })
 }
 
-/// `GET /admin/api/connect/{id}`: a waiting sign-in, as the console shows it.
+/// MCP client sign-in request
+///
+/// A sign-in waiting for approval: the client, where it returns to, and the MCP endpoint.
+#[utoipa::path(get, path = "/connect/{id}", operation_id = "connect_request", tag = "MCP client sign-in", params(("id" = String, Path)),
+    responses(
+        (status = 200, description = "The request.", body = ConnectRequest),
+        (status = 404, description = "Expired or answered already.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn get_request(State(state): State<AppState>, Path(id): Path<String>) -> R<Json<ConnectRequest>> {
     let p = pending(&state, &id).await?;
     let (client_host, redirect_host) = (host(&p.client_id), host(&p.redirect_uri));
@@ -89,7 +97,17 @@ pub(crate) struct ConnectAnswer {
     redirect: String,
 }
 
-/// `POST /admin/api/connect/{id}`: approves the sign-in for a key.
+/// Approve MCP client sign-in
+///
+/// Lets the client act as the key on the MCP endpoint it asked for. Returns where to send the browser.
+#[utoipa::path(post, path = "/connect/{id}", operation_id = "connect_approve", tag = "MCP client sign-in", params(("id" = String, Path)),
+    request_body = ApproveInput,
+    responses(
+        (status = 200, description = "Back to the client, with its code.", body = ConnectAnswer),
+        (status = 400, description = "The key cannot be used.", body = crate::openapi::AdminError),
+        (status = 404, description = "Expired or answered already, or no such key.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn approve(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -112,13 +130,27 @@ pub(crate) async fn approve(
     Ok(Json(ConnectAnswer { redirect }))
 }
 
-/// `POST /admin/api/connect/{id}/deny`.
+/// Deny MCP client sign-in
+#[utoipa::path(post, path = "/connect/{id}/deny", operation_id = "connect_deny", tag = "MCP client sign-in", params(("id" = String, Path)),
+    responses(
+        (status = 200, description = "Back to the client, with access_denied.", body = ConnectAnswer),
+        (status = 404, description = "Expired or answered already.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn deny(State(state): State<AppState>, Path(id): Path<String>) -> R<Json<ConnectAnswer>> {
     let p = take(&state, &id).await?;
     Ok(Json(ConnectAnswer { redirect: server::denied(&p) }))
 }
 
-/// `GET /admin/api/keys/{id}/apps`: the MCP clients signed in as this key.
+/// List key's connected apps
+///
+/// The MCP clients signed in to the gateway with OAuth as this key.
+#[utoipa::path(get, path = "/keys/{id}/apps", operation_id = "key_apps", tag = "MCP client sign-in", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The key's grants, newest first.", body = Vec<crate::oauth::server::ClientGrant>),
+        (status = 404, description = "No such key, or not one of the caller's.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_apps(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -129,8 +161,15 @@ pub(crate) async fn list_apps(
     Ok(Json(db::list_client_grants(&state.db, id).await?))
 }
 
-/// `DELETE /admin/api/keys/{id}/apps/{grant}`: signs the client out. Other replicas stop taking
-/// its access token within a minute.
+/// Revoke connected app
+///
+/// Signs the client out: its tokens stop working, on other replicas within a minute.
+#[utoipa::path(delete, path = "/keys/{id}/apps/{grant}", operation_id = "key_revoke_app", tag = "MCP client sign-in", params(("id" = Uuid, Path), ("grant" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Revoked."),
+        (status = 404, description = "No such grant for the key.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn revoke_app(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,

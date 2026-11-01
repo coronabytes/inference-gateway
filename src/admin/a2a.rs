@@ -168,10 +168,24 @@ async fn row(state: &AppState, i: A2aAgentInput, existing: Option<&A2aAgentRow>)
     })
 }
 
+/// List A2A agents
+#[utoipa::path(get, path = "/a2a-agents", tag = "A2A",
+    responses((status = 200, description = "The A2A agents.", body = Vec<A2aAgentView>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_a2a_agents(State(state): State<AppState>) -> R<Json<Vec<A2aAgentView>>> {
     Ok(Json(db::list_a2a_agents(&state.db).await?.into_iter().map(view).collect()))
 }
 
+/// Create A2A agent
+///
+/// An agent, found by its card, proxied at `/a2a/{name}`.
+#[utoipa::path(post, path = "/a2a-agents", tag = "A2A", request_body = A2aAgentInput,
+    responses(
+        (status = 201, description = "The new A2A agent.", body = A2aAgentView),
+        (status = 400, description = "Invalid A2A agent.", body = crate::openapi::AdminError),
+        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn create_a2a_agent(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -186,6 +200,18 @@ pub(crate) async fn create_a2a_agent(
     Ok((StatusCode::CREATED, Json(v)))
 }
 
+/// Update A2A agent
+///
+/// Without a secret, the stored secret stays.
+#[utoipa::path(put, path = "/a2a-agents/{id}", tag = "A2A", params(("id" = Uuid, Path)),
+    request_body = A2aAgentInput,
+    responses(
+        (status = 200, description = "The A2A agent.", body = A2aAgentView),
+        (status = 400, description = "Invalid A2A agent.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such A2A agent.", body = crate::openapi::AdminError),
+        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn update_a2a_agent(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -221,6 +247,13 @@ pub(crate) async fn update_a2a_agent(
     Ok(Json(v))
 }
 
+/// Delete A2A agent
+#[utoipa::path(delete, path = "/a2a-agents/{id}", tag = "A2A", params(("id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Deleted."),
+        (status = 404, description = "No such A2A agent.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn delete_a2a_agent(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -247,8 +280,17 @@ pub(crate) struct A2aAgentTestResult {
     error: Option<String>,
 }
 
-/// Fetches the agent's card (also while the agent is disabled) and says what the gateway proxies
-/// of it. No message is sent; nothing is logged or charged.
+/// Test A2A agent
+///
+/// Fetches the agent's card, also while the agent is disabled, and says what the gateway proxies of it.
+/// No message is sent.
+#[utoipa::path(post, path = "/a2a-agents/{id}/test", tag = "A2A", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The card, or why it could not be used with `ok: false`.", body = A2aAgentTestResult),
+        (status = 404, description = "No such A2A agent.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// Nothing is logged or charged.
 pub(crate) async fn test_a2a_agent(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<A2aAgentTestResult>> {
     let row = db::get_a2a_agent(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     let agent = A2aAgent::build(row, &state.cfg.secret_box).map_err(AdminError::internal)?;

@@ -9,13 +9,13 @@ use std::{
 };
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{Query, State},
-    routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
     audit::{self, Actor},
@@ -39,12 +39,8 @@ const SCHEDULE_CHECK: Duration = Duration::from_secs(300);
 /// How long a replica waits after its scheduled import failed before trying again.
 const SCHEDULE_RETRY: Duration = Duration::from_secs(3600);
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/prices", get(search))
-        .route("/prices/match", get(best_match))
-        .route("/prices/check", get(check))
-        .route("/prices/import", post(import))
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(search)).routes(routes!(best_match)).routes(routes!(check)).routes(routes!(import))
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
@@ -63,6 +59,10 @@ pub(crate) struct SearchQuery {
     best: bool,
 }
 
+/// Search prices
+#[utoipa::path(get, path = "/prices", operation_id = "search_prices", tag = "Price catalog", params(SearchQuery),
+    responses((status = 200, description = "Matching entries, with the filters' values.", body = Object)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn search(State(state): State<AppState>, Query(q): Query<SearchQuery>) -> R<Json<Value>> {
     let terms: Vec<String> = q.q.split_whitespace().map(str::to_lowercase).collect();
     let list = |v: &Option<String>| -> Option<Vec<String>> {
@@ -105,7 +105,12 @@ pub(crate) struct MatchQuery {
     model: String,
 }
 
-/// The catalog entry for a provider's model name, if one matches exactly, and similar entries.
+/// Match price
+///
+/// The catalog entry for a provider's model, and similar ones.
+#[utoipa::path(get, path = "/prices/match", operation_id = "match_price", tag = "Price catalog", params(MatchQuery),
+    responses((status = 200, description = "`exact` and `similar` entries.", body = Object)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn best_match(State(state): State<AppState>, Query(q): Query<MatchQuery>) -> R<Json<Value>> {
     let provider = ProviderKind::parse(&q.provider).ok_or_else(|| AdminError::bad_request("unknown provider"))?;
     let model = q.model.trim();
@@ -122,9 +127,13 @@ async fn best_match(State(state): State<AppState>, Query(q): Query<MatchQuery>) 
     })))
 }
 
-/// Every deployment with its catalog entry: the base model, or else the exact match for its
-/// upstream model. `key` is null when there is none (also for a base model the catalog dropped).
-/// The admin UI compares the entry with the deployment's prices.
+/// Check prices
+///
+/// Every deployment with its catalog entry, to compare prices.
+#[utoipa::path(get, path = "/prices/check", operation_id = "check_prices", tag = "Price catalog",
+    responses((status = 200, description = "One entry per deployment.", body = Object)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// The entry is the base model's, or else the exact match for the upstream model; `key` is null when there is none (also for a base model the catalog dropped).
 async fn check(State(state): State<AppState>) -> R<Json<Value>> {
     let deployments = db::list_deployments(&state.db).await?;
     let entries = catalog_entries(&state, &deployments).await?;
@@ -328,6 +337,18 @@ fn candidates(provider: ProviderKind, model: &str) -> Vec<String> {
     out
 }
 
+/// Import prices
+///
+/// Replaces the catalog with LiteLLM's current price list. The gateway also does this on its
+/// own, as often as the `price_import_hours` setting says, unless `price_import` is off. With
+/// `price_auto_accept` on, deployments whose prices no longer match the catalog take its prices.
+#[utoipa::path(post, path = "/prices/import", operation_id = "import_prices", tag = "Price catalog",
+    responses(
+        (status = 200, description = "What changed.", body = ImportSummary),
+        (status = 400, description = "The download failed.", body = crate::openapi::AdminError),
+        (status = 409, description = "An import is running already.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn import(State(state): State<AppState>, Extension(actor): Extension<Actor>) -> R<Json<Value>> {
     let summary = db::with_lock(&state.db, IMPORT_LOCK, download_and_replace(&state, &actor))
         .await?

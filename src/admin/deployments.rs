@@ -361,6 +361,15 @@ pub(crate) struct DeploymentQuery {
     ids: Option<String>,
 }
 
+/// List deployments
+///
+/// With their cooldowns.
+#[utoipa::path(get, path = "/deployments", tag = "Deployments", params(DeploymentQuery),
+    responses(
+        (status = 200, description = "The deployments.", body = Vec<DeploymentView>),
+        (status = 400, description = "An unknown mode, or a filter that is not ids.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_deployments(State(state): State<AppState>, Query(q): Query<DeploymentQuery>) -> R<Json<Vec<DeploymentView>>> {
     let search = search_text(q.q.as_deref());
     let mode = q.mode.as_deref().map(str::trim).filter(|m| !m.is_empty());
@@ -387,12 +396,26 @@ pub(super) async fn list_deployments(State(state): State<AppState>, Query(q): Qu
     ))
 }
 
+/// Get deployment
+#[utoipa::path(get, path = "/deployments/{id}", tag = "Deployments", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The deployment.", body = DeploymentView),
+        (status = 404, description = "No such deployment.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn get_deployment(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<DeploymentView>> {
     let row = db::get_deployment(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     let name = credential_names(&state).await?.remove(&row.credential_id);
     Ok(Json(view(row, name, None)))
 }
 
+/// Create deployment
+#[utoipa::path(post, path = "/deployments", tag = "Deployments", request_body = DeploymentInput,
+    responses(
+        (status = 201, description = "The new deployment.", body = DeploymentView),
+        (status = 400, description = "Invalid deployment.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_deployment(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -410,6 +433,17 @@ pub(super) async fn create_deployment(
     Ok((StatusCode::CREATED, Json(view)))
 }
 
+/// Update deployment
+///
+/// Its mode cannot change; a renamed model is followed by routers and keys.
+#[utoipa::path(put, path = "/deployments/{id}", tag = "Deployments", params(("id" = Uuid, Path)),
+    request_body = DeploymentInput,
+    responses(
+        (status = 200, description = "The deployment.", body = DeploymentView),
+        (status = 400, description = "Invalid deployment.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such deployment.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_deployment(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -519,6 +553,10 @@ fn rename_in_router(r: &mut RouterRow, old: &str, new: &str) -> bool {
     changed
 }
 
+/// Delete deployment
+#[utoipa::path(delete, path = "/deployments/{id}", tag = "Deployments", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such deployment.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_deployment(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -536,6 +574,12 @@ pub(super) async fn delete_deployment(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Clear cooldown
+///
+/// Puts a cooling-down deployment back into rotation.
+#[utoipa::path(post, path = "/deployments/{id}/clear-cooldown", tag = "Deployments", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Cleared.")),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn clear_cooldown(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> StatusCode {
     state.cache.clear_cooldown(id).await;
     let name = state.registry.snapshot().deployments.values().flatten().find(|d| d.id == id).map(|d| d.model_name.clone());
@@ -543,7 +587,15 @@ pub(super) async fn clear_cooldown(State(state): State<AppState>, Extension(acto
     StatusCode::NO_CONTENT
 }
 
-/// Send a tiny completion through the deployment (bypassing routing) to verify credentials.
+/// Test deployment
+///
+/// Sends a tiny request through the deployment, bypassing routing.
+#[utoipa::path(post, path = "/deployments/{id}/test", tag = "Deployments", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The result.", body = crate::openapi::DeploymentTest),
+        (status = 400, description = "The deployment is disabled or misconfigured.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<Value>> {
     let snap = state.registry.snapshot();
     let d = snap

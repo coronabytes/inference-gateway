@@ -11,12 +11,11 @@ use std::{
 };
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     extract::{MatchedPath, Path, Query, Request, State},
     http::{Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Redirect, Response},
-    routing::{get, post},
 };
 use axum_login::{AuthManagerLayer, AuthManagerLayerBuilder, AuthSession, AuthUser, AuthnBackend, UserId};
 use chrono::{DateTime, Utc};
@@ -35,6 +34,7 @@ use tower_sessions::{
     session::{Id, Record},
     session_store,
 };
+use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
 use crate::{
@@ -498,31 +498,34 @@ fn csrf_ok(req: &Request) -> bool {
 // ---------------------------------------------------------------- routes
 
 /// Admin API routes that work signed out (`/admin/api/auth/...`).
-pub fn api_routes() -> Router<AppState> {
-    Router::new().route("/auth/session", get(session_info)).route("/auth/logout", post(logout)).route("/auth/dev-login", post(dev_login))
+pub fn api_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(session_info)).routes(routes!(logout)).routes(routes!(dev_login))
 }
 
 /// Admin API routes behind the guard.
-pub fn protected_api_routes() -> Router<AppState> {
-    Router::new()
-        .route("/settings/oidc", get(get_settings).put(put_settings))
-        .route("/settings/oidc/test", post(test_settings))
-        .route("/admins", get(list_admins))
-        .route("/admins/{id}", axum::routing::delete(delete_admin))
-        .route("/admins/{id}/projects", axum::routing::put(set_admin_projects))
+pub fn protected_api_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(get_settings, put_settings))
+        .routes(routes!(test_settings))
+        .routes(routes!(list_admins))
+        .routes(routes!(delete_admin))
+        .routes(routes!(set_admin_projects))
 }
 
 /// Browser redirects for the sign-in flow (`/admin/auth/...`).
-pub fn browser_routes() -> Router<AppState> {
-    Router::new()
-        .route("/oidc/login", get(start_login))
-        .route("/oidc/callback", get(callback))
-        .route("/oauth/callback", get(crate::admin::oauth::callback))
-        .route("/oauth/client.json", get(crate::admin::oauth::client_metadata))
-        .route("/oauth/sign-in/{ticket}", get(crate::admin::oauth::sign_in_link))
+pub fn browser_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(start_login))
+        .routes(routes!(callback))
+        .routes(routes!(crate::admin::oauth::callback))
+        .routes(routes!(crate::admin::oauth::client_metadata))
+        .routes(routes!(crate::admin::oauth::sign_in_link))
 }
 
-/// Who is signed in, what they may do, and how the sign-in screen should look. Works signed out.
+/// Session
+///
+/// Who is signed in, and what the sign-in screen offers. Works signed out.
+#[utoipa::path(get, path = "/auth/session", operation_id = "session", tag = "Sign-in", responses((status = 200, description = "The session.", body = crate::openapi::SessionInfo)))]
 async fn session_info(State(state): State<AppState>, req: Request) -> R<Json<Value>> {
     let via = authenticated_via(&state, &req).await;
     let user = req.extensions().get::<Auth>().and_then(|a| a.user.clone());
@@ -562,8 +565,16 @@ struct DevLoginQuery {
     role: Option<String>,
 }
 
-/// Local development only: sign this browser in without credentials, as an admin or as the
-/// local development user, whom admins add to projects like anyone else.
+/// Dev Login
+///
+/// Local development builds only: signs in without credentials, as an admin or (`role=user`)
+/// as the local development user, whom admins add to projects like anyone else.
+#[utoipa::path(post, path = "/auth/dev-login", tag = "Sign-in",
+    params(
+        ("x-gateway-csrf" = String, Header, description = "Any value."),
+        ("role" = Option<String>, Query, description = "`user` for the local development user; an admin otherwise."),
+    ),
+    responses((status = 204, description = "Signed in."), (status = 404, description = "Not a local development build.")))]
 async fn dev_login(
     State(state): State<AppState>,
     session: Session,
@@ -596,6 +607,12 @@ async fn dev_login(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Sign out
+///
+/// Ends the console session.
+#[utoipa::path(post, path = "/auth/logout", tag = "Sign-in",
+    params(("x-gateway-csrf" = String, Header, description = "Any value.")),
+    responses((status = 204, description = "Signed out.")))]
 async fn logout(State(state): State<AppState>, mut auth: Auth, session: Session, req_headers: axum::http::HeaderMap) -> R<StatusCode> {
     if !req_headers.contains_key(CSRF_HEADER) {
         return Err(AdminError::forbidden(format!("missing {CSRF_HEADER} header")));
@@ -629,6 +646,11 @@ fn to_login(message: &str) -> Response {
     Redirect::to(&format!("/?login_error={q}")).into_response()
 }
 
+/// Start single sign-on
+///
+/// Redirects the browser to the identity provider.
+#[utoipa::path(get, path = "/oidc/login", operation_id = "oidc_login", tag = "Sign-in",
+    responses((status = 303, description = "To the identity provider, or back to the console with `login_error`.")))]
 async fn start_login(State(state): State<AppState>, session: Session) -> Response {
     // Nobody is authenticated yet, so what a start costs is bounded for the gateway as a whole.
     // Admins locked out by a flood still have the master key.
@@ -674,6 +696,15 @@ struct CallbackQuery {
     error_description: Option<String>,
 }
 
+/// Single sign-on callback
+///
+/// Where the identity provider sends the browser back.
+#[utoipa::path(get, path = "/oidc/callback", operation_id = "oidc_callback", tag = "Sign-in",
+    params(
+        ("code" = Option<String>, Query), ("state" = Option<String>, Query),
+        ("error" = Option<String>, Query), ("error_description" = Option<String>, Query),
+    ),
+    responses((status = 303, description = "Into the console, or back to the sign-in screen with `login_error`.")))]
 async fn callback(State(state): State<AppState>, mut auth: Auth, Query(q): Query<CallbackQuery>) -> Response {
     if let Some(err) = q.error {
         return to_login(&format!("The identity provider refused the sign-in: {}", q.error_description.unwrap_or(err)));
@@ -965,6 +996,12 @@ fn settings_view(row: Option<OidcSettingsRow>) -> SettingsView {
     }
 }
 
+/// Get single sign-on settings
+///
+/// The client secret is never returned.
+#[utoipa::path(get, path = "/settings/oidc", operation_id = "get_oidc_settings", tag = "Sign-in",
+    responses((status = 200, description = "The settings.", body = SettingsView)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn get_settings(State(state): State<AppState>) -> R<Json<SettingsView>> {
     Ok(Json(settings_view(db::get_oidc_settings(&state.db).await?)))
 }
@@ -999,6 +1036,13 @@ fn valid_url(s: &str) -> bool {
     })
 }
 
+/// Save single sign-on settings
+#[utoipa::path(put, path = "/settings/oidc", operation_id = "put_oidc_settings", tag = "Sign-in", request_body = SettingsInput,
+    responses(
+        (status = 200, description = "The saved settings.", body = SettingsView),
+        (status = 400, description = "Invalid settings.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn put_settings(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -1066,7 +1110,12 @@ async fn put_settings(
     Ok(Json(after))
 }
 
-/// Checks discovery against the stored settings, without signing in.
+/// Test single sign-on
+///
+/// Fetches the identity provider's discovery document with the saved settings.
+#[utoipa::path(post, path = "/settings/oidc/test", operation_id = "test_oidc_settings", tag = "Sign-in",
+    responses((status = 200, description = "Whether discovery worked.", body = crate::openapi::OidcTest)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn test_settings(State(state): State<AppState>) -> R<Json<Value>> {
     let Some(row) = db::get_oidc_settings(&state.db).await? else {
         return Err(AdminError::bad_request("save the settings first"));
@@ -1087,6 +1136,13 @@ pub(crate) struct PersonView {
     projects: Vec<Uuid>,
 }
 
+/// List people
+///
+/// Everyone who has signed in with single sign-on, admins and users, with the projects each
+/// user works in.
+#[utoipa::path(get, path = "/admins", tag = "Sign-in",
+    responses((status = 200, description = "The people.", body = Vec<PersonView>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn list_admins(State(state): State<AppState>) -> R<Json<Vec<PersonView>>> {
     let (people, members) = tokio::try_join!(db::list_admin_users(&state.db), db::list_project_members(&state.db))?;
     Ok(Json(
@@ -1107,8 +1163,19 @@ pub(crate) struct PersonProjects {
     project_ids: Vec<Uuid>,
 }
 
-/// The projects a user works in: there they manage keys and see the playground, request log and
-/// metrics. Takes effect on their next request.
+/// Set a user's projects
+///
+/// The projects a user works in: there they manage keys and see the playground, the request
+/// log and metrics, and nothing else. Admins see every project.
+#[utoipa::path(put, path = "/admins/{id}/projects", tag = "Sign-in", params(("id" = Uuid, Path)),
+    request_body = PersonProjects,
+    responses(
+        (status = 200, description = "The user with their projects.", body = PersonView),
+        (status = 400, description = "Not a user, or an unknown project.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such person.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// Takes effect on their next request.
 async fn set_admin_projects(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -1135,6 +1202,12 @@ async fn set_admin_projects(
     Ok(Json(PersonView { person, projects: i.project_ids }))
 }
 
+/// Remove admin
+///
+/// Their sessions end on their next request.
+#[utoipa::path(delete, path = "/admins/{id}", tag = "Sign-in", params(("id" = Uuid, Path)),
+    responses((status = 204, description = "Removed."), (status = 404, description = "No such admin.", body = crate::openapi::AdminError)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn delete_admin(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
     let admin = db::get_admin_user(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     if !db::delete_admin_user(&state.db, id).await? {
@@ -1148,6 +1221,8 @@ async fn delete_admin(State(state): State<AppState>, Extension(actor): Extension
 
 #[cfg(test)]
 mod tests {
+    use axum::{Router, routing::get};
+
     use super::*;
 
     fn sso() -> Sso {

@@ -52,8 +52,19 @@ pub(crate) struct DiscoverInput {
     register: bool,
 }
 
-/// Finds the authorization server of an MCP server or A2A agent, and gets the gateway a client
-/// there when asked. Its redirect URI is the gateway's address as the console reaches it.
+/// Discover OAuth
+///
+/// Finds an MCP server's (RFC 9728) or A2A agent's (its card) authorization server and what its
+/// metadata says. With `metadata_document`, the gateway's client ID metadata document becomes its
+/// client where the server takes one; otherwise, with `register`, registers the gateway there as
+/// a public client (RFC 7591).
+#[utoipa::path(post, path = "/oauth/discover", operation_id = "oauth_discover", tag = "Upstream OAuth", request_body = DiscoverInput,
+    responses(
+        (status = 200, description = "What was found.", body = crate::oauth::Discovered),
+        (status = 400, description = "Nothing found, or registration refused.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// The client's redirect URI is the gateway's address as the console reaches it.
 pub(crate) async fn discover(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -77,8 +88,12 @@ fn fetchable(origin: &str) -> bool {
     u.scheme() == "https" && !loopback
 }
 
-/// `GET /admin/auth/oauth/client.json`: the gateway's client ID metadata document. An upstream's
-/// authorization server fetches it when a key signs in with the gateway's client ID, its URL.
+/// Gateway's client metadata
+///
+/// The gateway's client ID metadata document. At authorization servers that take such documents,
+/// the gateway's client ID is this document's URL, and the server fetches it when a key signs in.
+#[utoipa::path(get, path = "/oauth/client.json", operation_id = "oauth_client_metadata", tag = "Sign-in",
+    responses((status = 200, description = "The document: the gateway's name and redirect URI, as a public client.", body = Object)))]
 pub(crate) async fn client_metadata(headers: HeaderMap, uri: Uri) -> Json<serde_json::Value> {
     let origin = crate::a2a::origin(&headers, &uri);
     Json(serde_json::json!({
@@ -149,7 +164,15 @@ fn slot_for(client: &oauth::Client, key: Uuid, labels: Option<&str>) -> R<Slot> 
     client.slot(Who { key, labels: &labels }).map_err(|e| AdminError::bad_request(e.message()))
 }
 
-/// The MCP servers and A2A agents this key signs in to on its own, and its sign-ins.
+/// List key's upstream sign-ins
+///
+/// The MCP servers and A2A agents the key may use whose keys sign in on their own, and whether it has.
+#[utoipa::path(get, path = "/keys/{id}/connections", operation_id = "key_connections", tag = "Upstream OAuth", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The upstreams.", body = Vec<Connection>),
+        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_connections(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -242,7 +265,17 @@ pub(crate) struct SignIns {
     total: i64,
 }
 
-/// A key's sign-ins to an upstream that tells them apart by labels, newest first.
+/// List key's sign-ins per tenant or user
+///
+/// For an upstream that keeps a sign-in per tenant or user (`sign_in_by`): the key's sign-ins,
+/// newest first, filtered by labels.
+#[utoipa::path(get, path = "/keys/{id}/connections/{kind}/{upstream}/sign-ins", operation_id = "key_sign_ins", tag = "Upstream OAuth",
+    params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path), SignInsQuery),
+    responses(
+        (status = 200, description = "The sign-ins.", body = SignIns),
+        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_sign_ins(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -316,7 +349,17 @@ pub(crate) struct ConnectStart {
     authorization_url: String,
 }
 
-/// Starts signing the key in to an upstream: the console sends the browser to the URL this returns.
+/// Sign key in to upstream
+///
+/// Starts the authorization code flow with PKCE: send the browser to `authorization_url`. The
+/// upstream's authorization server sends it back to `/admin/auth/oauth/callback`.
+#[utoipa::path(post, path = "/keys/{id}/connections/{kind}/{upstream}", operation_id = "key_connect", tag = "Upstream OAuth",
+    params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path), ConnectQuery),
+    responses(
+        (status = 200, description = "Where to send the browser.", body = ConnectStart),
+        (status = 404, description = "No such key, or no such upstream for it that signs keys in.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn connect(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -375,7 +418,17 @@ pub(crate) struct DisconnectQuery {
     labels: Option<String>,
 }
 
-/// Signs the key, or one of its sign-ins by labels, out of an upstream: its tokens are deleted.
+/// Sign key out of upstream
+///
+/// Deletes the key's tokens, or with `labels` those of one of its sign-ins per tenant or user.
+/// Other replicas stop using them within five minutes.
+#[utoipa::path(delete, path = "/keys/{id}/connections/{kind}/{upstream}", operation_id = "key_disconnect", tag = "Upstream OAuth",
+    params(("id" = Uuid, Path), ("kind" = String, Path), ("upstream" = Uuid, Path), DisconnectQuery),
+    responses(
+        (status = 204, description = "Signed out."),
+        (status = 404, description = "The key had not signed in.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn disconnect(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -399,9 +452,18 @@ pub(crate) async fn disconnect(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /admin/auth/oauth/sign-in/{ticket}`: a sign-in link an application handed one of its
-/// tenants or users (see `oauth::Ticket`). Sends the browser to the upstream's sign-in, which comes
-/// back to `callback` in this browser.
+/// Follow a sign-in link
+///
+/// A link from `POST /v1/oauth/sign-ins`, or from an error that a tenant or user has not signed
+/// in: redirects to the upstream's sign-in, which comes back to `/admin/auth/oauth/callback` in
+/// the same browser. Links work for 15 minutes.
+#[utoipa::path(get, path = "/oauth/sign-in/{ticket}", operation_id = "oauth_sign_in_link", tag = "Upstream OAuth", params(("ticket" = String, Path)),
+    responses(
+        (status = 303, description = "To the upstream's sign-in."),
+        (status = 404, description = "The link no longer works: the key, the upstream or how it keeps sign-ins changed."),
+        (status = 410, description = "The link has expired."),
+    ))]
+// The link is a ticket an application handed one of its tenants or users (see `oauth::Ticket`).
 pub(crate) async fn sign_in_link(
     State(state): State<AppState>,
     session: Session,
@@ -483,8 +545,17 @@ async fn take_pending(session: &Session, returned: Option<&str>) -> Option<Pendi
     None
 }
 
-/// `GET /admin/auth/oauth/callback`: where the upstream's sign-in comes back to. It finishes only in
-/// the browser session that started it, so a link cannot sign someone's key in to another account.
+/// Upstream sign-in callback
+///
+/// Where an MCP server's or A2A agent's authorization server sends the browser back after a key
+/// was signed in. It finishes only in the browser session that started the sign-in.
+#[utoipa::path(get, path = "/oauth/callback", operation_id = "oauth_callback", tag = "Sign-in",
+    params(
+        ("code" = Option<String>, Query), ("state" = Option<String>, Query),
+        ("error" = Option<String>, Query), ("error_description" = Option<String>, Query),
+    ),
+    responses((status = 303, description = "Back to the console's Access page, with `connected` or `connect_error`.")))]
+// Finishing only in the browser session that started it means a link cannot sign someone's key in to another account.
 pub(crate) async fn callback(State(state): State<AppState>, session: Session, Query(q): Query<CallbackQuery>) -> Response {
     let pending = take_pending(&session, q.state.as_deref()).await;
     let (back, key, link) = pending.as_ref().map_or((Back::Access, None, false), |p| (p.back, Some(p.key), p.link));

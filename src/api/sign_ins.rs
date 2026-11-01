@@ -69,8 +69,16 @@ fn refuse(e: GatewayError) -> Response {
     e.into_response_for(Dialect::OpenAi)
 }
 
-/// `GET /v1/oauth/sign-ins`: the upstreams the key may use that keep a sign-in per tenant or user,
-/// and whether the request's tenant or user has signed in to each.
+/// List tenant's or user's sign-ins
+///
+/// The MCP servers and A2A agents the key may use that keep a sign-in per tenant or user, and
+/// whether the tenant or user in the request's `x-gateway-labels` has signed in to each.
+#[utoipa::path(get, path = "/v1/oauth/sign-ins", operation_id = "list_sign_ins", tag = "Upstream OAuth",
+    responses(
+        (status = 200, description = "The upstreams.", body = SignInList),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn list(State(state): State<AppState>, ClientKey(key): ClientKey, ClientLabels(labels): ClientLabels) -> Response {
     let mut out = Vec::new();
     for (kind, c) in upstreams(&state, &key) {
@@ -111,7 +119,17 @@ pub struct Link {
     expires_at: DateTime<Utc>,
 }
 
-/// `POST /v1/oauth/sign-ins`: a sign-in link for the request's tenant or user, to hand to them.
+/// Get a sign-in link
+///
+/// A link that signs the tenant or user in the request's `x-gateway-labels` in to the upstream,
+/// to hand to them. It works for 15 minutes, and only in the browser that opens it.
+#[utoipa::path(post, path = "/v1/oauth/sign-ins", operation_id = "sign_in_link", tag = "Upstream OAuth", request_body = LinkInput,
+    responses(
+        (status = 200, description = "The link.", body = Link),
+        (status = 400, description = "The request lacks a label the upstream keeps sign-ins by.", body = crate::openapi::OpenAiError),
+        (status = 404, description = "No such upstream for this key that keeps a sign-in per tenant or user.", body = crate::openapi::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn link(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -133,7 +151,16 @@ pub async fn link(
     }
 }
 
-/// `DELETE /v1/oauth/sign-ins/{kind}/{name}`: signs the request's tenant or user out of the upstream.
+/// Sign tenant or user out
+///
+/// Deletes the sign-in of the tenant or user in the request's `x-gateway-labels`.
+#[utoipa::path(delete, path = "/v1/oauth/sign-ins/{kind}/{name}", tag = "Upstream OAuth",
+    params(("kind" = String, Path, description = "`mcp` or `a2a`."), ("name" = String, Path)),
+    responses(
+        (status = 204, description = "Signed out."),
+        (status = 404, description = "They had not signed in.", body = crate::openapi::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn sign_out(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,

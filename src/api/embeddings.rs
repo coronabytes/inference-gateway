@@ -27,6 +27,19 @@ use crate::{
     state::AppState,
 };
 
+/// Embeddings
+///
+/// OpenAI embeddings, on every provider. Also served at `/embeddings`.
+#[utoipa::path(post, path = "/v1/embeddings", tag = "Inference", request_body = crate::openapi::EmbeddingsRequest,
+    responses(
+        (status = 200, description = "The embeddings, in input order.", body = crate::openapi::ProviderAnswer),
+        (status = 400, description = "Invalid request.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::openapi::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::openapi::OpenAiError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn embeddings(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,

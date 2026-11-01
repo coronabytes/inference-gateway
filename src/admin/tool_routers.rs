@@ -171,10 +171,25 @@ pub(super) fn check(
     })
 }
 
+/// List tool routers
+#[utoipa::path(get, path = "/tool-routers", tag = "Tool routers",
+    responses((status = 200, description = "The tool routers.", body = Vec<ToolRouterView>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_tool_routers(State(state): State<AppState>) -> R<Json<Vec<ToolRouterView>>> {
     Ok(Json(db::list_tool_routers(&state.db).await?.into_iter().map(view).collect()))
 }
 
+/// Create tool router
+///
+/// A decision model and routes, each a group of one MCP server's tools with a description of when
+/// they are needed. Requests name the router like an MCP server.
+#[utoipa::path(post, path = "/tool-routers", tag = "Tool routers", request_body = ToolRouterInput,
+    responses(
+        (status = 201, description = "The new tool router.", body = ToolRouterView),
+        (status = 400, description = "Invalid tool router.", body = crate::openapi::AdminError),
+        (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn create_tool_router(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -189,6 +204,16 @@ pub(crate) async fn create_tool_router(
     Ok((StatusCode::CREATED, Json(v)))
 }
 
+/// Update tool router
+#[utoipa::path(put, path = "/tool-routers/{id}", tag = "Tool routers", params(("id" = Uuid, Path)),
+    request_body = ToolRouterInput,
+    responses(
+        (status = 200, description = "The tool router.", body = ToolRouterView),
+        (status = 400, description = "Invalid tool router.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such tool router.", body = crate::openapi::AdminError),
+        (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn update_tool_router(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -209,6 +234,13 @@ pub(crate) async fn update_tool_router(
     Ok(Json(v))
 }
 
+/// Delete tool router
+#[utoipa::path(delete, path = "/tool-routers/{id}", tag = "Tool routers", params(("id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Deleted."),
+        (status = 404, description = "No such tool router.", body = crate::openapi::AdminError),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn delete_tool_router(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
