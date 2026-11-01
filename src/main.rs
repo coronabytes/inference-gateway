@@ -93,8 +93,8 @@ async fn start() {
         println!("{}", openapi::export());
         return;
     }
-    // For `rediss://`: the Valkey client uses rustls's process-wide provider, which rustls cannot
-    // choose itself while both ring and aws-lc-rs are in the build.
+    // For `rediss://`: the Valkey client uses rustls's process-wide provider. aws-lc-rs is the only one
+    // in the build, but installing it says so rather than leaving it to rustls's feature detection.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     // Local development convenience. Variables already set in the environment win, and release
     // builds (including the Docker image) never read a .env file.
