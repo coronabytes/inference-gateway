@@ -57,6 +57,10 @@ impl<H: SseHandler> Decoder for Sse<H> {
         for ev in self.parser.feed(chunk) {
             self.handler.on_event(ev.event.as_deref(), &ev.data, out);
         }
+        // The stream ends at the first error, so this is reported once.
+        if self.parser.too_large() {
+            out.push(Err(GatewayError::upstream_stream(crate::error::ErrorKind::Upstream, "the upstream sent an event too large to read")));
+        }
     }
 
     fn finish(&mut self, out: &mut Vec<EventResult>) {
