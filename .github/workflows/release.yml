@@ -6,7 +6,8 @@
 # attestation attached, and a GitHub release is created. Only admins can create, move or delete `v*`
 # tags (a tag ruleset), and once released, not even they can (immutable releases, a repository setting). The tagged commit must be on main, and the checks its push to main
 # ran must pass; they are not run again.
-# Running it by hand from a branch in the Actions tab runs the checks first and pushes the
+# The image is built only once the run is approved in the `release` environment.
+# Running it by hand from main in the Actions tab runs the checks first and pushes the
 # image tagged with the commit.
 name: Release
 
@@ -64,6 +65,9 @@ jobs:
     name: Gateway image (${{ matrix.platform }})
     needs: [checked-on-main, checks]
     if: ${{ !cancelled() && (needs.checked-on-main.result == 'success' || needs.checks.result == 'success') }}
+    # Nothing is pushed until a reviewer of the environment approves the run (one approval covers both
+    # platforms). The environment only accepts `v*` tags and main.
+    environment: release
     strategy:
       matrix:
         include:
