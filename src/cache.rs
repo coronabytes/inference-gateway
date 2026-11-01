@@ -429,6 +429,40 @@ impl Cache {
         Ok(r.is_some())
     }
 
+    /// One guardrail's remembered verdicts on texts it screened, by keyed hash of the text (see
+    /// `api::guard`). The guardrail's id is the hash tag, so one MGET reads them in any cluster.
+    fn verdict_key(guardrail: Uuid, text_hash: &str) -> String {
+        format!("gw:guard:{{{guardrail}}}:{text_hash}")
+    }
+
+    /// The remembered verdicts for `hashes`, in order; all `None` when Valkey cannot be read.
+    pub async fn guard_verdicts(&self, guardrail: Uuid, hashes: &[String]) -> Vec<Option<Vec<u8>>> {
+        if hashes.is_empty() {
+            return Vec::new();
+        }
+        let keys: Vec<String> = hashes.iter().map(|h| Self::verdict_key(guardrail, h)).collect();
+        let r: RedisResult<Vec<Option<Vec<u8>>>> = redis::cmd("MGET").arg(&keys).query_async(&mut self.conn()).await;
+        r.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not read remembered guardrail verdicts");
+            vec![None; hashes.len()]
+        })
+    }
+
+    /// Remembers verdicts for `ttl`.
+    pub async fn save_guard_verdicts(&self, guardrail: Uuid, verdicts: Vec<(String, Vec<u8>)>, ttl: Duration) {
+        if verdicts.is_empty() {
+            return;
+        }
+        let mut pipe = redis::pipe();
+        for (hash, value) in verdicts {
+            pipe.cmd("SET").arg(Self::verdict_key(guardrail, &hash)).arg(value).arg("EX").arg(ttl.as_secs().max(1)).ignore();
+        }
+        let r: RedisResult<()> = pipe.query_async(&mut self.conn()).await;
+        if let Err(e) = r {
+            tracing::warn!(error = %e, "could not remember guardrail verdicts");
+        }
+    }
+
     /// The value, deleted as it is read: one-time codes are used once, whichever replica reads first.
     pub async fn take(&self, key: &str) -> RedisResult<Option<String>> {
         redis::cmd("GETDEL").arg(key).query_async(&mut self.conn()).await
