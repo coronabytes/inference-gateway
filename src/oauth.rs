@@ -359,6 +359,8 @@ impl Client {
 
 /// A link that signs one tenant or user in to an upstream, for the application to show them: the
 /// sign-in sealed with the gateway's encryption key, so it needs no table and cannot be altered.
+/// It completes one sign-in: its nonce is claimed in Valkey then (see `Ticket::used_key`), so a
+/// link seen by someone else cannot sign their account in to the slot afterwards.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Ticket {
     pub kind: Kind,
@@ -367,6 +369,7 @@ pub struct Ticket {
     pub slot: Slot,
     /// Unix seconds.
     pub expires: i64,
+    pub nonce: String,
 }
 
 /// Where sign-in links go, after the gateway's address, followed by the ticket.
@@ -376,7 +379,18 @@ pub const TICKET_TTL_SECS: i64 = 900;
 
 impl Ticket {
     pub fn new(c: &Client, slot: &Slot) -> Self {
-        Ticket { kind: c.kind, upstream: c.upstream, slot: slot.clone(), expires: Utc::now().timestamp() + TICKET_TTL_SECS }
+        Ticket {
+            kind: c.kind,
+            upstream: c.upstream,
+            slot: slot.clone(),
+            expires: Utc::now().timestamp() + TICKET_TTL_SECS,
+            nonce: random_token(),
+        }
+    }
+
+    /// The Valkey key that marks a ticket's nonce used.
+    pub fn used_key(nonce: &str) -> String {
+        format!("gw:signin-link:{nonce}")
     }
 
     pub fn url(&self, origin: &str, sb: &SecretBox) -> String {
@@ -979,6 +993,7 @@ mod tests {
         let ticket = url.strip_prefix("https://gw.example.com/admin/auth/oauth/sign-in/").expect("on the gateway's address");
         let t = Ticket::open(ticket, &sb).unwrap();
         assert_eq!((t.kind, t.upstream, &t.slot), (Kind::A2a, c.upstream, &slot));
+        assert_ne!(t.nonce, Ticket::new(&c, &slot).nonce, "every link has its own nonce");
         // Altered, or sealed with another key: refused.
         let mut altered = ticket.to_string();
         altered.replace_range(10..11, if &ticket[10..11] == "A" { "B" } else { "A" });

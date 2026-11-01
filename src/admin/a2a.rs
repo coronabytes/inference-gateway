@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::{
     R,
-    mcp::{check_auth, check_name, check_projects, check_url},
+    mcp::{check_auth, check_name, check_projects, check_url, secret_destination},
 };
 use crate::{
     a2a::{A2aAgent, A2aAgentRow, CardSummary},
@@ -131,11 +131,12 @@ async fn row(state: &AppState, i: A2aAgentInput, existing: Option<&A2aAgentRow>)
     let card_url = check_card_url(state, &i.card_url)?;
     let auth = check_auth(
         state,
+        &card_url,
         i.auth,
         i.auth_header.as_deref(),
         i.secret.as_deref(),
         i.oauth,
-        existing.and_then(|e| e.secret.as_deref()),
+        existing.and_then(|e| Some((e.secret.as_deref()?, secret_destination(&e.card_url, e.oauth.as_deref())))),
         &A2A_RESERVED,
     )?;
     let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;

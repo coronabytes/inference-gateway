@@ -166,15 +166,23 @@ pub(super) struct CheckedAuth {
     pub oauth: Option<sqlx::types::Json<OAuthConfig>>,
 }
 
-/// How the gateway signs in to an upstream. The secret is `existing`'s when no new one is given;
+/// Where an upstream's secret is sent: its OAuth token endpoint, or else the upstream itself.
+pub(super) fn secret_destination<'a>(url: &'a str, oauth: Option<&'a OAuthConfig>) -> &'a str {
+    oauth.map_or(url, |o| o.token_url.as_str())
+}
+
+/// How the gateway signs in to an upstream at `url`. The secret is `existing`'s (the sealed secret
+/// and where it was sent) when no new one is given and it still goes to the same origin;
 /// `reserved` are headers the gateway sets.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn check_auth(
     state: &AppState,
+    url: &str,
     auth: McpAuth,
     header: Option<&str>,
     secret: Option<&str>,
     oauth: Option<OAuthConfig>,
-    existing: Option<&[u8]>,
+    existing: Option<(&[u8], &str)>,
     reserved: &[&str],
 ) -> R<CheckedAuth> {
     let oauth = match auth {
@@ -182,6 +190,12 @@ pub(super) fn check_auth(
         _ if oauth.is_some() => return Err(AdminError::bad_request("an OAuth client only applies to OAuth authentication")),
         _ => None,
     };
+    // A stored secret only goes where it went before, so a changed address cannot collect it.
+    let to = secret_destination(url, oauth.as_deref());
+    let moved = existing.is_some_and(|(_, was)| !crate::util::same_origin(was, to));
+    let existing = existing.filter(|_| !moved).map(|(s, _)| s);
+    let required =
+        if moved { "the secret would go to another host now: enter it again" } else { "the secret is required for this authentication" };
     // A public client (PKCE, no secret) keeps none.
     let public = oauth.as_ref().is_some_and(|o| o.token_auth.as_deref() == Some("none"));
     let secret = match (auth, secret.map(str::trim)) {
@@ -195,7 +209,7 @@ pub(super) fn check_auth(
         }
         // Signing in per key works without a client secret, where the server registered a public client.
         (McpAuth::OAuthUser, _) => existing.map(<[u8]>::to_vec),
-        _ => Some(existing.map(<[u8]>::to_vec).ok_or_else(|| AdminError::bad_request("the secret is required for this authentication"))?),
+        _ => Some(existing.map(<[u8]>::to_vec).ok_or_else(|| AdminError::bad_request(required))?),
     };
     let header = check_header(auth, header, reserved)?;
     Ok(CheckedAuth { header, secret, oauth })
@@ -345,11 +359,12 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
     let url = check_url(state, &i.url)?;
     let auth = check_auth(
         state,
+        &url,
         i.auth,
         i.auth_header.as_deref(),
         i.secret.as_deref(),
         i.oauth,
-        existing.and_then(|e| e.secret.as_deref()),
+        existing.and_then(|e| Some((e.secret.as_deref()?, secret_destination(&e.url, e.oauth.as_deref())))),
         &MCP_RESERVED,
     )?;
     let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;

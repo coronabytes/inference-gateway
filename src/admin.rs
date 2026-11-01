@@ -436,11 +436,26 @@ async fn update_credential(
         return Err(AdminError::bad_request("a credential's provider cannot be changed; create a new credential"));
     }
     let provider = ProviderKind::parse(&row.provider).ok_or_else(|| AdminError::bad_request("unknown provider"))?;
-    let mut secrets = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref())
+    let stored = registry::decrypt_secrets(&state.cfg.secret_box, row.secrets.as_deref())
         .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let secrets_replaced = i.secrets.values().next().is_some();
-    secrets.merge(i.secrets);
     let settings = clean_settings(&state, provider, i.settings)?;
+    // Stored secrets only go where they went before. Pointed at another host, the credential
+    // keeps none of them, so a changed endpoint cannot collect them; the provider's own default
+    // endpoint is always safe.
+    let moved = settings
+        .base_url
+        .as_deref()
+        .is_some_and(|new| !row.settings.0.base_url.as_deref().is_some_and(|old| crate::util::same_origin(old, new)));
+    let mut secrets = if moved {
+        if !secrets_replaced && stored.values().next().is_some() {
+            return Err(AdminError::bad_request("the endpoint is on another host now: enter the credential's secrets again"));
+        }
+        Secrets::default()
+    } else {
+        stored
+    };
+    secrets.merge(i.secrets);
     validate_credential(provider, &i.name, &secrets, &settings)?;
     row.settings = sqlx::types::Json(settings);
     row.name = i.name.trim().to_string();

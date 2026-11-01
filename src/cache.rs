@@ -422,6 +422,13 @@ impl Cache {
         self.conn().get(key).await
     }
 
+    /// Marks `key` used for `ttl`: true for the first caller on any replica, false once it is taken.
+    pub async fn claim(&self, key: &str, ttl: Duration) -> RedisResult<bool> {
+        let r: Option<String> =
+            redis::cmd("SET").arg(key).arg("1").arg("NX").arg("EX").arg(ttl.as_secs().max(1)).query_async(&mut self.conn()).await?;
+        Ok(r.is_some())
+    }
+
     /// The value, deleted as it is read: one-time codes are used once, whichever replica reads first.
     pub async fn take(&self, key: &str) -> RedisResult<Option<String>> {
         redis::cmd("GETDEL").arg(key).query_async(&mut self.conn()).await

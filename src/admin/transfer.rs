@@ -433,6 +433,16 @@ pub(super) async fn import(
                 let x = &mut creds[ix];
                 if x.settings.0 != settings || x.name != name {
                     let label = if x.name == name { name.clone() } else { format!("{name}, renamed from {}", x.name) };
+                    // Its secrets only go where they went before: an endpoint on another host
+                    // drops them, and the credential needs them entered again.
+                    let moved = settings
+                        .base_url
+                        .as_deref()
+                        .is_some_and(|new| !x.settings.0.base_url.as_deref().is_some_and(|old| crate::util::same_origin(old, new)));
+                    if moved && x.secrets.is_some() {
+                        x.secrets = None;
+                        needs_secrets.push(name.clone());
+                    }
                     x.settings = sqlx::types::Json(settings);
                     x.name = name;
                     updated_creds.insert(x.id);

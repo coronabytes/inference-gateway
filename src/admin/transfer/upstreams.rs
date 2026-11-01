@@ -15,7 +15,7 @@ use crate::{
     admin::{
         R,
         a2a::A2A_RESERVED,
-        mcp::{MCP_RESERVED, check_auth, check_name, check_tools, check_url},
+        mcp::{MCP_RESERVED, check_auth, check_name, check_tools, check_url, secret_destination},
         tool_routers::{self, ToolRouterInput},
     },
     mcp::{
@@ -26,6 +26,7 @@ use crate::{
     model::{DeploymentRow, ProjectRow, normalize_tags},
     oauth::OAuthConfig,
     state::AppState,
+    util::same_origin,
 };
 
 fn yes() -> bool {
@@ -68,13 +69,15 @@ fn needs_secret(auth: McpAuth, oauth: Option<&OAuthConfig>, had_one: bool) -> bo
 /// The auth checked as the admin API checks it, with the secret this gateway has (or will need).
 fn checked_auth(
     state: &AppState,
+    url: &str,
     auth: McpAuth,
     header: Option<&str>,
     oauth: Option<OAuthConfig>,
     reserved: &[&str],
 ) -> R<(Option<String>, Option<sqlx::types::Json<OAuthConfig>>)> {
-    // The secret is not in the file: it is checked as if one were stored.
-    let c = check_auth(state, auth, header, None, oauth, Some(b"-"), reserved)?;
+    // The secret is not in the file: it is checked as if one were stored for this address.
+    let to = secret_destination(url, oauth.as_ref()).to_string();
+    let c = check_auth(state, url, auth, header, None, oauth, Some((b"-", &to)), reserved)?;
     Ok((c.header, c.oauth))
 }
 
@@ -142,7 +145,7 @@ pub(super) struct Imported {
     pub changes: Changes,
     pub created: HashSet<Uuid>,
     pub updated: HashSet<Uuid>,
-    /// New ones that work once their secret is entered.
+    /// New ones, and ones whose secret would now go to another host, that work once it is entered.
     pub needs_secrets: Vec<String>,
 }
 
@@ -164,7 +167,7 @@ pub(super) fn import_mcp_servers(
         }
         let url = check_url(state, &d.url).map_err(about(&what))?;
         let (auth_header, oauth) =
-            checked_auth(state, d.auth, d.auth_header.as_deref(), d.oauth.clone(), &MCP_RESERVED).map_err(about(&what))?;
+            checked_auth(state, &url, d.auth, d.auth_header.as_deref(), d.oauth.clone(), &MCP_RESERVED).map_err(about(&what))?;
         let tags = normalize_tags(d.tags.clone()).map_err(|e| bad(format!("{what}: {e}")))?;
         if !(1..=3600).contains(&d.timeout_secs) {
             return Err(bad(format!("{what}: the timeout is 1 to 3600 seconds")));
@@ -200,8 +203,13 @@ pub(super) fn import_mcp_servers(
             Some(ix) => {
                 claim(&mut claimed, servers[ix].id, &what)?;
                 let x = &servers[ix];
-                // It keeps its secret; one the auth no longer takes is dropped.
-                let secret = if d.auth == McpAuth::None { None } else { x.secret.clone() };
+                // It keeps its secret; one the auth no longer takes, or that would go to another
+                // host, is dropped.
+                let moved = !same_origin(secret_destination(&x.url, x.oauth.as_deref()), secret_destination(&url, oauth.as_deref()));
+                let secret = if d.auth == McpAuth::None || moved { None } else { x.secret.clone() };
+                if moved && x.secret.is_some() && needs_secret(d.auth, d.oauth.as_ref(), true) {
+                    out.needs_secrets.push(name.clone());
+                }
                 let new = row(x.id, secret, x.created_at)?;
                 if mcp_server_doc(x, projects) == mcp_server_doc(&new, projects) {
                     out.changes.unchanged += 1;
@@ -294,7 +302,7 @@ pub(super) fn import_a2a_agents(
         let name = check_name(&d.name, "agent").map_err(about(&what))?;
         let card_url = crate::admin::a2a::check_card_url(state, &d.card_url).map_err(about(&what))?;
         let (auth_header, oauth) =
-            checked_auth(state, d.auth, d.auth_header.as_deref(), d.oauth.clone(), &A2A_RESERVED).map_err(about(&what))?;
+            checked_auth(state, &card_url, d.auth, d.auth_header.as_deref(), d.oauth.clone(), &A2A_RESERVED).map_err(about(&what))?;
         let tags = normalize_tags(d.tags.clone()).map_err(|e| bad(format!("{what}: {e}")))?;
         if !(1..=3600).contains(&d.timeout_secs) {
             return Err(bad(format!("{what}: the timeout is 1 to 3600 seconds")));
@@ -328,7 +336,12 @@ pub(super) fn import_a2a_agents(
             Some(ix) => {
                 claim(&mut claimed, agents[ix].id, &what)?;
                 let x = &agents[ix];
-                let secret = if d.auth == McpAuth::None { None } else { x.secret.clone() };
+                let moved =
+                    !same_origin(secret_destination(&x.card_url, x.oauth.as_deref()), secret_destination(&card_url, oauth.as_deref()));
+                let secret = if d.auth == McpAuth::None || moved { None } else { x.secret.clone() };
+                if moved && x.secret.is_some() && needs_secret(d.auth, d.oauth.as_ref(), true) {
+                    out.needs_secrets.push(name.clone());
+                }
                 let new = row(x.id, secret, x.created_at)?;
                 if a2a_agent_doc(x, projects) == a2a_agent_doc(&new, projects) {
                     out.changes.unchanged += 1;

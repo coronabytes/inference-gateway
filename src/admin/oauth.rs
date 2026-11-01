@@ -282,6 +282,9 @@ struct Pending {
     /// The console page to come back to.
     #[serde(default)]
     back: Back,
+    /// The nonce of the sign-in link it started from, claimed when the sign-in completes.
+    #[serde(default)]
+    ticket: Option<String>,
     /// Started from a sign-in link rather than the console: it ends on a page of its own.
     #[serde(default)]
     link: bool,
@@ -361,6 +364,7 @@ fn start(
         actor_name: actor.name.clone(),
         back,
         link,
+        ticket: None,
     };
     Ok((authorization_url, pending))
 }
@@ -410,6 +414,9 @@ pub(crate) async fn sign_in_link(
         return page(StatusCode::GONE, "This sign-in link has expired", "Ask for a new link where you got this one.");
     };
     let gone = || page(StatusCode::NOT_FOUND, "This sign-in link no longer works", "Ask for a new link where you got this one.");
+    if let Ok(Some(_)) = state.cache.peek(&oauth::Ticket::used_key(&t.nonce)).await {
+        return page(StatusCode::GONE, "This sign-in link was used already", "Ask for a new link where you got this one.");
+    }
     let Ok(Some(key)) = db::get_key(&state.db, t.slot.key).await else { return gone() };
     let Some(client) = client(&state, &key, t.kind, t.upstream) else { return gone() };
     // The upstream may tell sign-ins apart differently since the link was made.
@@ -421,10 +428,11 @@ pub(crate) async fn sign_in_link(
         return gone();
     }
     let actor = Actor::virtual_key(key.id, &key.name);
-    let (url, pending) = match start(&client, &t.slot, &headers, &uri, &actor, Back::Access, true) {
+    let (url, mut pending) = match start(&client, &t.slot, &headers, &uri, &actor, Back::Access, true) {
         Ok(s) => s,
         Err(e) => return page(StatusCode::BAD_GATEWAY, "The sign-in could not start", &e.1),
     };
+    pending.ticket = Some(t.nonce);
     if session.insert(LINK_PENDING_KEY, pending).await.is_err() {
         return page(StatusCode::INTERNAL_SERVER_ERROR, "The sign-in could not start", "Try the link again.");
     }
@@ -508,7 +516,25 @@ pub(crate) async fn callback(State(state): State<AppState>, session: Session, Qu
         true => "sign-in link".to_string(),
         false => actor.name.clone().unwrap_or_else(|| actor.kind.to_string()),
     };
-    match client.complete(&state, &slot, &code, &p.verifier, &p.redirect_uri, &by).await {
+    // A link completes one sign-in, whichever browser gets there first. Its nonce is released
+    // again if the sign-in fails, so the link can be retried.
+    let used = p.ticket.as_deref().map(oauth::Ticket::used_key);
+    if let Some(used) = &used {
+        let ttl = std::time::Duration::from_secs(oauth::TICKET_TTL_SECS as u64);
+        match state.cache.claim(used, ttl).await {
+            Ok(true) => {}
+            Ok(false) => return done(false, "This sign-in link was used already; ask for a new one where you got it."),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not claim a sign-in link");
+                return done(false, "The sign-in could not be checked; try the link again.");
+            }
+        }
+    }
+    let result = client.complete(&state, &slot, &code, &p.verifier, &p.redirect_uri, &by).await;
+    if let (Err(_), Some(used)) = (&result, &used) {
+        let _ = state.cache.take(used).await;
+    }
+    match result {
         Ok(()) => {
             let mut details = serde_json::json!({ "upstream": client.name, "kind": p.kind.as_str() });
             if !slot.labels.is_empty() {

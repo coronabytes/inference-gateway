@@ -956,7 +956,23 @@ fn passthrough_usage(inbound: Inbound, v: &Value) -> Usage {
 ///   the gateway would record nothing, and cannot retrieve the result for the client either.
 /// - `service_tier` `priority` or `scale` (OpenAI): billed above the deployment's prices, which
 ///   budgets and cost reporting use. `auto`, `default` and `flex` are billed at or below them.
+/// - Server tools the provider bills per call, container or image, apart from tokens: OpenAI's
+///   `code_interpreter`, `file_search` and `image_generation`, Anthropic's `code_execution_…`.
+///   Usage reports only tokens, so budgets would not see that spend. (Web search is allowed per key.)
 fn check_billing_options(raw: &Value, inbound: Inbound) -> Result<(), GatewayError> {
+    let billed_tool = |ty: &str| matches!(ty, "code_interpreter" | "file_search" | "image_generation") || ty.starts_with("code_execution");
+    if let Some(ty) = raw
+        .get("tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.get("type").and_then(Value::as_str))
+        .find(|ty| billed_tool(ty))
+    {
+        return Err(GatewayError::invalid(format!(
+            "the {ty} tool is not supported: the provider bills it apart from tokens, which the gateway cannot account for"
+        )));
+    }
     if inbound == Inbound::Responses && raw.get("background").is_some_and(|b| b != &Value::Bool(false) && !b.is_null()) {
         return Err(GatewayError::invalid(
             "background responses are not supported: the gateway cannot account for them or retrieve their result",
@@ -1593,5 +1609,20 @@ mod billing_option_tests {
         // Anthropic's own tiers (auto, standard_only) bill within the account's pricing.
         assert!(ok(json!({ "service_tier": "standard_only" }), Inbound::Messages));
         assert!(ok(json!({ "background": true }), Inbound::Chat));
+    }
+
+    #[test]
+    fn server_tools_billed_outside_the_gateway_are_refused() {
+        let ok = |v: Value, i| check_billing_options(&v, i).is_ok();
+        let tools = |ty: &str| json!({ "tools": [{ "type": "function", "name": "f" }, { "type": ty }] });
+        for ty in ["function", "custom", "web_search", "web_search_20250305", "mcp"] {
+            assert!(ok(tools(ty), Inbound::Responses), "{ty}");
+        }
+        for ty in ["code_interpreter", "file_search", "image_generation"] {
+            assert!(!ok(tools(ty), Inbound::Responses), "{ty}");
+            assert!(!ok(tools(ty), Inbound::Chat), "{ty}");
+        }
+        assert!(!ok(tools("code_execution_20250825"), Inbound::Messages));
+        assert!(ok(json!({ "tools": "not a list" }), Inbound::Messages));
     }
 }
