@@ -12,7 +12,6 @@
 //! document (CIMD) where the server takes one, else dynamic client registration (RFC 7591).
 
 use std::{
-    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -32,6 +31,7 @@ use crate::{
     labels::Labels,
     mcp::McpAuth,
     state::AppState,
+    util::TtlCache,
 };
 
 /// An upstream's OAuth client, as configured.
@@ -312,14 +312,14 @@ impl UpstreamAuth {
     pub async fn renew(&self, state: &AppState, who: Option<Who<'_>>) {
         match self {
             UpstreamAuth::Client(c) => {
-                state.oauth.client.lock().expect("tokens lock").remove(&(c.kind, c.upstream));
+                state.oauth.client.remove(&(c.kind, c.upstream));
             }
             UpstreamAuth::PerKey(c) => {
                 if let Some(slot) = who.and_then(|w| c.slot(w).ok()) {
                     if let Err(e) = db::expire_oauth_token(&state.db, c.sign_in(&slot)).await {
                         tracing::warn!(error = %e, "could not mark an OAuth token expired");
                     }
-                    state.oauth.user.lock().expect("tokens lock").remove(&(c.kind, c.upstream, slot));
+                    state.oauth.user.remove(&(c.kind, c.upstream, slot));
                 }
             }
             _ => {}
@@ -406,17 +406,27 @@ impl Ticket {
 }
 
 /// Tokens in this replica's memory: client credentials ones, and sign-ins' ones read from Postgres.
-#[derive(Default)]
+/// Each token is kept until `EARLY` before it expires, so one never expires on the way.
 pub struct Tokens {
-    client: std::sync::Mutex<HashMap<(Kind, Uuid), (String, Instant)>>,
-    user: std::sync::Mutex<HashMap<(Kind, Uuid, Slot), (String, Option<Instant>)>>,
-    /// When this replica last recorded a sign-in's use in Postgres.
-    used: std::sync::Mutex<HashMap<(Kind, Uuid, Slot), Instant>>,
+    client: TtlCache<(Kind, Uuid), String>,
+    user: TtlCache<(Kind, Uuid, Slot), String>,
+    /// The sign-ins whose use this replica recorded in Postgres within `USED_EVERY`.
+    used: TtlCache<(Kind, Uuid, Slot), ()>,
+}
+
+impl Default for Tokens {
+    fn default() -> Self {
+        Self {
+            client: TtlCache::new(USER_HOLD, MEMORY_PRUNE_AT),
+            user: TtlCache::new(USER_HOLD, MEMORY_PRUNE_AT),
+            used: TtlCache::new(USED_EVERY, MEMORY_PRUNE_AT),
+        }
+    }
 }
 
 /// A sign-in's use is recorded at most this often, so calls do not each write to Postgres.
 const USED_EVERY: Duration = Duration::from_secs(3600);
-/// Sign-ins in memory past this many, entries no longer needed are dropped.
+/// Tokens and sign-ins kept in memory at most, of each kind.
 const MEMORY_PRUNE_AT: usize = 1000;
 
 /// A token is renewed this long before it expires, so one never expires on the way.
@@ -426,6 +436,11 @@ const USER_HOLD: Duration = Duration::from_secs(300);
 
 fn fresh(expires: Option<Instant>) -> bool {
     expires.is_none_or(|e| e > Instant::now() + EARLY)
+}
+
+/// Until when a token that expires at `expires` may be used from memory.
+fn usable_until(expires: Instant) -> Instant {
+    expires.checked_sub(EARLY).unwrap_or(expires)
 }
 
 /// An authorization server's token response.
@@ -477,10 +492,8 @@ async fn json_body(resp: reqwest::Response) -> Value {
 
 impl Tokens {
     async fn client_token(&self, state: &AppState, c: &Client) -> Result<String, String> {
-        if let Some((token, expires)) = self.client.lock().expect("tokens lock").get(&(c.kind, c.upstream))
-            && fresh(Some(*expires))
-        {
-            return Ok(token.clone());
+        if let Some(token) = self.client.get(&(c.kind, c.upstream)) {
+            return Ok(token);
         }
         let mut form = vec![("grant_type", "client_credentials".to_string())];
         if !c.config.scopes.is_empty() {
@@ -489,33 +502,23 @@ impl Tokens {
         let t = token_request(state, c, form).await?;
         // Without an expiry, an hour: the upstream refusing it renews it sooner.
         let expires = Instant::now() + lifetime(t.expires_in).unwrap_or(Duration::from_secs(3600));
-        self.client.lock().expect("tokens lock").insert((c.kind, c.upstream), (t.access_token.clone(), expires));
+        self.client.insert_until((c.kind, c.upstream), t.access_token.clone(), usable_until(expires));
         Ok(t.access_token)
     }
 
-    /// Keeps a sign-in's token in memory. With many sign-ins (one per user), those held past their
-    /// time are let go first, so the map does not grow without end.
-    fn hold(&self, slot: (Kind, Uuid, Slot), held: (String, Option<Instant>)) {
-        let mut user = self.user.lock().expect("tokens lock");
-        if user.len() >= MEMORY_PRUNE_AT {
-            user.retain(|_, (_, until)| until.is_some_and(|u| u > Instant::now()));
-        }
-        user.insert(slot, held);
+    /// Keeps a sign-in's token in memory until `until`. With many sign-ins (one per user), those
+    /// held past their time are let go first, so memory does not grow without end.
+    fn hold(&self, slot: (Kind, Uuid, Slot), token: String, until: Instant) {
+        self.user.insert_until(slot, token, usable_until(until));
     }
 
     /// Records that the sign-in was used, at most once in `USED_EVERY`, without waiting for it.
     fn used(&self, state: &AppState, c: &Client, s: Slot) {
         let slot = (c.kind, c.upstream, s);
-        {
-            let mut used = self.used.lock().expect("tokens lock");
-            if used.get(&slot).is_some_and(|at| at.elapsed() < USED_EVERY) {
-                return;
-            }
-            if used.len() >= MEMORY_PRUNE_AT {
-                used.retain(|_, at| at.elapsed() < USED_EVERY);
-            }
-            used.insert(slot.clone(), Instant::now());
+        if self.used.get(&slot).is_some() {
+            return;
         }
+        self.used.insert(slot.clone(), ());
         let state = state.clone();
         tokio::spawn(async move {
             let (kind, upstream, s) = slot;
@@ -528,10 +531,8 @@ impl Tokens {
 
     async fn user_token(&self, state: &AppState, c: &Client, s: &Slot) -> Result<String, AuthError> {
         let slot = (c.kind, c.upstream, s.clone());
-        if let Some((token, expires)) = self.user.lock().expect("tokens lock").get(&slot)
-            && fresh(*expires)
-        {
-            return Ok(token.clone());
+        if let Some(token) = self.user.get(&slot) {
+            return Ok(token);
         }
         let failed = |e: String| AuthError::Failed(e);
         let not_connected = || c.not_connected(state, s);
@@ -543,11 +544,11 @@ impl Tokens {
         // working here too.
         let held = |e: Option<Instant>| {
             let cap = Instant::now() + USER_HOLD;
-            Some(e.map_or(cap, |e| e.min(cap)))
+            e.map_or(cap, |e| e.min(cap))
         };
         if fresh(until(row.expires_at)) {
             let token = open(&row.access_token)?;
-            self.hold(slot, (token.clone(), held(until(row.expires_at))));
+            self.hold(slot, token.clone(), held(until(row.expires_at)));
             return Ok(token);
         }
         // Refreshed under the row's lock: another replica may be doing the same, and the
@@ -556,7 +557,7 @@ impl Tokens {
         let row = db::lock_oauth_token(&mut *tx, c.sign_in(s)).await.map_err(|e| failed(e.to_string()))?.ok_or_else(not_connected)?;
         if fresh(until(row.expires_at)) {
             let token = open(&row.access_token)?;
-            self.hold(slot, (token.clone(), held(until(row.expires_at))));
+            self.hold(slot, token.clone(), held(until(row.expires_at)));
             return Ok(token);
         }
         let refresh = row.refresh_token.as_deref().map(open).transpose()?.ok_or_else(not_connected)?;
@@ -582,7 +583,7 @@ impl Tokens {
             .await
             .map_err(|e| failed(e.to_string()))?;
         tx.commit().await.map_err(|e| failed(e.to_string()))?;
-        self.hold(slot, (t.access_token.clone(), held(until(expires_at))));
+        self.hold(slot, t.access_token.clone(), held(until(expires_at)));
         Ok(t.access_token)
     }
 }
@@ -688,19 +689,19 @@ impl Client {
         )
         .await
         .map_err(|e| e.to_string())?;
-        state.oauth.user.lock().expect("tokens lock").remove(&(self.kind, self.upstream, slot.clone()));
+        state.oauth.user.remove(&(self.kind, self.upstream, slot.clone()));
         Ok(())
     }
 }
 
 /// Forgets a sign-in's tokens for an upstream, in this replica's memory.
 pub fn forget(state: &AppState, kind: Kind, upstream: Uuid, slot: &Slot) {
-    state.oauth.user.lock().expect("tokens lock").remove(&(kind, upstream, slot.clone()));
+    state.oauth.user.remove(&(kind, upstream, slot.clone()));
 }
 
 /// Forgets every sign-in's tokens for an upstream, in this replica's memory.
 pub fn forget_upstream(state: &AppState, kind: Kind, upstream: Uuid) {
-    state.oauth.user.lock().expect("tokens lock").retain(|(k, u, _), _| (*k, *u) != (kind, upstream));
+    state.oauth.user.retain(|(k, u, _), _| (*k, *u) != (kind, upstream));
 }
 
 // ---------------------------------------------------------------- discovery
@@ -942,6 +943,8 @@ pub async fn discover(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     fn by(labels: &[&str]) -> Vec<String> {

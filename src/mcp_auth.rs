@@ -36,6 +36,7 @@ use crate::{
     error::{Dialect, GatewayError},
     model::VirtualKey,
     state::AppState,
+    util::TtlCache,
 };
 
 /// The one scope: the MCP endpoints, as the key may use them.
@@ -111,13 +112,23 @@ struct Approved {
 }
 
 /// Per replica: fetched metadata documents and what tokens stand for.
-#[derive(Default)]
 pub struct Store {
-    docs: Mutex<HashMap<String, (Arc<ClientDoc>, Instant)>>,
-    tokens: Mutex<HashMap<[u8; 32], (Cached, Instant)>>,
+    docs: TtlCache<String, Arc<ClientDoc>>,
+    tokens: TtlCache<[u8; 32], Cached>,
     http: OnceLock<reqwest::Client>,
     /// When the current minute of authorization requests began, and how many it has had.
     authorizations: Mutex<Option<(Instant, u32)>>,
+}
+
+impl Default for Store {
+    fn default() -> Self {
+        Self {
+            docs: TtlCache::new(TOKEN_CACHE, MAX_DOCUMENTS),
+            tokens: TtlCache::new(TOKEN_CACHE, 10_000),
+            http: OnceLock::new(),
+            authorizations: Mutex::new(None),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -260,28 +271,12 @@ impl Store {
         }
     }
 
-    /// Keeps a document until `until`, within `MAX_DOCUMENTS`: expired ones go first, then the
-    /// one that expires soonest.
-    fn keep_document(&self, client_id: &str, doc: Arc<ClientDoc>, until: Instant) {
-        let mut docs = self.docs.lock().expect("docs");
-        let now = Instant::now();
-        docs.retain(|_, (_, until)| *until > now);
-        if docs.len() >= MAX_DOCUMENTS
-            && let Some(soonest) = docs.iter().min_by_key(|(_, (_, until))| *until).map(|(k, _)| k.clone())
-        {
-            docs.remove(&soonest);
-        }
-        docs.insert(client_id.to_string(), (doc, until));
-    }
-
     /// The client's metadata document, fetched (without following redirects, at most 5 KB, from an
     /// address the gateway may reach) or from this replica's cache. Why a fetch failed goes to the
     /// log only: the caller is not signed in, and the answer must not tell what is at the address.
     pub async fn document(&self, state: &AppState, client_id: &str) -> Result<Arc<ClientDoc>, String> {
-        if let Some((doc, until)) = self.docs.lock().expect("docs").get(client_id)
-            && *until > Instant::now()
-        {
-            return Ok(doc.clone());
+        if let Some(doc) = self.docs.get(client_id) {
+            return Ok(doc);
         }
         check_client_id(client_id)?;
         state
@@ -315,7 +310,8 @@ impl Store {
         let v: Value = serde_json::from_slice(&body).map_err(|_| unreadable("not JSON".into()))?;
         let doc = Arc::new(parse_document(client_id, &v)?);
         if let Some(keep) = keep {
-            self.keep_document(client_id, doc.clone(), Instant::now() + keep);
+            // Within `MAX_DOCUMENTS`: expired ones go first, then the one that expires soonest.
+            self.docs.insert_until(client_id.to_string(), doc.clone(), Instant::now() + keep);
         }
         Ok(doc)
     }
@@ -323,7 +319,7 @@ impl Store {
     /// The key an access token acts as on `path`: valid, for this endpoint, and the key still usable.
     async fn key_for_token(&self, state: &AppState, token: &str, path: &str) -> Result<Arc<VirtualKey>, GatewayError> {
         let hash = crate::util::sha256(token.as_bytes());
-        let cached = self.tokens.lock().expect("tokens").get(&hash).filter(|(_, at)| at.elapsed() < TOKEN_CACHE).map(|(c, _)| c.clone());
+        let cached = self.tokens.get(&hash);
         let c = match cached {
             Some(c) => c,
             None => {
@@ -338,9 +334,7 @@ impl Store {
                     }
                 });
                 let c = Cached { key_id: g.key_id, resource: g.resource, expires_at: g.access_expires_at };
-                let mut tokens = self.tokens.lock().expect("tokens");
-                tokens.retain(|_, (_, at)| at.elapsed() < TOKEN_CACHE);
-                tokens.insert(hash, (c.clone(), Instant::now()));
+                self.tokens.insert(hash, c.clone());
                 c
             }
         };
@@ -357,7 +351,7 @@ impl Store {
 
     /// Forgets what this replica read of a grant's tokens, after a revocation here.
     pub fn forget_tokens(&self) {
-        self.tokens.lock().expect("tokens").clear();
+        self.tokens.clear();
     }
 }
 
@@ -833,18 +827,15 @@ mod tests {
         };
         let now = Instant::now();
         for n in 0..MAX_DOCUMENTS {
-            store.keep_document(&doc(n).client_id, doc(n), now + Duration::from_secs(100 + n as u64));
+            store.docs.insert_until(doc(n).client_id.clone(), doc(n), now + Duration::from_secs(100 + n as u64));
         }
-        store.keep_document("https://c.example/new.json", doc(9999), now + Duration::from_secs(3600));
-        let docs = store.docs.lock().unwrap();
-        assert_eq!(docs.len(), MAX_DOCUMENTS);
+        store.docs.insert_until("https://c.example/new.json".into(), doc(9999), now + Duration::from_secs(3600));
         // The one that expired soonest made room.
         assert!(
-            !docs.contains_key("https://c.example/0.json")
-                && docs.contains_key("https://c.example/1.json")
-                && docs.contains_key("https://c.example/new.json")
+            store.docs.get("https://c.example/0.json").is_none()
+                && store.docs.get("https://c.example/1.json").is_some()
+                && store.docs.get("https://c.example/new.json").is_some()
         );
-        drop(docs);
 
         for _ in 0..AUTHORIZE_PER_MINUTE {
             assert!(store.allow_authorization());

@@ -13,7 +13,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use aws_lc_rs::hmac;
@@ -44,6 +44,7 @@ use crate::{
     oauth::{Kind, OAuthConfig, Slot, UpstreamAuth, Who},
     sse::SseParser,
     state::AppState,
+    util::TtlCache,
 };
 
 /// An MCP server as stored.
@@ -844,25 +845,29 @@ async fn rpc(state: &AppState, server: &McpServer, session: &Session, msg: &Valu
 /// The sessions the gateway keeps open with servers for `/mcp`, one per server and sign-in, and the
 /// servers' tool lists, both in this replica's memory. A session unused for `SESSION_IDLE` is opened
 /// again; a tool list is fetched again after `TOOLS_FRESH`, or when its server's settings change.
-#[derive(Default)]
 pub struct Upstreams {
-    sessions: std::sync::Mutex<HashMap<(Uuid, Slot), (Session, Instant)>>,
+    sessions: TtlCache<(Uuid, Slot), Session>,
     /// By server, and by sign-in where keys sign in on their own.
-    tools: std::sync::Mutex<HashMap<(Uuid, Option<Slot>), (Arc<McpServer>, Instant, Arc<Vec<Value>>)>>,
+    tools: TtlCache<(Uuid, Option<Slot>), (Arc<McpServer>, Arc<Vec<Value>>)>,
 }
 
 const SESSION_IDLE: Duration = Duration::from_secs(600);
 const TOOLS_FRESH: Duration = Duration::from_secs(60);
 
+impl Default for Upstreams {
+    fn default() -> Self {
+        Self { sessions: TtlCache::new(SESSION_IDLE, 10_000), tools: TtlCache::new(TOOLS_FRESH, 10_000) }
+    }
+}
+
 impl Upstreams {
     /// The server's tools as it lists them for `who`, unfiltered.
     pub async fn tools(&self, state: &AppState, server: &Arc<McpServer>, who: Who<'_>) -> Result<Arc<Vec<Value>>, ToolsError> {
         let slot = (server.id, server.auth.slot(who).map_err(ToolsError::Auth)?);
-        if let Some((s, at, tools)) = self.tools.lock().expect("tools lock").get(&slot)
-            && Arc::ptr_eq(s, server)
-            && at.elapsed() < TOOLS_FRESH
+        if let Some((s, tools)) = self.tools.get(&slot)
+            && Arc::ptr_eq(&s, server)
         {
-            return Ok(tools.clone());
+            return Ok(tools);
         }
         let mut renewed = false;
         let listed = loop {
@@ -884,7 +889,7 @@ impl Upstreams {
             }
         };
         let listed = Arc::new(listed);
-        self.tools.lock().expect("tools lock").insert(slot, (server.clone(), Instant::now(), listed.clone()));
+        self.tools.insert(slot, (server.clone(), listed.clone()));
         Ok(listed)
     }
 
@@ -892,11 +897,7 @@ impl Upstreams {
     /// server, which is opened when there is none or the server forgot it.
     pub async fn call(&self, state: &AppState, who: Who<'_>, server: &McpServer, msg: &Value) -> Result<Value, String> {
         let slot = (server.id, server.auth.slot(who).map_err(|e| e.message())?.unwrap_or_else(|| Slot::key(who.key)));
-        let cached = {
-            let mut sessions = self.sessions.lock().expect("sessions lock");
-            sessions.retain(|_, (_, used)| used.elapsed() < SESSION_IDLE);
-            sessions.get(&slot).map(|(s, _)| s.clone())
-        };
+        let cached = self.sessions.get(&slot);
         let reused = cached.is_some();
         // The token may have been renewed since the session was opened.
         let auth = server.auth.header(state, Some(who)).await.map_err(|e| e.message())?;
@@ -916,7 +917,7 @@ impl Upstreams {
             session = open(state, server, auth).await.map_err(|e| e.message)?.0;
             result = rpc(state, server, &session, msg).await;
         }
-        self.sessions.lock().expect("sessions lock").insert(slot, (session, Instant::now()));
+        self.sessions.insert(slot, session);
         result.map(|(_, reply)| reply).map_err(|e| e.message)
     }
 }
