@@ -4,7 +4,7 @@ import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, TextArea, T
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
 import { VendorIcon, VendorLogo } from "../components/VendorLogo";
-import { AliasIcon, BracesIcon, ChatIcon, DecisionIcon, DetailsIcon, DocumentIcon, EmbeddingIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, PlayIcon, ReasoningIcon, RerankIcon, RouterIcon, TilesIcon, TokenPrices } from "../components/ui";
+import { AliasIcon, BracesIcon, ChatIcon, DecisionIcon, DocumentIcon, EmbeddingIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, PlayIcon, ReasoningIcon, RerankIcon, RouterIcon, TilesIcon, TokenPrices } from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
@@ -552,9 +552,21 @@ export function ModelHub() {
                 const options = priceOptions(m);
                 return (
                   <Fragment key={m.name}>
-                    <tr className="clickable" onClick={() => setOpen(expanded ? null : m.name)} aria-expanded={expanded}>
-                      <td className="logo middle">
-                        <VendorLogo vendor={m.vendor ?? ""} fallback={m.name} />
+                    {/* The row opens and closes its details, by click or, focused, Enter or Space. */}
+                    <tr
+                      className="clickable"
+                      tabIndex={0}
+                      aria-expanded={expanded}
+                      onClick={() => setOpen(expanded ? null : m.name)}
+                      onKeyDown={(e) => {
+                        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                          e.preventDefault();
+                          setOpen(expanded ? null : m.name);
+                        }
+                      }}
+                    >
+                      <td className="logo middle" onClick={(e) => e.stopPropagation()}>
+                        <LogoButton model={m} onEdit={() => setEditing(m)} />
                       </td>
                       <td className="middle">
                         <div className="hub-model-line">
@@ -596,12 +608,6 @@ export function ModelHub() {
                       <td className="actions middle" onClick={(e) => e.stopPropagation()}>
                         <div className="hub-tile-actions">
                           <PlayButton model={m.name} keyId={keyId} />
-                          <IconButton label={`Edit ${m.name}'s name and description`} title="Edit name and description" onClick={() => setEditing(m)}>
-                            <EditIcon />
-                          </IconButton>
-                          <IconButton label={`${expanded ? "Hide" : "Show"} details of ${m.name}`} title={expanded ? "Hide details" : "Details"} onClick={() => setOpen(expanded ? null : m.name)}>
-                            <DetailsIcon />
-                          </IconButton>
                         </div>
                       </td>
                     </tr>
@@ -742,6 +748,16 @@ function ModelStats({ model: m, speedSlot }: { model: HubModel; speedSlot?: bool
   );
 }
 
+/** A model's vendor logo, which opens the editor for its name, vendor and description. */
+function LogoButton({ model: m, onEdit }: { model: HubModel; onEdit: () => void }) {
+  const vendor = m.vendor ?? "";
+  return (
+    <button type="button" className="logo-edit" aria-label={`Edit ${displayName(m)}`} title={vendor ? `${vendor}: edit the model` : "Edit the model"} onClick={onEdit}>
+      <VendorLogo vendor={vendor} fallback={m.name} />
+    </button>
+  );
+}
+
 /** A model as a card: who makes it (its logo, which edits it), what it is for and can do, what it
  *  costs, and how it ran today. */
 function ModelTile({
@@ -758,15 +774,12 @@ function ModelTile({
   onCap: (path: string) => void;
   onEdit: () => void;
 }) {
-  const vendor = m.vendor ?? "";
   const name = displayName(m);
   const s = m.stats;
   return (
     <article className="card hub-tile">
       <div className="hub-tile-head">
-        <button type="button" className="hub-tile-edit" aria-label={`Edit ${name}`} title={vendor ? `${vendor}: edit the model` : "Edit the model"} onClick={onEdit}>
-          <VendorLogo vendor={vendor} fallback={m.name} />
-        </button>
+        <LogoButton model={m} onEdit={onEdit} />
         <div className="hub-tile-title">
           <ModeIcon model={m} />
           <div className="hub-name clip" title={name === m.name ? name : `${name} (${m.name})`}>

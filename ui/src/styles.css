@@ -944,7 +944,7 @@ a.button.primary:hover { background: var(--accent-hover); box-shadow: var(--glow
 .hub-table td.logo { padding-right: 0; }
 .hub-table col.col-price { width: 210px; }
 .hub-table col.col-caps { width: 240px; }
-.hub-table col.col-actions { width: 92px; }
+.hub-table col.col-actions { width: 44px; }
 /* The tile footer's status bar, latency and speed, in a row of the list; latency and speed keep fixed widths. */
 .hub-row-stats { display: flex; align-items: flex-end; gap: 16px; }
 .hub-row-stats > .hub-stat { flex: none; width: 64px; }
@@ -969,8 +969,8 @@ a.button.primary:hover { background: var(--accent-hover); box-shadow: var(--glow
 .hub-tile { display: flex; flex-direction: column; gap: 8px; padding: 16px; min-width: 0; }
 .hub-tile-head { display: flex; align-items: center; gap: 10px; }
 /* The logo edits the model. */
-.hub-tile-edit { flex: none; padding: 0; border: 0; background: none; border-radius: 10px; }
-.hub-tile-edit:hover .vendor-mark, .hub-tile-edit:focus-visible .vendor-mark { border-color: var(--link); }
+.logo-edit { flex: none; padding: 0; border: 0; background: none; border-radius: 10px; }
+.logo-edit:hover .vendor-mark, .logo-edit:focus-visible .vendor-mark { border-color: var(--link); }
 .hub-tile-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .hub-tile-title > .cap-icons { flex: none; flex-wrap: nowrap; }
 .hub-tile-title > .mode-icon { margin-right: -4px; }
