@@ -733,11 +733,11 @@ impl MessagesStream {
                         self.message.insert(k.clone(), x.clone());
                     }
                 }
-                if let Some(u) = v.get("usage").and_then(Value::as_object) {
-                    if let Value::Object(usage) = self.message.entry("usage").or_insert_with(|| json!({})) {
-                        for (k, x) in u {
-                            usage.insert(k.clone(), x.clone());
-                        }
+                if let Some(u) = v.get("usage").and_then(Value::as_object)
+                    && let Value::Object(usage) = self.message.entry("usage").or_insert_with(|| json!({}))
+                {
+                    for (k, x) in u {
+                        usage.insert(k.clone(), x.clone());
                     }
                 }
             }

@@ -331,7 +331,7 @@ export function Credentials() {
             )}
           </div>
         )}
-        <button className="primary" onClick={() => setEditing("new")}>
+        <button type="button" className="primary" onClick={() => setEditing("new")}>
           New credential
         </button>
       </div>

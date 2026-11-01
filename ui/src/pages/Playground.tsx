@@ -402,7 +402,7 @@ function parseFull(apiId: Api, v: any): Result {
         sources: [],
         mcp: [],
       };
-      (v.content ?? []).forEach((b: any) => messagesMcp(r, b));
+      for (const b of v.content ?? []) messagesMcp(r, b);
       cite(r, blocks.flatMap((c: any) => c.citations ?? []));
       return r;
     }

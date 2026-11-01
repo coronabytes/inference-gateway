@@ -94,7 +94,7 @@ export function Modal({
       <div className={`modal${size ? ` modal-${size}` : ""}${scrolls ? " scrolls" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="ghost icon" onClick={onClose} aria-label="Close">
+          <button type="button" className="ghost icon" onClick={onClose} aria-label="Close">
             ×
           </button>
         </div>
@@ -125,7 +125,7 @@ export function SidePanel({ title, onClose, children }: { title: ReactNode; onCl
     <aside className="side-panel" aria-label={typeof title === "string" ? title : "Details"}>
       <div className="side-panel-head">
         <h2>{title}</h2>
-        <button className="ghost icon" onClick={onClose} aria-label="Close">
+        <button type="button" className="ghost icon" onClick={onClose} aria-label="Close">
           ×
         </button>
       </div>
@@ -166,8 +166,8 @@ export function ConfirmDialog({ request, onClose }: { request: ConfirmRequest; o
       onClose={onClose}
       footer={
         <>
-          <button onClick={onClose} disabled={busy} autoFocus>Cancel</button>
-          <button className="danger-solid" onClick={run} disabled={busy}>
+          <button type="button" onClick={onClose} disabled={busy} autoFocus>Cancel</button>
+          <button type="button" className="danger-solid" onClick={run} disabled={busy}>
             {busy ? "Working…" : (request.confirmLabel ?? "Delete")}
           </button>
         </>
@@ -181,7 +181,7 @@ export function ConfirmDialog({ request, onClose }: { request: ConfirmRequest; o
 
 export function IconButton({ label, onClick, danger, disabled, title, children }: { label: string; onClick: () => void; danger?: boolean; disabled?: boolean; title?: string; children: ReactNode }) {
   return (
-    <button className={`icon-btn${danger ? " danger" : ""}`} onClick={onClick} disabled={disabled} aria-label={label} title={title ?? label}>
+    <button type="button" className={`icon-btn${danger ? " danger" : ""}`} onClick={onClick} disabled={disabled} aria-label={label} title={title ?? label}>
       {children}
     </button>
   );

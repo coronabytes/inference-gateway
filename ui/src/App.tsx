@@ -313,7 +313,7 @@ function Login({
                 autoFocus={!sso && !dev}
                 aria-label="Master key"
               />
-              <button className={sso || dev ? "login-secondary" : "login-primary"} disabled={!key.trim()}>
+              <button type="submit" className={sso || dev ? "login-secondary" : "login-primary"} disabled={!key.trim()}>
                 Sign in with master key
               </button>
             </>

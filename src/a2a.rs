@@ -708,7 +708,6 @@ fn refuse(rpc_id: Option<Value>, binding: Binding, code: i64, status: StatusCode
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn forward(
     state: &AppState,
     key: &Arc<VirtualKey>,

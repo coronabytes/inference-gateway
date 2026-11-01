@@ -140,7 +140,7 @@ function makeGalaxy(count: number, sky: number): Float32Array {
   // A faint scatter of old stars between the arms, in a disc that is thicker and warped like the
   // arms (see the shader).
   for (let i = 0; i < count * 0.12; i++) {
-    const r = 0.05 + Math.pow(Math.random(), 0.8) * 1.0;
+    const r = 0.05 + Math.random() ** 0.8 * 1.0;
     const a = Math.random() * Math.PI * 2;
     const warp = 0.12 * r * r * Math.sin(a);
     add([r * Math.cos(a), r * Math.sin(a), warp + gauss() * (0.015 + 0.04 * r)], pick([[BLUE, 2], [ICE, 2], [ORANGE, 1]]), between(0.06, 0.2), between(0.35, 0.7));
@@ -443,6 +443,7 @@ export function Galaxy({ className, backdrop = false }: { className?: string; ba
 
       gl.clear(gl.COLOR_BUFFER_BIT);
 
+      // biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook.
       gl.useProgram(glow);
       gl.uniform2fv(glowUniforms.uViewport, viewport);
       gl.uniform2fv(glowUniforms.uCenter, center);
@@ -457,6 +458,7 @@ export function Galaxy({ className, backdrop = false }: { className?: string; ba
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.disableVertexAttribArray(corner);
 
+      // biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook.
       gl.useProgram(stars);
       gl.uniformMatrix3fv(starUniforms.uView, false, controls.view());
       gl.uniform1f(starUniforms.uSpin, SPIN_START + (still ? 0 : SPIN_SPEED * time));

@@ -227,7 +227,6 @@ fn bearer(token: &str) -> Result<(HeaderName, HeaderValue), AuthError> {
 
 impl UpstreamAuth {
     /// From an upstream's stored `auth`, header name, sealed secret and OAuth client.
-    #[allow(clippy::too_many_arguments)]
     pub fn build(
         kind: Kind,
         upstream: Uuid,

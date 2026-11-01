@@ -174,7 +174,6 @@ pub(super) fn secret_destination<'a>(url: &'a str, oauth: Option<&'a OAuthConfig
 /// How the gateway signs in to an upstream at `url`. The secret is `existing`'s (the sealed secret
 /// and where it was sent) when no new one is given and it still goes to the same origin;
 /// `reserved` are headers the gateway sets.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn check_auth(
     state: &AppState,
     url: &str,

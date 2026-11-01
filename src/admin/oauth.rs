@@ -317,7 +317,6 @@ pub(crate) struct ConnectStart {
 }
 
 /// Starts signing the key in to an upstream: the console sends the browser to the URL this returns.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn connect(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,

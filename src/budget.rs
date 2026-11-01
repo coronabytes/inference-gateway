@@ -228,4 +228,30 @@ mod tests {
         let w = BudgetPeriod::Week.window(at("2027-01-01T08:00:00Z"));
         assert_eq!((w.id.as_str(), w.start), ("w:2026-W53", at("2026-12-28T00:00:00Z")));
     }
+
+    #[sqlx::test]
+    async fn a_spent_budget_refuses_requests_while_valkey_is_down(pool: sqlx::PgPool) {
+        // Valkey cannot be reached in tests, so spend comes from the request log.
+        let state = crate::state::test_state_with_db(pool.clone());
+        let mut key = crate::auth::tests::key();
+        key.budget_period = Some("day".into());
+        key.max_budget_usd = Some(1.0);
+        sqlx::query(
+            "INSERT INTO request_logs (id, ts, key_id, model_name, api, stream, status_code, latency_ms, cost_usd)
+             VALUES ($1, now(), $2, 'm', 'chat', false, 200, 10, 1.5)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(key.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let err = crate::auth::check_key_limits(&state, &key).await.unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert!(err.message.contains("budget"), "{}", err.message);
+
+        let mut roomy = crate::auth::tests::key();
+        roomy.budget_period = Some("day".into());
+        roomy.max_budget_usd = Some(10.0);
+        assert!(crate::auth::check_key_limits(&state, &roomy).await.is_ok());
+    }
 }

@@ -51,18 +51,25 @@ impl std::ops::Deref for AppState {
 #[cfg(test)]
 pub fn test_state() -> AppState {
     // The receiver is dropped: records from tests go nowhere.
-    test_state_with(crate::netguard::Policy::default(), mpsc::channel(16).0)
+    test_state_with(crate::netguard::Policy::default(), mpsc::channel(16).0, None)
+}
+
+/// A test state on a real database, such as the one `#[sqlx::test]` gives each test. Valkey stays
+/// closed, so what reads it falls back as when Valkey is down.
+#[cfg(test)]
+pub fn test_state_with_db(db: sqlx::PgPool) -> AppState {
+    test_state_with(crate::netguard::Policy::default(), mpsc::channel(16).0, Some(db))
 }
 
 /// A test state whose upstreams may be on loopback, with the channel its request records arrive on.
 #[cfg(test)]
 pub fn test_state_local() -> (AppState, mpsc::Receiver<RequestRecord>) {
     let (records, rx) = mpsc::channel(64);
-    (test_state_with(crate::netguard::Policy::from_list("127.0.0.0/8").unwrap(), records), rx)
+    (test_state_with(crate::netguard::Policy::from_list("127.0.0.0/8").unwrap(), records, None), rx)
 }
 
 #[cfg(test)]
-fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Sender<RequestRecord>) -> AppState {
+fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Sender<RequestRecord>, db: Option<sqlx::PgPool>) -> AppState {
     use std::time::Duration;
 
     use base64::Engine;
@@ -87,7 +94,9 @@ fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Send
     };
     let settings = Live::default();
     settings.set(Settings { max_attempts: 1, cooldown_secs: 1, ..Settings::default() });
-    let db = sqlx::postgres::PgPoolOptions::new().acquire_timeout(Duration::from_millis(200)).connect_lazy(&cfg.database_url).unwrap();
+    let db = db.unwrap_or_else(|| {
+        sqlx::postgres::PgPoolOptions::new().acquire_timeout(Duration::from_millis(200)).connect_lazy(&cfg.database_url).unwrap()
+    });
     let cache = Cache::new(&cfg.valkey_url, cfg.valkey_cluster).unwrap();
     AppState::new(Inner {
         cfg,

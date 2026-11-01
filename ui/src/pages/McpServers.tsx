@@ -444,6 +444,7 @@ function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (
     setDirty(true);
   };
   const config = JSON.stringify(
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder clients replace with a key.
     { mcpServers: { [server.name]: { type: "http", url: endpoint(server.name), headers: { Authorization: "Bearer ${GATEWAY_API_KEY}" } } } },
     null,
     2,
@@ -536,6 +537,7 @@ function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (
       <h4>Connect a client</h4>
       <p className="muted small">
         For clients that read an <span className="mono">mcpServers</span> configuration, such as Claude Code, Cursor or VS Code. Replace{" "}
+        {/* biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder clients replace with a key. */}
         <span className="mono">{"${GATEWAY_API_KEY}"}</span> with a virtual key. With <span className="mono">{endpoint()}</span> as the URL instead, the client gets the tools of every server the key may use
         {!server.enabled && "; this server is disabled until you enable it"}.
       </p>

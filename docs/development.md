@@ -38,9 +38,15 @@ docker compose --profile replicas up -d --build  # two more gateway replicas on 
 ## Tests
 
 ```bash
-cargo test                       # gateway
-(cd ui && npm run typecheck)     # console
+cargo fmt --check && cargo clippy --all-targets -- -D warnings
+cargo test                                        # gateway
+(cd ui && npm run typecheck && npm run lint && npm test)   # console
 ```
+
+Tests marked `#[sqlx::test]` (the request log, budgets, key rotation, configuration import) run on
+the Postgres in `DATABASE_URL`: each gets a database of its own, created and dropped there, and
+the gateway's own database is left alone. The console is linted with Biome (`ui/biome.json`, lint
+rules only) and tested with Vitest.
 
 Tests that need Valkey are skipped unless one is given:
 
@@ -49,7 +55,7 @@ GATEWAY_TEST_VALKEY_URL=redis://127.0.0.1:6379 cargo test
 GATEWAY_TEST_VALKEY_CLUSTER=true  # in addition, when that Valkey is a cluster
 ```
 
-CI ([checks.yml](../.github/workflows/checks.yml)) runs the tests, checks the sqlx metadata against a live database, builds the console and runs `cargo audit` and `npm audit` on every push to `main` and every pull request. Accepted advisories are listed, with reasons, in [.cargo/audit.toml](../.cargo/audit.toml).
+CI ([checks.yml](../.github/workflows/checks.yml)) checks formatting, runs clippy with warnings as errors, runs the tests (the database ones on a Postgres service), checks the sqlx metadata against a live database, lints, tests and builds the console, and runs `cargo audit` and `npm audit` on every push to `main` and every pull request. Accepted advisories are listed, with reasons, in [.cargo/audit.toml](../.cargo/audit.toml).
 
 ## Database
 

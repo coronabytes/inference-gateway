@@ -200,7 +200,7 @@ export function PriceCatalog() {
       )}
       {data && items.length < data.total && (
         <div className="panel-actions">
-          <button onClick={more}>Show more ({compact(data.total - items.length)} left)</button>
+          <button type="button" onClick={more}>Show more ({compact(data.total - items.length)} left)</button>
         </div>
       )}
     </>
