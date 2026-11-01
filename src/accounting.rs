@@ -529,9 +529,29 @@ impl Drop for Rollup {
 
 /// Drains records into Valkey (limit counters) and Postgres (the request log, which also feeds
 /// the Metrics page, and spend).
+///
+/// Batches are written by a task of their own, so a slow write does not stop records from being
+/// taken off the queue (which drops them when full); records gather meanwhile, up to `BACKLOG`.
 pub async fn run_writer(state: AppState, mut rx: mpsc::Receiver<RequestRecord>, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    let (batches, pending) = mpsc::channel::<Vec<RequestRecord>>(2);
+    let flusher = tokio::spawn(run_flusher(state.clone(), pending));
     let mut batch: Vec<RequestRecord> = Vec::with_capacity(512);
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    // Hands the batch to the flusher, or keeps it while the flusher is busy; past `BACKLOG`
+    // records, waits for it.
+    async fn hand_over(batches: &mpsc::Sender<Vec<RequestRecord>>, batch: &mut Vec<RequestRecord>) {
+        if batch.is_empty() {
+            return;
+        }
+        match batches.try_send(std::mem::take(batch)) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(b)) if b.len() < BACKLOG => *batch = b,
+            Err(mpsc::error::TrySendError::Full(b)) => {
+                let _ = batches.send(b).await;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => tracing::error!("request log writer stopped; dropping records"),
+        }
+    }
     loop {
         tokio::select! {
             rec = rx.recv() => {
@@ -539,10 +559,10 @@ pub async fn run_writer(state: AppState, mut rx: mpsc::Receiver<RequestRecord>, 
                 accept(&state, rec, &mut batch);
                 let body_bytes: usize = batch.iter().filter_map(|r| r.bodies.0.as_ref()).map(|c| c.held()).sum();
                 if batch.len() >= 500 || body_bytes >= BATCH_BODY_BYTES {
-                    flush(&state, &mut batch).await;
+                    hand_over(&batches, &mut batch).await;
                 }
             }
-            _ = tick.tick() => flush(&state, &mut batch).await,
+            _ = tick.tick() => hand_over(&batches, &mut batch).await,
             _ = shutdown.changed() => {
                 while let Ok(rec) = rx.try_recv() {
                     accept(&state, rec, &mut batch);
@@ -551,7 +571,35 @@ pub async fn run_writer(state: AppState, mut rx: mpsc::Receiver<RequestRecord>, 
             }
         }
     }
-    flush(&state, &mut batch).await;
+    if !batch.is_empty() {
+        let _ = batches.send(batch).await;
+    }
+    drop(batches);
+    let _ = flusher.await;
+}
+
+/// Records kept while the database is slow or down; past this, a failed write drops its batch.
+const BACKLOG: usize = 20_000;
+
+/// Writes the batches the writer hands over. A failed write is kept (up to `BACKLOG` records) and
+/// retried every second, with whatever arrives meanwhile.
+async fn run_flusher(state: AppState, mut batches: mpsc::Receiver<Vec<RequestRecord>>) {
+    let mut backlog: Vec<RequestRecord> = Vec::new();
+    let mut retry = tokio::time::interval(std::time::Duration::from_secs(1));
+    loop {
+        tokio::select! {
+            b = batches.recv() => {
+                let Some(b) = b else { break };
+                backlog.extend(b);
+                while let Ok(more) = batches.try_recv() {
+                    backlog.extend(more);
+                }
+            }
+            _ = retry.tick(), if !backlog.is_empty() => {}
+        }
+        flush(&state, &mut backlog).await;
+    }
+    flush(&state, &mut backlog).await;
 }
 
 fn accept(state: &AppState, rec: RequestRecord, batch: &mut Vec<RequestRecord>) {
@@ -621,7 +669,7 @@ async fn flush(state: &AppState, batch: &mut Vec<RequestRecord>) {
         for r in batch.iter_mut().filter(|r| matches!(r.bodies_status, Some("stored" | "truncated"))) {
             r.bodies_status = Some("dropped");
         }
-        if batch.len() < 20_000 {
+        if batch.len() < BACKLOG {
             return;
         }
     }

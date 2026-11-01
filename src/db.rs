@@ -2447,7 +2447,6 @@ pub struct LogTotals {
     pub latency_ms_sum: i64,
     pub ttft_ms_sum: i64,
     pub ttft_count: i64,
-    pub p50_latency_ms: Option<i32>,
     pub p95_latency_ms: Option<i32>,
 }
 
@@ -2476,7 +2475,7 @@ pub async fn selection_series(
                   sum(cache_read_tokens)::bigint AS "cache_read_tokens!", sum(cache_write_tokens)::bigint AS "cache_write_tokens!",
                   sum(cost_usd) AS "cost_usd!", sum(latency_ms)::bigint AS "latency_ms_sum!",
                   coalesce(sum(ttft_ms), 0)::bigint AS "ttft_ms_sum!", count(ttft_ms) AS "ttft_count!",
-                  NULL::int AS "p50_latency_ms?", NULL::int AS "p95_latency_ms?"
+                  NULL::int AS "p95_latency_ms?"
            FROM request_logs
            WHERE ts >= $1 AND ts < $4 AND ($3::uuid IS NULL OR key_id = $3) AND ($5::uuid[] IS NULL OR project_id = ANY($5))
              AND ($6::jsonb IS NULL OR labels @> $6)
@@ -2515,7 +2514,6 @@ pub async fn model_totals(
                   sum(cache_read_tokens)::bigint AS "cache_read_tokens!", sum(cache_write_tokens)::bigint AS "cache_write_tokens!",
                   sum(cost_usd) AS "cost_usd!", sum(latency_ms)::bigint AS "latency_ms_sum!",
                   coalesce(sum(ttft_ms), 0)::bigint AS "ttft_ms_sum!", count(ttft_ms) AS "ttft_count!",
-                  percentile_disc(0.5) WITHIN GROUP (ORDER BY latency_ms) AS "p50_latency_ms?",
                   percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms) AS "p95_latency_ms?"
            FROM request_logs
            WHERE ts >= $1 AND ts < $3 AND ($2::uuid IS NULL OR key_id = $2) AND ($4::uuid[] IS NULL OR project_id = ANY($4))
@@ -2555,7 +2553,6 @@ pub async fn selection_totals(
                   coalesce(sum(cache_write_tokens), 0)::bigint AS "cache_write_tokens!",
                   coalesce(sum(cost_usd), 0) AS "cost_usd!", coalesce(sum(latency_ms), 0)::bigint AS "latency_ms_sum!",
                   coalesce(sum(ttft_ms), 0)::bigint AS "ttft_ms_sum!", count(ttft_ms) AS "ttft_count!",
-                  percentile_disc(0.5) WITHIN GROUP (ORDER BY latency_ms) AS "p50_latency_ms?",
                   percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms) AS "p95_latency_ms?"
            FROM request_logs
            WHERE ts >= $1 AND ts < $4 AND ($2::uuid IS NULL OR key_id = $2) AND NOT (model_name = ANY($3))
@@ -2689,13 +2686,23 @@ pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32, body_
         return Ok((0, 0, 0));
     }
     let result = async {
-        let requests = match request_days {
-            0 => 0,
-            days => sqlx::query!("DELETE FROM request_logs WHERE ts < now() - make_interval(days => $1)", days as i32)
-                .execute(&mut *conn)
-                .await?
-                .rows_affected(),
-        };
+        // In chunks, so one delete does not hold locks long: each entry updates several indexes,
+        // and its bodies go with it.
+        let mut requests = 0;
+        while request_days > 0 {
+            let n = sqlx::query!(
+                "DELETE FROM request_logs WHERE id IN (
+                     SELECT id FROM request_logs WHERE ts < now() - make_interval(days => $1) LIMIT 5000)",
+                request_days as i32
+            )
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+            requests += n;
+            if n < 5000 {
+                break;
+            }
+        }
         let audit = match audit_days {
             0 => 0,
             days => sqlx::query!("DELETE FROM audit_log WHERE ts < now() - make_interval(days => $1)", days as i32)

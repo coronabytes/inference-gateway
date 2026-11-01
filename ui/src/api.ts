@@ -799,7 +799,6 @@ export interface Totals {
   cache_write_tokens: number;
   cost_usd: number;
   avg_latency_ms: number | null;
-  p50_latency_ms: number | null;
   p95_latency_ms: number | null;
   avg_ttft_ms: number | null;
 }

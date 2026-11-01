@@ -12,6 +12,8 @@ pub struct SseEvent {
 #[derive(Default)]
 pub struct SseParser {
     buf: BytesMut,
+    /// How much of `buf` holds no line break: a long line arriving in many chunks is scanned once.
+    scanned: usize,
     event: Option<String>,
     data: Vec<String>,
 }
@@ -20,7 +22,13 @@ impl SseParser {
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
         self.buf.extend_from_slice(chunk);
         let mut out = Vec::new();
-        while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
+        loop {
+            let Some(at) = self.buf[self.scanned..].iter().position(|&b| b == b'\n') else {
+                self.scanned = self.buf.len();
+                break;
+            };
+            let pos = self.scanned + at;
+            self.scanned = 0;
             let mut line = self.buf.split_to(pos + 1);
             line.truncate(pos);
             if line.last() == Some(&b'\r') {
@@ -38,6 +46,7 @@ impl SseParser {
         if !self.buf.is_empty() {
             let rest = String::from_utf8_lossy(&self.buf).into_owned();
             self.buf.clear();
+            self.scanned = 0;
             for line in rest.lines() {
                 self.line(line, &mut out);
             }
@@ -88,5 +97,22 @@ mod tests {
         assert_eq!(ev[0].event.as_deref(), Some("a"));
         assert_eq!(ev[0].data, "{\"x\":1}");
         assert_eq!(ev[1].data, "[DONE]");
+    }
+
+    #[test]
+    fn a_long_line_in_many_chunks() {
+        let mut p = SseParser::default();
+        assert!(p.feed(b"data: ").is_empty());
+        for _ in 0..1000 {
+            assert!(p.feed(b"xxxxxxxx").is_empty());
+        }
+        let ev = p.feed(b"\r\n\ndata: y\n\nda");
+        assert_eq!(ev.len(), 2);
+        assert_eq!(ev[0].data.len(), 8000);
+        assert_eq!(ev[1].data, "y");
+        // The rest of the buffer still makes a line with what comes next.
+        let ev = p.feed(b"ta: z\n\n");
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].data, "z");
     }
 }

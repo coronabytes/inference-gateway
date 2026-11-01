@@ -75,6 +75,14 @@ pub async fn pick(
     if pool.is_empty() {
         return Err(GatewayError::unavailable("no deployments left to try for this model"));
     }
+    // With one deployment, cooldowns and health cannot change the pick: one that is cooling down
+    // is tried anyway. Only its capacity is checked, which spares two Valkey round trips.
+    if let [d] = pool[..] {
+        return match has_capacity(state, d).await {
+            Ok(()) => Ok(d.clone()),
+            Err(retry) => Err(GatewayError::rate_limited("all deployments for this model are at capacity", retry)),
+        };
+    }
 
     let ids: Vec<Uuid> = pool.iter().map(|d| d.id).collect();
     let (cooling, health) = tokio::join!(state.cache.cooldowns(&ids), async {

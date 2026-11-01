@@ -122,21 +122,38 @@ pub fn generate_key() -> (String, Vec<u8>, String) {
     (secret, hash, prefix)
 }
 
-/// Enforce per-key request rate, token rate and budget before routing.
+/// Enforce per-key request rate, token rate and budget before routing. The four lookups are
+/// independent, so they run at once; the first limit hit, in this order, refuses the request.
 pub async fn check_key_limits(state: &AppState, key: &VirtualKey) -> Result<(), GatewayError> {
-    if let Some(limit) = key.rpm_limit {
-        let d = state.cache.rate_check(&format!("k:{}:rpm", key.id), limit as u64, 1).await;
-        if !d.allowed {
-            return Err(GatewayError::rate_limited("key request rate limit exceeded", d.retry_after));
-        }
+    let project = key.project_id.and_then(|id| state.registry.snapshot().projects.get(&id).cloned());
+    let (rpm, tpm, budget, project_budget) = tokio::join!(
+        async {
+            match key.rpm_limit {
+                Some(limit) => Some(state.cache.rate_check(&format!("k:{}:rpm", key.id), limit as u64, 1).await),
+                None => None,
+            }
+        },
+        async {
+            match key.tpm_limit {
+                Some(limit) => Some(state.cache.rate_check(&format!("k:{}:tpm", key.id), limit as u64, 0).await),
+                None => None,
+            }
+        },
+        crate::budget::status(state, key),
+        async {
+            match &project {
+                Some(p) => crate::budget::project_status(state, p).await,
+                None => None,
+            }
+        },
+    );
+    if let Some(d) = rpm.filter(|d| !d.allowed) {
+        return Err(GatewayError::rate_limited("key request rate limit exceeded", d.retry_after));
     }
-    if let Some(limit) = key.tpm_limit {
-        let d = state.cache.rate_check(&format!("k:{}:tpm", key.id), limit as u64, 0).await;
-        if !d.allowed {
-            return Err(GatewayError::rate_limited("key token rate limit exceeded", d.retry_after));
-        }
+    if let Some(d) = tpm.filter(|d| !d.allowed) {
+        return Err(GatewayError::rate_limited("key token rate limit exceeded", d.retry_after));
     }
-    if let Some(b) = crate::budget::status(state, key).await
+    if let Some(b) = budget
         && b.exhausted()
     {
         let retry_after = (b.resets_at - chrono::Utc::now()).num_seconds().max(1) as u64;
@@ -151,9 +168,7 @@ pub async fn check_key_limits(state: &AppState, key: &VirtualKey) -> Result<(), 
         ));
     }
     // The project's budget comes on top of the key's, with its own period.
-    let project = key.project_id.and_then(|id| state.registry.snapshot().projects.get(&id).cloned());
-    if let Some(p) = project
-        && let Some(b) = crate::budget::project_status(state, &p).await
+    if let Some(b) = project_budget
         && b.exhausted()
     {
         let retry_after = (b.resets_at - chrono::Utc::now()).num_seconds().max(1) as u64;
