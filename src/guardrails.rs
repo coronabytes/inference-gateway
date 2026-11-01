@@ -33,8 +33,8 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 
 const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum GuardrailProvider {
     Bedrock,
     Mistral,
@@ -307,9 +307,11 @@ pub struct Finding {
     /// The text that matched, where the provider reports it. Never in the request log; only the
     /// bodies of logged requests keep it (see `capture`).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub matched: Option<String>,
     /// The filter's confidence (`LOW` to `HIGH`) or the grounding score.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub confidence: Option<String>,
 }
 

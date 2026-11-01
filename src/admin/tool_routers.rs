@@ -33,13 +33,16 @@ pub(crate) struct ToolRouterView {
     id: Uuid,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     description: Option<String>,
     decision_model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     instructions: Option<String>,
     routes: Vec<ToolRoute>,
     threshold: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     max_routes: Option<i32>,
     enabled: bool,
     created_at: DateTime<Utc>,

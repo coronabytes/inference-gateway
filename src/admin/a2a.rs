@@ -31,15 +31,18 @@ pub(crate) struct A2aAgentView {
     id: Uuid,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     description: Option<String>,
     card_url: String,
     auth: McpAuth,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     auth_header: Option<String>,
     /// Whether a secret is stored. The secret itself is never returned.
     has_secret: bool,
     /// The OAuth client, for `oauth` and `oauth_user` auth.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     oauth: Option<OAuthConfig>,
     tags: Vec<String>,
     project_ids: Vec<Uuid>,
@@ -274,9 +277,11 @@ pub(crate) struct A2aAgentTestResult {
     ok: bool,
     latency_ms: u64,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     card: Option<CardSummary>,
     /// Why the card could not be used, when `ok` is false.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     error: Option<String>,
 }
 

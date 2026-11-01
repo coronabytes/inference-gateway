@@ -44,6 +44,7 @@ pub(crate) struct KeyInput {
     /// Budget in USD per `budget_period`; both None = unlimited.
     max_budget_usd: Option<f64>,
     /// "day", "week" or "month" (UTC calendar periods).
+    #[schema(value_type = Option<crate::budget::BudgetPeriod>)]
     budget_period: Option<String>,
     expires_at: Option<DateTime<Utc>>,
     #[serde(default = "yes")]
@@ -68,6 +69,7 @@ pub(crate) struct KeyView {
     #[serde(flatten)]
     key: VirtualKey,
     /// Current budget period and its spend; None for unlimited keys.
+    #[schema(required)]
     budget: Option<crate::budget::BudgetStatus>,
     /// Whether its prompts and responses are logged now: its own `prompt_logging` where its
     /// project allows it, always where the project forces it.

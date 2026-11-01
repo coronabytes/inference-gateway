@@ -75,6 +75,7 @@ pub struct NamedItem {
     pub name: String,
     /// A key's project.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub project_id: Option<Uuid>,
 }
 

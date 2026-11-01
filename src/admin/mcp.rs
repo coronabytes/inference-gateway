@@ -29,15 +29,18 @@ pub(crate) struct McpServerView {
     id: Uuid,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     description: Option<String>,
     url: String,
     auth: McpAuth,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     auth_header: Option<String>,
     /// Whether a secret is stored. The secret itself is never returned.
     has_secret: bool,
     /// The OAuth client, for `oauth` and `oauth_user` auth.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     oauth: Option<OAuthConfig>,
     tags: Vec<String>,
     project_ids: Vec<Uuid>,
@@ -506,6 +509,7 @@ pub(crate) struct McpServerTestResult {
     ok: bool,
     latency_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     protocol_version: Option<String>,
     /// The server's `serverInfo`: its name and version.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -514,6 +518,7 @@ pub(crate) struct McpServerTestResult {
     tools: Vec<ProbedTool>,
     /// Why the server could not be used, when `ok` is false.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     error: Option<String>,
 }
 

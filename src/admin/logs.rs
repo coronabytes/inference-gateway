@@ -125,24 +125,31 @@ pub(super) async fn log_tools(State(state): State<AppState>, Extension(access): 
 pub(crate) struct BodiesView {
     /// The request as the client sent it.
     #[schema(value_type = Option<Object>)]
+    #[schema(required)]
     request: Option<Value>,
     /// The request as the model got it, when guardrails changed it.
     #[schema(value_type = Option<Object>)]
+    #[schema(required)]
     screened_request: Option<Value>,
     /// What each guardrail was given, found (matched text included), did and answered.
     #[schema(value_type = Option<Vec<Object>>)]
+    #[schema(required)]
     guardrails: Option<Value>,
     /// The response as the client got it; a stream put back together into one document.
     #[schema(value_type = Option<Object>)]
+    #[schema(required)]
     response: Option<Value>,
     /// Sizes as sent and received, before placeholders and cuts.
     request_bytes: i32,
     response_bytes: i32,
     /// `stored` or `truncated`.
+    #[schema(required)]
     status: Option<String>,
     /// The logged turn before this one in its conversation, and the one after, where the caller
     /// may see them.
+    #[schema(required)]
     previous: Option<Uuid>,
+    #[schema(required)]
     next: Option<Uuid>,
 }
 

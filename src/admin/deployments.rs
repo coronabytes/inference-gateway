@@ -29,36 +29,53 @@ use crate::{
 pub(crate) struct DeploymentView {
     id: Uuid,
     model_name: String,
+    #[schema(value_type = crate::model::Mode)]
     mode: String,
+    #[schema(value_type = crate::model::ProviderKind)]
     provider: String,
     upstream_model: String,
     config: DeploymentConfig,
     credential_id: Uuid,
+    #[schema(required)]
     credential_name: Option<String>,
     weight: i32,
     priority: i32,
+    #[schema(required)]
     rpm_limit: Option<i32>,
+    #[schema(required)]
     tpm_limit: Option<i32>,
     timeout_secs: i32,
     input_cost_per_mtok: f64,
     output_cost_per_mtok: f64,
+    #[schema(required)]
     cache_read_cost_per_mtok: Option<f64>,
+    #[schema(required)]
     cache_write_cost_per_mtok: Option<f64>,
+    #[schema(required)]
     long_context_threshold: Option<i32>,
+    #[schema(required)]
     long_input_cost_per_mtok: Option<f64>,
+    #[schema(required)]
     long_output_cost_per_mtok: Option<f64>,
+    #[schema(required)]
     long_cache_read_cost_per_mtok: Option<f64>,
+    #[schema(required)]
     long_cache_write_cost_per_mtok: Option<f64>,
+    #[schema(required)]
     cost_per_k_searches: Option<f64>,
+    #[schema(required)]
     base_model: Option<String>,
     tags: Vec<String>,
     project_ids: Vec<Uuid>,
     enabled: bool,
+    #[schema(required)]
     cooldown_secs: Option<i64>,
     /// Its recent calls, as adaptive routing sees them; absent without any.
+    #[schema(required)]
     health: Option<HealthView>,
     /// The reasoning efforts it accepts, from its price catalog entry; absent while it is not
     /// loaded (disabled).
+    #[schema(required)]
     reasoning_efforts: Option<Vec<crate::model::ReasoningEffort>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -71,6 +88,7 @@ pub(crate) struct HealthView {
     /// Share of the calls that failed with a retryable error (rate limit, server error, timeout).
     error_rate: f64,
     /// Average time to first token of streamed responses.
+    #[schema(required)]
     ttft_ms: Option<f64>,
     /// The share of its weight the deployment gets now: 1 when healthy, down to 0.05.
     weight_factor: f64,
@@ -148,6 +166,7 @@ pub(crate) struct DeploymentInput {
     /// chat (default), embedding, decision or rerank.
     #[serde(default)]
     pub(super) mode: Mode,
+    #[schema(value_type = crate::model::ProviderKind)]
     provider: String,
     pub(super) upstream_model: String,
     /// An existing credential for the same provider. Create credentials first.
@@ -695,7 +714,9 @@ pub(crate) struct DeploymentTest {
 /// The tokens a passed test used; null where a decision model did not say.
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct TestUsage {
+    #[schema(required)]
     input_tokens: Option<u64>,
+    #[schema(required)]
     output_tokens: Option<u64>,
 }
 

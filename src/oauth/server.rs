@@ -66,6 +66,7 @@ pub struct ClientGrant {
     pub key_id: Uuid,
     /// The client's metadata document URL.
     pub client_id: String,
+    #[schema(required)]
     pub client_name: Option<String>,
     pub redirect_uri: String,
     /// The MCP endpoint's path: `/mcp`, `/mcp/{server}`, or `/` for every one.
@@ -73,8 +74,10 @@ pub struct ClientGrant {
     pub scope: String,
     pub access_expires_at: DateTime<Utc>,
     pub refresh_expires_at: DateTime<Utc>,
+    #[schema(required)]
     pub created_by: Option<String>,
     pub created_at: DateTime<Utc>,
+    #[schema(required)]
     pub last_used_at: Option<DateTime<Utc>>,
 }
 

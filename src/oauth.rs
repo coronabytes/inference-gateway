@@ -117,7 +117,7 @@ pub fn labels_for(by: &[String], labels: &Labels) -> Result<String, String> {
 }
 
 /// Which kind of upstream a token is for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Mcp,
@@ -714,23 +714,31 @@ pub fn forget_upstream(state: &AppState, kind: Kind, upstream: Uuid) {
 /// What discovery found out about an upstream's authorization server.
 #[derive(Debug, Default, Serialize, utoipa::ToSchema)]
 pub struct Discovered {
+    #[schema(required)]
     pub token_url: Option<String>,
+    #[schema(required)]
     pub authorization_url: Option<String>,
+    #[schema(required)]
     pub registration_url: Option<String>,
     /// Scopes the upstream or its authorization server lists.
     pub scopes: Vec<String>,
     /// The resource tokens are for, as the upstream names itself.
+    #[schema(required)]
     pub resource: Option<String>,
     /// Ways the token URL takes clients to authenticate.
     pub token_auth_methods: Vec<String>,
     /// Whether the authorization server takes client ID metadata documents as client IDs.
     pub client_metadata_documents: bool,
     /// The gateway's client there, when discovery got it one (see `client`).
+    #[schema(required)]
     pub client_id: Option<String>,
+    #[schema(required)]
     pub client_secret: Option<String>,
+    #[schema(required)]
     pub redirect_uri: Option<String>,
     /// How the gateway got `client_id`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub client: Option<ClientSource>,
 }
 

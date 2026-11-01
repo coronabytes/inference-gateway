@@ -32,9 +32,12 @@ pub(crate) struct GuardrailView {
     id: Uuid,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     description: Option<String>,
+    #[schema(value_type = crate::guardrails::GuardrailProvider)]
     provider: String,
     credential_id: Uuid,
+    #[schema(required)]
     credential_name: Option<String>,
     config: GuardrailConfig,
     prices: GuardrailPrices,
@@ -363,11 +366,14 @@ pub(crate) struct GuardrailTestResult {
     ok: bool,
     latency_ms: u64,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     verdict: Option<Verdict>,
     /// The provider's error, when `ok` is false: an unknown guardrail, missing permissions, …
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     status: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     error: Option<String>,
 }
 

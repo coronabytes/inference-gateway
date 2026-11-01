@@ -36,8 +36,10 @@ pub struct SignInStatus {
     signed_in: bool,
     /// The label the request lacks for this upstream, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     missing_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     signed_in_at: Option<DateTime<Utc>>,
 }
 

@@ -304,8 +304,11 @@ pub async fn fetch_card(state: &AppState, agent: &A2aAgent, who: Option<Who<'_>>
 /// What the admin API's test shows of a card.
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct CardSummary {
+    #[schema(required)]
     pub name: Option<String>,
+    #[schema(required)]
     pub description: Option<String>,
+    #[schema(required)]
     pub version: Option<String>,
     /// The interfaces the gateway proxies: binding, protocol version and the agent's own URL.
     pub interfaces: Vec<CardInterface>,
@@ -323,6 +326,7 @@ pub struct CardInterface {
 pub struct CardSkill {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub description: Option<String>,
 }
 

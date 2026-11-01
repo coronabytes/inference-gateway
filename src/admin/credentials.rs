@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use uuid::Uuid;
 
 use super::{R, csv, search_text};
@@ -27,15 +27,26 @@ use crate::{
 pub(crate) struct CredentialView {
     id: Uuid,
     name: String,
+    #[schema(value_type = crate::model::ProviderKind)]
     provider: String,
     settings: CredentialSettings,
     secrets_set: BTreeMap<&'static str, bool>,
     /// Vertex: who the stored key file authenticates as. Not secret.
     #[serde(skip_serializing_if = "Option::is_none")]
-    service_account: Option<Value>,
+    #[schema(nullable = false)]
+    service_account: Option<ServiceAccountView>,
     deployments: i64,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+/// Who a Vertex credential's key file authenticates as.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ServiceAccountView {
+    client_email: String,
+    /// The service account's own project.
+    #[schema(required)]
+    project_id: Option<String>,
 }
 
 fn credential_view(state: &AppState, c: CredentialRow, deployments: i64) -> CredentialView {
@@ -50,7 +61,7 @@ fn credential_view(state: &AppState, c: CredentialRow, deployments: i64) -> Cred
             .google_service_account
             .as_deref()
             .and_then(|j| crate::google::ServiceAccount::parse(j).ok())
-            .map(|sa| json!({ "client_email": sa.client_email, "project_id": sa.project_id })),
+            .map(|sa| ServiceAccountView { client_email: sa.client_email, project_id: sa.project_id }),
         deployments,
         created_at: c.created_at,
         updated_at: c.updated_at,

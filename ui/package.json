@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "lint": "biome lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "gen:api": "node tools/gen-api/node_modules/openapi-typescript/bin/cli.js openapi.json --empty-objects-unknown --output src/api.gen.ts"
   },
   "dependencies": {
     "react": "19.3.1",
@@ -23,6 +24,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
+    "gen-api": "file:tools/gen-api",
     "typescript": "7.0.2",
     "vite": "8.3.5",
     "vitest": "5.0.5"

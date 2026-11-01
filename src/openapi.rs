@@ -60,15 +60,24 @@ use utoipa::{
 )]
 pub(crate) struct ApiDoc;
 
-/// The document, from the routers' handlers, with this build's version. `inference-gateway
-/// openapi` prints it, so it must not need a database or any configuration.
-pub fn spec() -> utoipa::openapi::OpenApi {
-    let mut doc = crate::routes(None).into_openapi();
-    doc.info.version = crate::VERSION.into();
-    doc
+/// The document, from the routers' handlers. It needs neither a database nor any configuration.
+fn spec() -> utoipa::openapi::OpenApi {
+    crate::routes(None).into_openapi()
 }
 
-static DOCUMENT: LazyLock<String> = LazyLock::new(|| spec().to_pretty_json().expect("the OpenAPI document serializes"));
+/// The document as `inference-gateway openapi` prints it, for the console's generated types
+/// (`ui/openapi.json`). Its version is the package's, not the build's, so the copy changes only
+/// with the API rather than with every commit.
+pub fn export() -> String {
+    spec().to_pretty_json().expect("the OpenAPI document serializes")
+}
+
+/// The document as served, with this build's version.
+static DOCUMENT: LazyLock<String> = LazyLock::new(|| {
+    let mut doc = spec();
+    doc.info.version = crate::VERSION.into();
+    doc.to_pretty_json().expect("the OpenAPI document serializes")
+});
 
 /// `GET /admin/openapi.json`.
 pub async fn document() -> impl IntoResponse {

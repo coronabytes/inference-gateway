@@ -110,25 +110,30 @@ pub(crate) async fn client_metadata(headers: HeaderMap, uri: Uri) -> Json<serde_
 /// An upstream a key signs in to on its own, and whether it has.
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct Connection {
-    /// `mcp` or `a2a`.
+    #[schema(value_type = crate::oauth::Kind)]
     kind: &'static str,
     upstream_id: Uuid,
     name: String,
     /// The key's own sign-in, where the key signs in once.
     connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     signed_in_at: Option<DateTime<Utc>>,
     /// When the access token expires; a refreshable one is renewed then.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     expires_at: Option<DateTime<Utc>>,
     refreshable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     scope: Option<String>,
     /// When the key's sign-in was last used, at most an hour off.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     last_used_at: Option<DateTime<Utc>>,
     /// Who signed the key in.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     connected_by: Option<String>,
     /// The request labels that tell the key's sign-ins apart (`tenant`, `user`); empty where the
     /// key signs in once.
@@ -136,6 +141,7 @@ pub(crate) struct Connection {
     sign_in_by: Vec<String>,
     /// How many sign-ins the key has by those labels.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     sign_ins: Option<i64>,
 }
 
@@ -236,11 +242,14 @@ pub(crate) struct SignIn {
     /// When it was last used, at most an hour off.
     last_used_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     expires_at: Option<DateTime<Utc>>,
     refreshable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     connected_by: Option<String>,
 }
 

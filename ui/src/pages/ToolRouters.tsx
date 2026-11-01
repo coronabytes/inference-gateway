@@ -111,7 +111,7 @@ export function ToolRouters() {
                 <td>
                   {r.routes.map((x) => (
                     <div key={x.name} title={x.description}>
-                      {x.name} <span className="muted small mono">{serverName(x.server_id)}{x.tools.length ? `: ${x.tools.join(", ")}` : ""}</span>
+                      {x.name} <span className="muted small mono">{serverName(x.server_id)}{x.tools?.length ? `: ${x.tools.join(", ")}` : ""}</span>
                     </div>
                   ))}
                 </td>
@@ -331,7 +331,7 @@ function ToolRouterForm({
             {routes.map((r, i) => {
               const listed = tools[r.server_id];
               const known = Array.isArray(listed) ? listed : [];
-              const options = [...r.tools.filter((x) => !known.includes(x)), ...known].map((x) => ({ value: x, label: x }));
+              const options = [...(r.tools ?? []).filter((x) => !known.includes(x)), ...known].map((x) => ({ value: x, label: x }));
               return (
                 <div key={i} className="route-row">
                   <TextInput
@@ -361,7 +361,7 @@ function ToolRouterForm({
                     label={`Route ${i + 1} tools`}
                     hint="The server's tools this route offers, after the server's own filters. All offers every tool the server lists."
                     none="All"
-                    values={r.tools}
+                    values={r.tools ?? []}
                     onChange={(v) => patch(i, { tools: v })}
                     empty={listed === "failed" ? "The server's tools could not be listed" : "Listing the server's tools…"}
                     options={options}

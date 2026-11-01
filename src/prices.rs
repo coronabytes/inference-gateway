@@ -449,6 +449,7 @@ pub struct ImportSummary {
     pub import: db::PriceImport,
     /// Deployments that took the catalog's new prices, when `price_auto_accept` is on.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub accepted: Option<usize>,
 }
 

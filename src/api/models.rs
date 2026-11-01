@@ -133,6 +133,7 @@ pub(crate) struct ModelEntry {
     owned_by: &'static str,
     /// When the model will shut down (`YYYY-MM-DD`), from the price catalog; null if not
     /// announced.
+    #[schema(required)]
     shutdown_date: Option<String>,
 }
 
@@ -141,7 +142,9 @@ pub(crate) struct AnthropicModelList {
     data: Vec<AnthropicModel>,
     /// Always false: the list is never paged.
     has_more: bool,
+    #[schema(required)]
     first_id: Option<String>,
+    #[schema(required)]
     last_id: Option<String>,
 }
 
@@ -158,15 +161,21 @@ pub(crate) struct AnthropicModel {
     /// Anthropic's capability groups, such as `{ "pdf_input": { "supported": true } }`; null if the
     /// price catalog does not know the model.
     #[schema(value_type = Option<Object>)]
+    #[schema(required)]
     capabilities: Option<Value>,
+    #[schema(required)]
     max_input_tokens: Option<u64>,
+    #[schema(required)]
     max_tokens: Option<u64>,
     /// `active`, or `deprecated` once a retirement is scheduled.
     lifecycle: &'static str,
     /// Always null: when a model was deprecated is not known.
+    #[schema(required)]
     deprecated_at: Option<String>,
+    #[schema(required)]
     retires_at: Option<String>,
     /// Always null.
+    #[schema(required)]
     line: Option<String>,
 }
 
@@ -224,12 +233,15 @@ pub(crate) struct ModelExtendedEntry {
     owned_by: &'static str,
     /// When the model will shut down (`YYYY-MM-DD`), from the price catalog; null if not
     /// announced.
+    #[schema(required)]
     shutdown_date: Option<String>,
     /// What the model serves. Auto routers are `chat`.
     mode: Mode,
     /// From the price catalog; null if unknown.
+    #[schema(required)]
     max_input_tokens: Option<u64>,
     /// From the price catalog; null if unknown.
+    #[schema(required)]
     max_output_tokens: Option<u64>,
     /// Whether the model supports JSON schema output, from the price catalog. False if unknown.
     structured_outputs: bool,
@@ -309,10 +321,14 @@ pub(crate) fn web_search(snap: &Snapshot, key: &VirtualKey, name: &str) -> bool 
 /// retirement, and for chat models capabilities by `CAPS` path (`None`: unknown).
 #[derive(Debug, Default, serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct Described {
+    #[schema(required)]
     pub max_input_tokens: Option<u64>,
+    #[schema(required)]
     pub max_output_tokens: Option<u64>,
+    #[schema(required)]
     pub retires: Option<NaiveDate>,
     #[schema(value_type = Option<BTreeMap<String, Option<bool>>>)]
+    #[schema(required)]
     pub capabilities: Option<BTreeMap<&'static str, Option<bool>>>,
 }
 

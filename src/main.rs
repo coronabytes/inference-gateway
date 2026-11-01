@@ -65,6 +65,12 @@ async fn main() {
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
         std::process::exit(healthcheck());
     }
+    // `inference-gateway openapi` prints the OpenAPI document, from which the console's API types
+    // are generated. It reads no environment and connects to nothing.
+    if std::env::args().nth(1).as_deref() == Some("openapi") {
+        println!("{}", openapi::export());
+        return;
+    }
     // For `rediss://`: the Valkey client uses rustls's process-wide provider, which rustls cannot
     // choose itself while both ring and aws-lc-rs are in the build.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();

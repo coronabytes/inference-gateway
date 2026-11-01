@@ -26,8 +26,10 @@ pub(crate) struct ConnectRequest {
     client_id: String,
     client_host: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     client_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     client_uri: Option<String>,
     /// Where the person goes back to, and its host.
     redirect_uri: String,

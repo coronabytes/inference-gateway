@@ -4,7 +4,7 @@ pub mod anthropic;
 pub mod chat;
 pub mod decisions;
 pub mod embeddings;
-mod guard;
+pub(crate) mod guard;
 pub mod models;
 pub mod rerank;
 pub mod responses;

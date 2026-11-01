@@ -197,30 +197,38 @@ pub struct FoundryDeployment {
     /// The model deployed, e.g. `gpt-4o`.
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub model_version: Option<String>,
     /// The model's format (its vendor), e.g. `OpenAI`, `Anthropic`, `Cohere`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub format: Option<String>,
     /// Deployment type, e.g. `GlobalStandard`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub sku: Option<String>,
     /// For a data zone deployment (`DataZoneStandard`, ...): the zone it processes in, `eu` or
     /// `us`, from the resource's region. Data zone prices are keyed `azure/eu/…` and `azure/us/…`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub data_zone: Option<&'static str>,
     /// Requests per minute the deployment's quota allows.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub rpm: Option<i64>,
     /// Tokens per minute the deployment's quota allows.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub tpm: Option<i64>,
     /// What the model serves, as far as its capabilities tell.
     pub mode: Mode,
     /// The protocol to call a chat model with.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub api_style: Option<ApiStyle>,
     /// Provisioning state, e.g. `Succeeded`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub state: Option<String>,
 }
 
@@ -231,6 +239,7 @@ pub struct FoundryDeployments {
     pub resource: String,
     /// The resource's region, e.g. `swedencentral`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub location: Option<String>,
     pub deployments: Vec<FoundryDeployment>,
 }

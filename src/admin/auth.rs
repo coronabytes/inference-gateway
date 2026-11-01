@@ -528,14 +528,19 @@ pub fn browser_routes() -> OpenApiRouter<AppState> {
 pub(crate) struct SessionInfo {
     authenticated: bool,
     /// Null while signed out.
+    #[schema(required)]
     via: Option<Via>,
+    #[schema(required)]
     user: Option<SessionUser>,
     /// An admin may do everything; a user only works in `projects`. Null while signed out. The
     /// console shows a user only their projects' keys, playground, request log and metrics.
+    #[schema(required)]
     role: Option<PersonRole>,
     /// A user's projects; null for an admin.
+    #[schema(required)]
     projects: Option<Vec<Uuid>>,
     /// Set when single sign-on is enabled.
+    #[schema(required)]
     sso: Option<SsoButton>,
     /// Whether `GATEWAY_MASTER_KEY` is set; without it, single sign-on is the only sign-in.
     master_key: bool,
@@ -559,6 +564,7 @@ pub(crate) struct SessionUser {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
     email: Option<Option<String>>,
+    #[schema(required)]
     name: Option<String>,
 }
 
@@ -991,6 +997,7 @@ impl<'c> openidconnect::AsyncHttpClient<'c> for HttpClient {
 // ---------------------------------------------------------------- settings API
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = OidcSettingsView)]
 pub(crate) struct SettingsView {
     configured: bool,
     enabled: bool,
@@ -999,11 +1006,15 @@ pub(crate) struct SettingsView {
     client_id: String,
     client_secret_set: bool,
     public_url: String,
+    #[schema(required)]
     redirect_uri: Option<String>,
     roles_claim: String,
+    #[schema(required)]
     allowed_role: Option<String>,
     /// Signs in as a user, who sees only the projects an admin adds them to. None: admins only.
+    #[schema(required)]
     user_role: Option<String>,
+    #[schema(required)]
     updated_at: Option<DateTime<Utc>>,
 }
 
@@ -1051,6 +1062,7 @@ async fn get_settings(State(state): State<AppState>) -> R<Json<SettingsView>> {
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = OidcSettingsInput)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SettingsInput {
     enabled: bool,

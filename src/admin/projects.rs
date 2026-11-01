@@ -43,6 +43,7 @@ pub(crate) struct ProjectInput {
     max_budget_usd: Option<f64>,
     /// "day", "week" or "month" (UTC calendar periods).
     #[serde(default)]
+    #[schema(value_type = Option<crate::budget::BudgetPeriod>)]
     budget_period: Option<String>,
     /// Guardrails every request of the project's keys goes through. Omitted, they stay as they are.
     #[serde(default)]
@@ -63,6 +64,7 @@ pub(crate) struct ProjectView {
     /// How many keys the project groups.
     keys: i64,
     /// Current budget period and its spend; None for unlimited projects.
+    #[schema(required)]
     budget: Option<crate::budget::BudgetStatus>,
 }
 

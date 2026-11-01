@@ -50,6 +50,7 @@ pub(crate) struct SettingsView {
     /// What each setting is when it was never changed.
     defaults: Settings,
     /// When the settings were last saved; absent while they are all defaults.
+    #[schema(required)]
     updated_at: Option<DateTime<Utc>>,
 }
 

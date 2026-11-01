@@ -141,6 +141,7 @@ fn matches(m: &HubModel, modes: &[&str], vendors: &[&str], caps: &[&str], term: 
 pub(crate) struct HubView {
     /// The key the list is for; absent for the whole gateway.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     key: Option<HubKey>,
     /// Guardrails every request of the key goes through (set on the key or its project), then
     /// those a client may ask for by name in `x-gateway-guardrails`.
@@ -160,6 +161,7 @@ pub(crate) struct HubKey {
     id: Uuid,
     name: String,
     scope: KeyScope,
+    #[schema(required)]
     project: Option<String>,
     /// Whether requests with the key are served now: `active`, `disabled`, `expired`,
     /// `project inactive`, or `no inference` for a key whose scope is the admin API only.
@@ -173,7 +175,9 @@ pub(crate) struct HubGuardrail {
     id: Uuid,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     description: Option<String>,
+    #[schema(value_type = crate::guardrails::GuardrailProvider)]
     provider: String,
     /// `key` or `project`: applied to every request. `on request`: when a client asks for it.
     applied: &'static str,
@@ -191,10 +195,12 @@ pub(crate) struct HubModel {
     metadata: Value,
     /// Who makes it: the metadata's `vendor`, or without one the vendor its names suggest.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     vendor: Option<String>,
     tags: Vec<String>,
     /// A model alias's target: the model name it serves.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     target: Option<String>,
     /// What holds for all the deployments it reaches.
     #[serde(flatten)]
@@ -206,6 +212,7 @@ pub(crate) struct HubModel {
     deployments: Vec<HubDeployment>,
     /// With `stats=true`: its requests over the last 24 hours.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     stats: Option<HubStats>,
 }
 
@@ -217,9 +224,11 @@ pub(crate) struct HubStats {
     errors: i64,
     /// The successful requests' median latency.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     p50_latency_ms: Option<i32>,
     /// Output tokens per second while generating: after the first token for streamed answers.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     tokens_per_second: Option<f64>,
     /// `[requests, errors]` per hour, oldest first; the last is the current hour.
     hours: Vec<[i64; 2]>,
@@ -268,6 +277,7 @@ pub(crate) struct HubDeployment {
     id: Uuid,
     /// The model name it is deployed under; differs from the model's for an auto router.
     model: String,
+    #[schema(value_type = crate::model::ProviderKind)]
     provider: String,
     upstream_model: String,
     priority: i32,
@@ -290,14 +300,19 @@ pub(crate) struct HubPrices {
     cache_write: f64,
     /// Requests whose input exceeds this many tokens are billed at the long-context prices.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_context_threshold: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_input: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_output: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_cache_read: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_cache_write: Option<f64>,
     per_k_searches: f64,
 }

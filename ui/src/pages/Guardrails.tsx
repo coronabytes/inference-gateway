@@ -170,7 +170,7 @@ export function Guardrails() {
                   {g.description && <div className="muted small">{g.description}</div>}
                 </td>
                 <td>{GUARDRAIL_LABEL[g.provider]}</td>
-                <td className="mono" title={g.config.guardrail_identifier}>
+                <td className="mono" title={g.config.guardrail_identifier ?? undefined}>
                   {target(g)}
                 </td>
                 <td className="mono">{g.credential_name ?? <Badge tone="warning">Missing</Badge>}</td>

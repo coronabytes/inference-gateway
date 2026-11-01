@@ -713,9 +713,11 @@ impl SessionTag {
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct Probe {
     /// The protocol version the server agreed to.
+    #[schema(required)]
     pub protocol_version: Option<String>,
     /// The server's `serverInfo`: its name and version.
     #[schema(value_type = Option<Object>)]
+    #[schema(required)]
     pub server_info: Option<Value>,
     pub tools: Vec<ProbedTool>,
 }
@@ -724,6 +726,7 @@ pub struct Probe {
 pub struct ProbedTool {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub description: Option<String>,
 }
 

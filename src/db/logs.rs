@@ -215,27 +215,38 @@ pub async fn mark_bodies_dropped(pool: &PgPool, ids: &[Uuid]) -> sqlx::Result<()
 pub struct LogRow {
     pub id: Uuid,
     pub ts: DateTime<Utc>,
+    #[schema(required)]
     pub key_id: Option<Uuid>,
+    #[schema(required)]
     pub key_name: Option<String>,
     pub model_name: String,
+    #[schema(required)]
     pub deployment_id: Option<Uuid>,
+    #[schema(required)]
     pub provider: Option<String>,
     /// The deployment's provider model and the credential it calls with, as configured now;
     /// none once the deployment is deleted.
+    #[schema(required)]
     pub upstream_model: Option<String>,
+    #[schema(required)]
     pub credential_name: Option<String>,
     /// The tools its response called, where its bodies are logged (see `capture`).
+    #[schema(required)]
     pub tool_calls: Option<Vec<String>>,
     /// The tool an MCP call (api `mcp`) called, on the server named by `model_name`.
+    #[schema(required)]
     pub tool: Option<String>,
     /// A message to an A2A agent (api `a2a`): the state its task was left in, such as `completed`.
+    #[schema(required)]
     pub task_state: Option<String>,
     /// A message to an A2A agent: its context, shared by a conversation's messages.
+    #[schema(required)]
     pub context_id: Option<String>,
     pub api: String,
     pub stream: bool,
     pub status_code: i32,
     pub latency_ms: i32,
+    #[schema(required)]
     pub ttft_ms: Option<i32>,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -243,14 +254,18 @@ pub struct LogRow {
     pub cache_write_tokens: i64,
     pub cost_usd: f64,
     pub attempts: i32,
+    #[schema(required)]
     pub error: Option<String>,
     /// Set on the calls a routed request made (decision, routed call): the router's entry.
+    #[schema(required)]
     pub parent_id: Option<Uuid>,
     /// The labels the client sent, as `{"key": "value"}`.
     #[schema(value_type = Option<HashMap<String, String>>)]
+    #[schema(required)]
     pub labels: Option<serde_json::Value>,
-    /// What the guardrails did: `{"applied": [names], "action": "masked", "findings": ["pii:NAME"]}`.
-    #[schema(value_type = Option<Object>)]
+    /// What the guardrails did, stored with the entry.
+    #[schema(value_type = Option<crate::api::guard::GuardrailSummary>)]
+    #[schema(required)]
     pub guardrails: Option<serde_json::Value>,
     /// The guardrails' part of `cost_usd`.
     pub guardrail_cost_usd: f64,
@@ -260,6 +275,7 @@ pub struct LogRow {
     pub search_cost_usd: f64,
     /// Whether its bodies were logged: `stored`, `truncated` (cut to the size limit), `expired`
     /// (past their retention), `dropped` (could not be kept) or `deleted`; none when not logged.
+    #[schema(required)]
     pub bodies: Option<String>,
 }
 

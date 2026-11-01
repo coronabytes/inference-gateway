@@ -28,6 +28,7 @@ pub(crate) struct AliasView {
     /// The deployment or auto router whose model the alias serves.
     target_id: Uuid,
     /// The target's model name now; absent once the target is deleted.
+    #[schema(required)]
     target: Option<String>,
     enabled: bool,
     created_at: DateTime<Utc>,

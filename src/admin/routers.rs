@@ -26,8 +26,10 @@ pub(crate) struct RouterView {
     id: Uuid,
     model_name: String,
     decision_model: String,
+    #[schema(required)]
     instructions: Option<String>,
     routes: Vec<Route>,
+    #[schema(required)]
     fallback_route: Option<String>,
     tags: Vec<String>,
     enabled: bool,

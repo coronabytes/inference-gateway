@@ -203,8 +203,10 @@ pub struct OpenAiErrorDetail {
     #[serde(rename = "type")]
     kind: &'static str,
     /// Always null: the gateway does not say which parameter was wrong.
+    #[schema(required)]
     param: Option<String>,
     /// Such as `content_filter`, when a guardrail refused the prompt.
+    #[schema(required)]
     code: Option<&'static str>,
 }
 

@@ -188,6 +188,7 @@ struct Status {
     instance_id: String,
     /// The git tag the gateway was built from.
     version: &'static str,
+    #[schema(required)]
     registry_loaded_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Deployments, routers and aliases that could not be loaded, and why.
     registry_errors: Vec<String>,
