@@ -73,6 +73,47 @@ impl Inbound {
             (Self::Messages, ApiStyle::Anthropic) | (Self::Responses, ApiStyle::Responses) | (Self::Chat, ApiStyle::Chat)
         )
     }
+
+    /// The client's request in the gateway's own form.
+    pub fn parse(self, raw: &Value) -> Result<ChatRequest, GatewayError> {
+        match self {
+            Self::Messages => anthropic::parse_request(raw),
+            Self::Responses => responses::parse_request(raw),
+            Self::Chat => chat::parse_request(raw),
+        }
+    }
+
+    /// The id the response to the client carries: a new one, except for the Responses API, whose
+    /// id (`responses_id`) is made before the request is served so its turn can be stored under it.
+    fn response_id(self, responses_id: &str) -> String {
+        match self {
+            Self::Messages => crate::util::prefixed_id("msg"),
+            Self::Responses => responses_id.to_string(),
+            Self::Chat => format!("chatcmpl-{}", crate::util::random_hex(12)),
+        }
+    }
+
+    /// A finished response in the client's format.
+    fn render(self, r: &ChatResponse, id: &str, model: &str) -> Value {
+        match self {
+            Self::Messages => anthropic::render_response(r, id, model),
+            Self::Responses => responses::render_response(r, id, model),
+            Self::Chat => chat::render_response(r, id, model),
+        }
+    }
+
+    /// Encodes a stream in the client's format. Chat Completions end a stream with its usage only
+    /// when the request (`raw`) asks for it.
+    fn encoder(self, id: String, model: String, raw: &Value) -> Box<dyn StreamEncoder> {
+        match self {
+            Self::Messages => Box::new(anthropic::AnthropicEncoder::new(id, model)),
+            Self::Responses => Box::new(responses::ResponsesEncoder::new(id, model)),
+            Self::Chat => {
+                let include_usage = raw.pointer("/stream_options/include_usage").and_then(Value::as_bool).unwrap_or(false);
+                Box::new(chat::ChatEncoder::new(id, model, include_usage))
+            }
+        }
+    }
 }
 
 /// Converts normalized events into a client wire format.
@@ -374,12 +415,7 @@ pub(crate) async fn run_model(
             passthrough(state, &d, &raw, stream, inbound, headers).await
         } else {
             if ir.is_none() {
-                let parsed = match inbound {
-                    Inbound::Messages => anthropic::parse_request(&raw),
-                    Inbound::Responses => responses::parse_request(&raw),
-                    Inbound::Chat => chat::parse_request(&raw),
-                };
-                let parsed = parsed.and_then(|mut p| {
+                let parsed = inbound.parse(&raw).and_then(|mut p| {
                     if let Some(set) = &toolset {
                         mcp_tools::offer(&mut p, set)?;
                     }
@@ -465,11 +501,7 @@ pub(crate) async fn run_model(
     let mut resp = match outcome {
         Outcome::Full(r) => {
             tracker.set_usage(r.usage);
-            let v = match inbound {
-                Inbound::Messages => anthropic::render_response(&r, &crate::util::prefixed_id("msg"), &model),
-                Inbound::Responses => responses::render_response(&r, &response_id, &model),
-                Inbound::Chat => chat::render_response(&r, &format!("chatcmpl-{}", crate::util::random_hex(12)), &model),
-            };
+            let v = inbound.render(&r, &inbound.response_id(&response_id), &model);
             if let Some(c) = tracker.log() {
                 c.response(Logged::Json(logged_response(v.clone(), &r, inbound)));
             }
@@ -491,30 +523,12 @@ pub(crate) async fn run_model(
             ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
         }
         Outcome::Stream { first, rest } => {
-            let id = match inbound {
-                Inbound::Messages => crate::util::prefixed_id("msg"),
-                Inbound::Responses => response_id.clone(),
-                Inbound::Chat => format!("chatcmpl-{}", crate::util::random_hex(12)),
-            };
-            let enc: Box<dyn StreamEncoder> = match inbound {
-                Inbound::Messages => Box::new(anthropic::AnthropicEncoder::new(id.clone(), model.clone())),
-                Inbound::Responses => Box::new(responses::ResponsesEncoder::new(id.clone(), model.clone())),
-                Inbound::Chat => {
-                    let include_usage = raw.pointer("/stream_options/include_usage").and_then(Value::as_bool).unwrap_or(false);
-                    Box::new(chat::ChatEncoder::new(id.clone(), model.clone(), include_usage))
-                }
-            };
+            let id = inbound.response_id(&response_id);
+            let enc = inbound.encoder(id.clone(), model.clone(), &raw);
             // A logged stream is stored as the same response would be without streaming.
             let render: Option<Render> = tracker.logging().then(|| -> Render {
                 let model = model.clone();
-                Box::new(move |r: &ChatResponse| {
-                    let v = match inbound {
-                        Inbound::Messages => anthropic::render_response(r, &id, &model),
-                        Inbound::Responses => responses::render_response(r, &id, &model),
-                        Inbound::Chat => chat::render_response(r, &id, &model),
-                    };
-                    logged_response(v, r, inbound)
-                })
+                Box::new(move |r: &ChatResponse| logged_response(inbound.render(r, &id, &model), r, inbound))
             });
             sse_response(Body::from_stream(encode_stream(first, rest, enc, tracker, turn_sink, render)))
         }

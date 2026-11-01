@@ -12,7 +12,7 @@ use axum::{
 use bytes::Bytes;
 use serde_json::{Value, json};
 
-use super::{Inbound, anthropic, chat, responses};
+use super::Inbound;
 use crate::{
     accounting::Rollup,
     affinity::{Affinity, StickyRoute},
@@ -200,11 +200,7 @@ async fn decide(
             &restricted
         }
     };
-    let parsed = match inbound {
-        Inbound::Messages => anthropic::parse_request(raw),
-        Inbound::Responses => responses::parse_request(raw),
-        Inbound::Chat => chat::parse_request(raw),
-    }?;
+    let parsed = inbound.parse(raw)?;
     let (name, how) = match crate::api::decisions::choose_route(state, router, transcript(&parsed), rollup).await {
         Ok((name, confidence)) => (name, format!("decision:{confidence:.3}")),
         Err(e) => {

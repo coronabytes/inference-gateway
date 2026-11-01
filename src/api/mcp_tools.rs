@@ -206,12 +206,7 @@ pub async fn route(
     if !wanted.iter().any(|w| snap.tool_routers.contains_key(&w.server)) {
         return (wanted, Vec::new());
     }
-    let transcript = match inbound {
-        Inbound::Messages => super::anthropic::parse_request(raw),
-        Inbound::Responses => super::responses::parse_request(raw),
-        Inbound::Chat => super::chat::parse_request(raw),
-    }
-    .map(|r| super::routing::transcript(&r));
+    let transcript = inbound.parse(raw).map(|r| super::routing::transcript(&r));
     let (mut out, mut routed) = (Vec::new(), Vec::new());
     for w in wanted {
         let Some(router) = snap.tool_routers.get(&w.server) else {
