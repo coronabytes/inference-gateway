@@ -504,11 +504,11 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
       )}
       {confirming && <ConfirmDialog request={confirming} onClose={() => setConfirming(null)} />}
       {issued && (
-        <Modal title={issued.title} onClose={() => setIssued(null)} footer={<button onClick={() => setIssued(null)}>Done</button>}>
+        <Modal title={issued.title} onClose={() => setIssued(null)} footer={<button type="button" onClick={() => setIssued(null)}>Done</button>}>
           <p>Copy this key now. It is stored only as a hash and cannot be shown again.</p>
           <div className="secret">
             <code>{issued.key}</code>
-            <button className="primary" onClick={() => navigator.clipboard?.writeText(issued.key)}>Copy</button>
+            <button type="button" className="primary" onClick={() => navigator.clipboard?.writeText(issued.key)}>Copy</button>
           </div>
         </Modal>
       )}

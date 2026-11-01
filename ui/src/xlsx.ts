@@ -18,6 +18,7 @@ export interface Sheet {
 export const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 // Characters XML 1.0 does not allow, which would make Excel refuse the file.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
 const INVALID_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g;
 const esc = (s: string) => s.replace(INVALID_XML, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 

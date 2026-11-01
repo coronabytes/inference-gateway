@@ -937,3 +937,55 @@ pub(super) async fn import(
         "a2a_agents_need_secrets": agent_import.needs_secrets,
     })))
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::to_bytes;
+
+    use super::*;
+    use crate::model::Secrets;
+
+    #[sqlx::test]
+    async fn an_export_imports_back_into_an_emptied_gateway(pool: sqlx::PgPool) {
+        let state = crate::state::test_state_with_db(pool);
+        let now = Utc::now();
+        let secrets = Secrets { api_key: Some("sk-test".into()), ..Default::default() };
+        let cred = CredentialRow {
+            id: Uuid::now_v7(),
+            name: "openai".into(),
+            provider: "openai".into(),
+            secrets: registry::encrypt_secrets(&state.cfg.secret_box, &secrets),
+            settings: sqlx::types::Json(CredentialSettings::default()),
+            created_at: now,
+            updated_at: now,
+        };
+        db::insert_credential(&state.db, &cred).await.unwrap();
+        let input: DeploymentInput = serde_json::from_value(
+            json!({ "model_name": "luna", "provider": "openai", "upstream_model": "gpt", "credential_id": cred.id }),
+        )
+        .unwrap();
+        let dep = to_row(Uuid::now_v7(), input, now);
+        db::upsert_deployment(&state.db, &dep).await.unwrap();
+
+        let exported = export(State(state.clone()), Query(ExportQuery { sections: None })).await.unwrap().into_response();
+        let doc: Value = serde_json::from_slice(&to_bytes(exported.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert!(!doc.to_string().contains("sk-test"), "secrets stay out of the file");
+
+        db::delete_deployment(&state.db, dep.id).await.unwrap();
+        db::delete_credential(&state.db, cred.id).await.unwrap();
+        let run =
+            |doc: Value| import(State(state.clone()), Extension(Actor::master_key()), Query(ImportQuery { dry_run: false }), Json(doc));
+        let Json(result) = run(doc.clone()).await.unwrap();
+        assert_eq!(result["credentials"]["created"], json!(["openai"]));
+        assert_eq!(result["deployments"]["created"].as_array().map(Vec::len), Some(1));
+        assert_eq!(result["needs_secrets"], json!(["openai"]));
+        let deps = db::list_deployments(&state.db).await.unwrap();
+        assert_eq!((deps.len(), deps[0].model_name.as_str(), deps[0].id), (1, "luna", dep.id));
+
+        // The same file again changes nothing.
+        let Json(again) = run(doc).await.unwrap();
+        assert_eq!(again["credentials"]["created"], json!([]));
+        assert_eq!(again["deployments"]["created"], json!([]));
+        assert_eq!(again["deployments"]["updated"], json!([]));
+    }
+}

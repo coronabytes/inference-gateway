@@ -2761,19 +2761,19 @@ pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32, body_
                     .fetch_one(&mut *conn)
                     .await?;
             requests += dropped.unwrap_or(0) as u64;
-        }
-        while request_days > 0 {
-            let n = sqlx::query!(
-                "DELETE FROM request_logs WHERE id IN (
+            loop {
+                let n = sqlx::query!(
+                    "DELETE FROM request_logs WHERE id IN (
                      SELECT id FROM request_logs WHERE ts < now() - make_interval(days => $1) LIMIT 5000)",
-                request_days as i32
-            )
-            .execute(&mut *conn)
-            .await?
-            .rows_affected();
-            requests += n;
-            if n < 5000 {
-                break;
+                    request_days as i32
+                )
+                .execute(&mut *conn)
+                .await?
+                .rows_affected();
+                requests += n;
+                if n < 5000 {
+                    break;
+                }
             }
         }
         let audit = match audit_days {
@@ -2846,4 +2846,72 @@ pub async fn key_spend_since(pool: &PgPool, key_id: Uuid, since: DateTime<Utc>) 
     )
     .fetch_one(pool)
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Duration;
+
+    use super::*;
+
+    /// A request log entry `ago` before now, for `key`, as a call of `parent` when given.
+    async fn entry(pool: &PgPool, key: Uuid, ago: Duration, status: i32, cost: f64, parent: Option<Uuid>) -> (Uuid, DateTime<Utc>) {
+        let (id, ts) = (Uuid::now_v7(), Utc::now() - ago);
+        sqlx::query(
+            "INSERT INTO request_logs (id, ts, key_id, model_name, api, stream, status_code, latency_ms, cost_usd, parent_id)
+             VALUES ($1, $2, $3, 'm', 'chat', false, $4, 10, $5, $6)",
+        )
+        .bind(id)
+        .bind(ts)
+        .bind(key)
+        .bind(status)
+        .bind(cost)
+        .bind(parent)
+        .execute(pool)
+        .await
+        .unwrap();
+        (id, ts)
+    }
+
+    #[sqlx::test]
+    async fn spend_counts_a_keys_requests_since_the_start(pool: PgPool) {
+        let key = Uuid::now_v7();
+        let (router, _) = entry(&pool, key, Duration::hours(1), 200, 1.0, None).await;
+        // A routed call is already in its router entry's cost.
+        entry(&pool, key, Duration::hours(1), 200, 0.4, Some(router)).await;
+        entry(&pool, key, Duration::hours(48), 200, 5.0, None).await;
+        entry(&pool, Uuid::now_v7(), Duration::hours(1), 200, 7.0, None).await;
+        let spent = key_spend_since(&pool, key, Utc::now() - Duration::hours(24)).await.unwrap();
+        assert!((spent - 1.0).abs() < 1e-9, "{spent}");
+    }
+
+    #[sqlx::test]
+    async fn the_errors_only_log_lists_failures_newest_first(pool: PgPool) {
+        let key = Uuid::now_v7();
+        entry(&pool, key, Duration::minutes(3), 500, 0.0, None).await;
+        entry(&pool, key, Duration::minutes(2), 200, 0.0, None).await;
+        entry(&pool, key, Duration::minutes(1), 429, 0.0, None).await;
+        let f = LogFilter { limit: 10, errors_only: true, body_days: 7, ..Default::default() };
+        let statuses: Vec<i32> = recent_logs(&pool, &f).await.unwrap().iter().map(|r| r.status_code).collect();
+        assert_eq!(statuses, [429, 500]);
+    }
+
+    #[sqlx::test]
+    async fn retention_removes_old_entries_with_their_bodies(pool: PgPool) {
+        let key = Uuid::now_v7();
+        let (old, old_ts) = entry(&pool, key, Duration::days(40), 200, 0.0, None).await;
+        let (new, _) = entry(&pool, key, Duration::hours(1), 200, 0.0, None).await;
+        sqlx::query("INSERT INTO request_bodies (id, ts, request_bytes, response_bytes) VALUES ($1, $2, 1, 1)")
+            .bind(old)
+            .bind(old_ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (requests, _, _) = prune_logs(&pool, 30, 0, 60).await.unwrap();
+        assert_eq!(requests, 1);
+        let left: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM request_logs").fetch_all(&pool).await.unwrap();
+        assert_eq!(left, [new]);
+        let bodies: i64 = sqlx::query_scalar("SELECT count(*) FROM request_bodies").fetch_one(&pool).await.unwrap();
+        assert_eq!(bodies, 0);
+    }
 }

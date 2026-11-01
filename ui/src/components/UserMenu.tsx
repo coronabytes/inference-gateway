@@ -38,22 +38,22 @@ export function UserMenu({
     const outside = (e: MouseEvent) => {
       if (!root.current?.contains(e.target as Node)) setOpen(false);
     };
-    const escape = (e: KeyboardEvent) => {
+    const onEscape = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setOpen(false);
       button.current?.focus();
     };
     document.addEventListener("mousedown", outside);
-    document.addEventListener("keydown", escape);
+    document.addEventListener("keydown", onEscape);
     return () => {
       document.removeEventListener("mousedown", outside);
-      document.removeEventListener("keydown", escape);
+      document.removeEventListener("keydown", onEscape);
     };
   }, [open]);
 
   return (
     <div className="user-menu" ref={root}>
-      <button
+      <button type="button"
         ref={button}
         className={`icon-btn${open ? " open" : ""}`}
         onClick={() => setOpen((o) => !o)}
@@ -73,11 +73,11 @@ export function UserMenu({
             {session.role === "user" && <span className="muted small">User: sees only their projects</span>}
           </div>
           {(session.via === "dev" || session.via === "dev_user") && (
-            <button className="ghost user-pop-action" onClick={() => onSwitch(session.via === "dev" ? "user" : "admin")}>
+            <button type="button" className="ghost user-pop-action" onClick={() => onSwitch(session.via === "dev" ? "user" : "admin")}>
               {session.via === "dev" ? "Switch to user" : "Switch to admin"}
             </button>
           )}
-          <button className="ghost user-pop-action" onClick={onSignOut}>
+          <button type="button" className="ghost user-pop-action" onClick={onSignOut}>
             Sign out
           </button>
         </div>

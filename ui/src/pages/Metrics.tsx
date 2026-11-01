@@ -159,7 +159,7 @@ export function Metrics() {
                 {usedModels.map((m) => (
                   <tr key={m.model} className={modelFilter.includes(m.model) ? "selected" : ""}>
                     <td>
-                      <button className="link" onClick={() => toggleModel(m.model)}>
+                      <button type="button" className="link" onClick={() => toggleModel(m.model)}>
                         {m.model}
                       </button>
                     </td>

@@ -33,6 +33,7 @@ export function VendorLogo({ vendor, fallback }: { vendor: string; fallback: str
     );
   }
   // Our own files, checked in: no scripts, only shapes.
+  // biome-ignore lint/security/noDangerouslySetInnerHtml: our own checked-in SVG files.
   return <span className="vendor-mark logo" aria-hidden="true" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
@@ -40,5 +41,6 @@ export function VendorLogo({ vendor, fallback }: { vendor: string; fallback: str
 export function VendorIcon({ vendor }: { vendor: string }) {
   const svg = FILES[`../assets/vendors/${LOGO[vendor]}.svg`];
   if (!svg) return <span className="vendor-icon letter">{vendor.charAt(0).toUpperCase()}</span>;
+  // biome-ignore lint/security/noDangerouslySetInnerHtml: our own checked-in SVG files.
   return <span className="vendor-icon" dangerouslySetInnerHTML={{ __html: svg }} />;
 }

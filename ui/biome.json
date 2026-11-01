@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": { "includes": ["src/**/*.ts", "src/**/*.tsx", "scripts/**", "vite.config.ts"] },
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noArrayIndexKey": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
+      },
+      "complexity": {
+        "noCommaOperator": "off"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "off"
+      },
+      "a11y": {
+        "useSemanticElements": "off",
+        "noNoninteractiveElementToInteractiveRole": "off",
+        "useKeyWithClickEvents": "off",
+        "noStaticElementInteractions": "off",
+        "useFocusableInteractive": "off",
+        "noAutofocus": "off",
+        "useAriaPropsSupportedByRole": "off",
+        "noAriaHiddenOnFocusable": "off",
+        "noLabelWithoutControl": "off",
+        "noNoninteractiveTabindex": "off"
+      }
+    }
+  }
+}

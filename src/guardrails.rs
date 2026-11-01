@@ -894,7 +894,7 @@ mod tests {
         let all = GuardrailConfig { block: MODEL_ARMOR_FILTERS.iter().map(|f| f.to_string()).collect(), ..Default::default() };
         let texts = |n: usize| (0..n).map(|i| format!("text {i}")).collect::<Vec<_>>();
 
-        let r = parse_model_armor(&[blocked.clone()], &texts(1), &all, &prices).unwrap();
+        let r = parse_model_armor(std::slice::from_ref(&blocked), &texts(1), &all, &prices).unwrap();
         assert_eq!(r.action, Action::Blocked);
         assert_eq!(r.outputs, ["The request was blocked by Model Armor (rai, pi_and_jailbreak)."]);
         assert_eq!(r.findings[0].confidence.as_deref(), Some("MEDIUM_AND_ABOVE"));

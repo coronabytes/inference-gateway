@@ -7,8 +7,7 @@ export async function* sse(res: Response): AsyncGenerator<{ event?: string; data
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-    let i;
-    while ((i = buf.indexOf("\n\n")) >= 0) {
+    for (let i = buf.indexOf("\n\n"); i >= 0; i = buf.indexOf("\n\n")) {
       const raw = buf.slice(0, i);
       buf = buf.slice(i + 2);
       let event: string | undefined;

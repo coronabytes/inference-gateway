@@ -640,7 +640,7 @@ export function Models() {
                             : `${drift.expected.input_cost_per_mtok} · ${drift.expected.output_cost_per_mtok}`}
                           {d.mode === "chat" && drift.fields.includes("cost_per_k_searches") && `, ${drift.expected.cost_per_k_searches ?? 0} per 1K web searches`}
                         </span>
-                        <button className="accept" onClick={() => acceptPrice(d, drift)} aria-label={`Accept catalog prices for ${d.upstream_model}`}>
+                        <button type="button" className="accept" onClick={() => acceptPrice(d, drift)} aria-label={`Accept catalog prices for ${d.upstream_model}`}>
                           Accept
                         </button>
                       </div>
