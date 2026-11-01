@@ -41,10 +41,21 @@ pub async fn connect(url: &str, max_connections: u32) -> Result<PgPool, sqlx::Er
         PgPoolOptions::new().max_connections(max_connections).acquire_timeout(std::time::Duration::from_secs(10)).connect(url).await?;
     // sqlx takes a Postgres advisory lock, so concurrent replicas migrate safely.
     MIGRATOR.run(&pool).await?;
+    ensure_log_partitions(&pool).await?;
     Ok(pool)
 }
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+/// Days of request log partitions kept ready ahead of today (see migration 0016).
+const LOG_PARTITIONS_AHEAD: i32 = 7;
+
+/// Creates the request log's daily partitions from today to `LOG_PARTITIONS_AHEAD` days on, so
+/// entries always have one to go to. Run at startup and with every retention run.
+async fn ensure_log_partitions(db: impl PgExecutor<'_>) -> sqlx::Result<()> {
+    sqlx::query_scalar!("SELECT gw_request_log_partitions($1)", LOG_PARTITIONS_AHEAD).fetch_one(db).await?;
+    Ok(())
+}
 
 pub async fn list_deployments(pool: &PgPool) -> sqlx::Result<Vec<DeploymentRow>> {
     sqlx::query_as!(
@@ -2739,9 +2750,18 @@ pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32, body_
         return Ok((0, 0, 0));
     }
     let result = async {
-        // In chunks, so one delete does not hold locks long: each entry updates several indexes,
-        // and its bodies go with it.
+        ensure_log_partitions(&mut *conn).await?;
+        // Whole days drop with their partition; what remains older (the legacy partition, and
+        // the start of the newest expired day) is deleted in chunks, so one delete does not hold
+        // locks long: each entry updates several indexes, and its bodies go with it.
         let mut requests = 0;
+        if request_days > 0 {
+            let dropped =
+                sqlx::query_scalar!("SELECT gw_drop_request_log_partitions(now() - make_interval(days => $1))", request_days as i32)
+                    .fetch_one(&mut *conn)
+                    .await?;
+            requests += dropped.unwrap_or(0) as u64;
+        }
         while request_days > 0 {
             let n = sqlx::query!(
                 "DELETE FROM request_logs WHERE id IN (
