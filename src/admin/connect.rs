@@ -65,7 +65,7 @@ async fn take(state: &AppState, id: &str) -> R<Pending> {
 #[utoipa::path(get, path = "/connect/{id}", operation_id = "connect_request", tag = "MCP client sign-in", params(("id" = String, Path)),
     responses(
         (status = 200, description = "The request.", body = ConnectRequest),
-        (status = 404, description = "Expired or answered already.", body = crate::openapi::AdminError),
+        (status = 404, description = "Expired or answered already.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn get_request(State(state): State<AppState>, Path(id): Path<String>) -> R<Json<ConnectRequest>> {
@@ -104,8 +104,8 @@ pub(crate) struct ConnectAnswer {
     request_body = ApproveInput,
     responses(
         (status = 200, description = "Back to the client, with its code.", body = ConnectAnswer),
-        (status = 400, description = "The key cannot be used.", body = crate::openapi::AdminError),
-        (status = 404, description = "Expired or answered already, or no such key.", body = crate::openapi::AdminError),
+        (status = 400, description = "The key cannot be used.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "Expired or answered already, or no such key.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn approve(
@@ -134,7 +134,7 @@ pub(crate) async fn approve(
 #[utoipa::path(post, path = "/connect/{id}/deny", operation_id = "connect_deny", tag = "MCP client sign-in", params(("id" = String, Path)),
     responses(
         (status = 200, description = "Back to the client, with access_denied.", body = ConnectAnswer),
-        (status = 404, description = "Expired or answered already.", body = crate::openapi::AdminError),
+        (status = 404, description = "Expired or answered already.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn deny(State(state): State<AppState>, Path(id): Path<String>) -> R<Json<ConnectAnswer>> {
@@ -148,7 +148,7 @@ pub(crate) async fn deny(State(state): State<AppState>, Path(id): Path<String>) 
 #[utoipa::path(get, path = "/keys/{id}/apps", operation_id = "key_apps", tag = "MCP client sign-in", params(("id" = Uuid, Path)),
     responses(
         (status = 200, description = "The key's grants, newest first.", body = Vec<crate::oauth::server::ClientGrant>),
-        (status = 404, description = "No such key, or not one of the caller's.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such key, or not one of the caller's.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_apps(
@@ -167,7 +167,7 @@ pub(crate) async fn list_apps(
 #[utoipa::path(delete, path = "/keys/{id}/apps/{grant}", operation_id = "key_revoke_app", tag = "MCP client sign-in", params(("id" = Uuid, Path), ("grant" = Uuid, Path)),
     responses(
         (status = 204, description = "Revoked."),
-        (status = 404, description = "No such grant for the key.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such grant for the key.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn revoke_app(

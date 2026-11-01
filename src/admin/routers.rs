@@ -231,8 +231,8 @@ pub(super) async fn list_routers(State(state): State<AppState>, Query(q): Query<
 #[utoipa::path(post, path = "/routers", tag = "Auto routers", request_body = RouterInput,
     responses(
         (status = 201, description = "The new router.", body = RouterView),
-        (status = 400, description = "Invalid router.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid router.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_router(
@@ -255,8 +255,8 @@ pub(super) async fn create_router(
     request_body = RouterInput,
     responses(
         (status = 200, description = "The router.", body = RouterView),
-        (status = 400, description = "Invalid router.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such router.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid router.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such router.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_router(
@@ -284,7 +284,7 @@ pub(super) async fn update_router(
 
 /// Delete auto router
 #[utoipa::path(delete, path = "/routers/{id}", tag = "Auto routers", params(("id" = Uuid, Path)),
-    responses((status = 204, description = "Deleted."), (status = 404, description = "No such router.", body = crate::openapi::AdminError)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such router.", body = crate::error::AdminErrorBody)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_router(
     State(state): State<AppState>,

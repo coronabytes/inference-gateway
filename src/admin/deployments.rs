@@ -367,7 +367,7 @@ pub(crate) struct DeploymentQuery {
 #[utoipa::path(get, path = "/deployments", tag = "Deployments", params(DeploymentQuery),
     responses(
         (status = 200, description = "The deployments.", body = Vec<DeploymentView>),
-        (status = 400, description = "An unknown mode, or a filter that is not ids.", body = crate::openapi::AdminError),
+        (status = 400, description = "An unknown mode, or a filter that is not ids.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_deployments(State(state): State<AppState>, Query(q): Query<DeploymentQuery>) -> R<Json<Vec<DeploymentView>>> {
@@ -400,7 +400,7 @@ pub(super) async fn list_deployments(State(state): State<AppState>, Query(q): Qu
 #[utoipa::path(get, path = "/deployments/{id}", tag = "Deployments", params(("id" = Uuid, Path)),
     responses(
         (status = 200, description = "The deployment.", body = DeploymentView),
-        (status = 404, description = "No such deployment.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such deployment.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn get_deployment(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<DeploymentView>> {
@@ -413,7 +413,7 @@ pub(super) async fn get_deployment(State(state): State<AppState>, Path(id): Path
 #[utoipa::path(post, path = "/deployments", tag = "Deployments", request_body = DeploymentInput,
     responses(
         (status = 201, description = "The new deployment.", body = DeploymentView),
-        (status = 400, description = "Invalid deployment.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid deployment.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_deployment(
@@ -440,8 +440,8 @@ pub(super) async fn create_deployment(
     request_body = DeploymentInput,
     responses(
         (status = 200, description = "The deployment.", body = DeploymentView),
-        (status = 400, description = "Invalid deployment.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such deployment.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid deployment.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such deployment.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_deployment(
@@ -555,7 +555,7 @@ fn rename_in_router(r: &mut RouterRow, old: &str, new: &str) -> bool {
 
 /// Delete deployment
 #[utoipa::path(delete, path = "/deployments/{id}", tag = "Deployments", params(("id" = Uuid, Path)),
-    responses((status = 204, description = "Deleted."), (status = 404, description = "No such deployment.", body = crate::openapi::AdminError)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such deployment.", body = crate::error::AdminErrorBody)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_deployment(
     State(state): State<AppState>,
@@ -592,11 +592,11 @@ pub(super) async fn clear_cooldown(State(state): State<AppState>, Extension(acto
 /// Sends a tiny request through the deployment, bypassing routing.
 #[utoipa::path(post, path = "/deployments/{id}/test", tag = "Deployments", params(("id" = Uuid, Path)),
     responses(
-        (status = 200, description = "The result.", body = crate::openapi::DeploymentTest),
-        (status = 400, description = "The deployment is disabled or misconfigured.", body = crate::openapi::AdminError),
+        (status = 200, description = "The result.", body = DeploymentTest),
+        (status = 400, description = "The deployment is disabled or misconfigured.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
-pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<Value>> {
+pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<DeploymentTest>> {
     let snap = state.registry.snapshot();
     let d = snap
         .deployments
@@ -610,13 +610,8 @@ pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Pat
         let result = crate::api::embeddings::probe(&state, &d).await;
         let latency_ms = start.elapsed().as_millis() as u64;
         return Ok(Json(match result {
-            Ok((dims, usage)) => json!({
-                "ok": true,
-                "latency_ms": latency_ms,
-                "text": format!("{dims} dimensions"),
-                "usage": { "input_tokens": usage.input_tokens, "output_tokens": 0 },
-            }),
-            Err(e) => json!({ "ok": false, "latency_ms": latency_ms, "status": e.status.as_u16(), "error": e.message }),
+            Ok((dims, usage)) => DeploymentTest::passed(latency_ms, format!("{dims} dimensions"), Some(usage.input_tokens), Some(0)),
+            Err(e) => DeploymentTest::failed(latency_ms, e),
         }));
     }
     if d.mode == Mode::Rerank {
@@ -624,14 +619,12 @@ pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Pat
         let result = crate::api::rerank::probe(&state, &d).await;
         let latency_ms = start.elapsed().as_millis() as u64;
         return Ok(Json(match result {
-            Ok((best, score, usage)) => json!({
-                "ok": true,
-                "latency_ms": latency_ms,
+            Ok((best, score, usage)) => {
                 // The second document answers the question.
-                "text": format!("{} first (score {score:.3})", if best == 1 { "relevant document" } else { "unrelated document" }),
-                "usage": { "input_tokens": usage.input_tokens, "output_tokens": 0 },
-            }),
-            Err(e) => json!({ "ok": false, "latency_ms": latency_ms, "status": e.status.as_u16(), "error": e.message }),
+                let first = if best == 1 { "relevant document" } else { "unrelated document" };
+                DeploymentTest::passed(latency_ms, format!("{first} first (score {score:.3})"), Some(usage.input_tokens), Some(0))
+            }
+            Err(e) => DeploymentTest::failed(latency_ms, e),
         }));
     }
     if d.mode == Mode::Decision {
@@ -639,13 +632,13 @@ pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Pat
         let result = crate::api::decisions::probe(&state, &d).await;
         let latency_ms = start.elapsed().as_millis() as u64;
         return Ok(Json(match result {
-            Ok(r) => json!({
-                "ok": true,
-                "latency_ms": latency_ms,
-                "text": format!("reachable: {}", r.pointer("/answers/reachable/noul").and_then(Value::as_f64).unwrap_or_default()),
-                "usage": { "input_tokens": r.pointer("/usage/input_tokens"), "output_tokens": r.pointer("/usage/output_tokens") },
-            }),
-            Err(e) => json!({ "ok": false, "latency_ms": latency_ms, "status": e.status.as_u16(), "error": e.message }),
+            Ok(r) => DeploymentTest::passed(
+                latency_ms,
+                format!("reachable: {}", r.pointer("/answers/reachable/noul").and_then(Value::as_f64).unwrap_or_default()),
+                r.pointer("/usage/input_tokens").and_then(Value::as_u64),
+                r.pointer("/usage/output_tokens").and_then(Value::as_u64),
+            ),
+            Err(e) => DeploymentTest::failed(latency_ms, e),
         }));
     }
     let req = ChatRequest {
@@ -668,20 +661,70 @@ pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Pat
     .await;
     let latency_ms = start.elapsed().as_millis() as u64;
     Ok(Json(match result {
-        Ok(r) => json!({
-            "ok": true,
-            "latency_ms": latency_ms,
-            "text": crate::util::truncate(&crate::ir::parts_text(&r.content), 200),
-            "usage": { "input_tokens": r.usage.total_input(), "output_tokens": r.usage.output_tokens },
-        }),
-        Err(e) => json!({ "ok": false, "latency_ms": latency_ms, "status": e.status.as_u16(), "error": e.message }),
+        Ok(r) => DeploymentTest::passed(
+            latency_ms,
+            crate::util::truncate(&crate::ir::parts_text(&r.content), 200),
+            Some(r.usage.total_input()),
+            Some(r.usage.output_tokens),
+        ),
+        Err(e) => DeploymentTest::failed(latency_ms, e),
     }))
+}
+
+/// A deployment test: `text` and `usage` when it passed, `status` and `error` when it failed.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct DeploymentTest {
+    ok: bool,
+    latency_ms: u64,
+    /// The model's reply (chat), dimensions (embeddings), the ranking (rerank) or an answer (decisions).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    usage: Option<TestUsage>,
+    /// The HTTP status of a failed test.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    error: Option<String>,
+}
+
+/// The tokens a passed test used; null where a decision model did not say.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct TestUsage {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+}
+
+impl DeploymentTest {
+    fn passed(latency_ms: u64, text: String, input_tokens: Option<u64>, output_tokens: Option<u64>) -> Self {
+        let usage = Some(TestUsage { input_tokens, output_tokens });
+        Self { ok: true, latency_ms, text: Some(text), usage, status: None, error: None }
+    }
+
+    fn failed(latency_ms: u64, e: crate::error::GatewayError) -> Self {
+        Self { ok: false, latency_ms, text: None, usage: None, status: Some(e.status.as_u16()), error: Some(e.message) }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::Route;
+
+    #[test]
+    fn test_results_send_only_their_fields() {
+        let passed = DeploymentTest::passed(5, "OK".into(), Some(3), None);
+        assert_eq!(
+            serde_json::to_value(passed).unwrap(),
+            json!({ "ok": true, "latency_ms": 5, "text": "OK", "usage": { "input_tokens": 3, "output_tokens": null } })
+        );
+        let failed = DeploymentTest::failed(7, crate::error::GatewayError::invalid("bad"));
+        assert_eq!(serde_json::to_value(failed).unwrap(), json!({ "ok": false, "latency_ms": 7, "status": 400, "error": "bad" }));
+    }
 
     #[test]
     fn routers_follow_renames() {

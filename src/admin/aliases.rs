@@ -151,8 +151,8 @@ pub(super) async fn list_aliases(State(state): State<AppState>, Query(q): Query<
 #[utoipa::path(post, path = "/aliases", tag = "Model aliases", request_body = AliasInput,
     responses(
         (status = 201, description = "The new alias.", body = AliasView),
-        (status = 400, description = "Invalid alias, or the model name is taken.", body = crate::openapi::AdminError),
-        (status = 409, description = "An alias with that name exists.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid alias, or the model name is taken.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "An alias with that name exists.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_alias(
@@ -179,9 +179,9 @@ pub(super) async fn create_alias(
     request_body = AliasInput,
     responses(
         (status = 200, description = "The alias.", body = AliasView),
-        (status = 400, description = "Invalid alias, or the model name is taken.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such alias.", body = crate::openapi::AdminError),
-        (status = 409, description = "Another alias has that name.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid alias, or the model name is taken.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such alias.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "Another alias has that name.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_alias(
@@ -211,7 +211,7 @@ pub(super) async fn update_alias(
 
 /// Delete model alias
 #[utoipa::path(delete, path = "/aliases/{id}", tag = "Model aliases", params(("id" = Uuid, Path)),
-    responses((status = 204, description = "Deleted."), (status = 404, description = "No such alias.", body = crate::openapi::AdminError)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such alias.", body = crate::error::AdminErrorBody)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_alias(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
     let existing = db::get_alias(&state.db, id).await?.ok_or_else(AdminError::not_found)?;

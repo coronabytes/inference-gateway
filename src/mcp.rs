@@ -203,10 +203,10 @@ const MAX_READ: usize = 8 * 1024 * 1024;
     responses(
         (status = 200, description = "The server's answer.", content((Object = "application/json"), (String = "text/event-stream"))),
         (status = 202, description = "Accepted: notifications and responses have no answer."),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
-        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::openapi::OpenAiError),
-        (status = 429, description = "A rate limit or the key's budget, for a tool call; see `Retry-After`.", body = crate::openapi::OpenAiError),
-        (status = 502, description = "The server failed, or refused the gateway's credentials.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget, for a tool call; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The server failed, or refused the gateway's credentials.", body = crate::error::OpenAiError),
     ),
     params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = crate::openapi::MCP_SESSION),
         ("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
@@ -231,7 +231,7 @@ pub async fn proxy(
     responses(
         (status = 200, description = "The server's messages.", content((String = "text/event-stream"))),
         (status = 405, description = "The server does not offer this stream."),
-        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::openapi::OpenAiError),
+        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::error::OpenAiError),
     ),
     params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = crate::openapi::MCP_SESSION)),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
@@ -250,7 +250,7 @@ pub async fn proxy_get(
 #[utoipa::path(delete, path = "/mcp/{server}", operation_id = "mcp_delete", tag = "MCP",
     responses(
         (status = 200, description = "The session ended."),
-        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::openapi::OpenAiError),
+        (status = 404, description = "No such server for this key, or an unknown session.", body = crate::error::OpenAiError),
     ),
     params(("server" = String, Path), ("mcp-session-id" = Option<String>, Header, description = crate::openapi::MCP_SESSION)),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]

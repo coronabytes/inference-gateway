@@ -76,7 +76,7 @@ fn refuse(e: GatewayError) -> Response {
 #[utoipa::path(get, path = "/v1/oauth/sign-ins", operation_id = "list_sign_ins", tag = "Upstream OAuth",
     responses(
         (status = 200, description = "The upstreams.", body = SignInList),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
     ),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn list(State(state): State<AppState>, ClientKey(key): ClientKey, ClientLabels(labels): ClientLabels) -> Response {
@@ -126,8 +126,8 @@ pub struct Link {
 #[utoipa::path(post, path = "/v1/oauth/sign-ins", operation_id = "sign_in_link", tag = "Upstream OAuth", request_body = LinkInput,
     responses(
         (status = 200, description = "The link.", body = Link),
-        (status = 400, description = "The request lacks a label the upstream keeps sign-ins by.", body = crate::openapi::OpenAiError),
-        (status = 404, description = "No such upstream for this key that keeps a sign-in per tenant or user.", body = crate::openapi::OpenAiError),
+        (status = 400, description = "The request lacks a label the upstream keeps sign-ins by.", body = crate::error::OpenAiError),
+        (status = 404, description = "No such upstream for this key that keeps a sign-in per tenant or user.", body = crate::error::OpenAiError),
     ),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn link(
@@ -158,7 +158,7 @@ pub async fn link(
     params(("kind" = String, Path, description = "`mcp` or `a2a`."), ("name" = String, Path)),
     responses(
         (status = 204, description = "Signed out."),
-        (status = 404, description = "They had not signed in.", body = crate::openapi::OpenAiError),
+        (status = 404, description = "They had not signed in.", body = crate::error::OpenAiError),
     ),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn sign_out(

@@ -67,7 +67,7 @@ static SERVICE: LazyLock<StreamableHttpService<Hub, LocalSessionManager>> = Lazy
     responses(
         (status = 200, description = "The gateway's answer.", content((Object = "application/json"))),
         (status = 202, description = "Accepted: notifications and responses have no answer."),
-        (status = 401, description = "Missing, invalid, disabled or expired key or token; `WWW-Authenticate` names the protected resource metadata.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key or token; `WWW-Authenticate` names the protected resource metadata.", body = crate::error::OpenAiError),
     ),
     params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]

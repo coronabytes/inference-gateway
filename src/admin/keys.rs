@@ -168,19 +168,36 @@ async fn known_tags(state: &AppState) -> R<BTreeMap<String, (usize, usize, usize
 /// Every tag on deployments, routers and MCP servers, and those keys still hold, with how many
 /// of each carry it.
 #[utoipa::path(get, path = "/tags", tag = "Configuration",
-    responses((status = 200, description = "The tags.", body = Vec<crate::openapi::TagUsage>)),
+    responses((status = 200, description = "The tags.", body = Vec<TagUsage>)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
-pub(super) async fn list_tags(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Value>> {
+pub(super) async fn list_tags(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<TagUsage>>> {
     let (tags, held) = tokio::try_join!(known_tags(&state), async { Ok(db::key_tag_counts(&state.db, access.projects()).await?) })?;
     // Tags only keys still hold, once nothing carries them any more, come last.
-    let mut out: Vec<Value> =
-        tags.iter()
-            .map(|(tag, (d, r, m))| json!({ "tag": tag, "deployments": d, "routers": r, "mcp_servers": m, "keys": held.get(tag).copied().unwrap_or(0) }))
-            .collect();
+    let mut out: Vec<TagUsage> = tags
+        .iter()
+        .map(|(tag, &(deployments, routers, mcp_servers))| {
+            let keys = held.get(tag).copied().unwrap_or(0);
+            TagUsage { tag: tag.clone(), deployments, routers, mcp_servers, keys }
+        })
+        .collect();
     let mut orphans: Vec<(&String, &i64)> = held.iter().filter(|(t, _)| !tags.contains_key(*t)).collect();
     orphans.sort();
-    out.extend(orphans.into_iter().map(|(tag, n)| json!({ "tag": tag, "deployments": 0, "routers": 0, "mcp_servers": 0, "keys": n })));
-    Ok(Json(json!(out)))
+    out.extend(orphans.into_iter().map(|(tag, &keys)| TagUsage { tag: tag.clone(), deployments: 0, routers: 0, mcp_servers: 0, keys }));
+    Ok(Json(out))
+}
+
+/// A tag, with how many of each carry it.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct TagUsage {
+    tag: String,
+    /// Deployments carrying the tag.
+    deployments: usize,
+    /// Auto routers carrying the tag.
+    routers: usize,
+    /// MCP servers and A2A agents carrying the tag.
+    mcp_servers: usize,
+    /// Keys holding the tag (for a user, their projects' keys).
+    keys: i64,
 }
 
 /// A key's tags, normalized. Keys only pick tags that deployments, routers or MCP servers define;
@@ -239,7 +256,7 @@ pub(crate) struct KeyQuery {
 #[utoipa::path(get, path = "/keys", tag = "Virtual keys", params(KeyQuery),
     responses(
         (status = 200, description = "The keys.", body = Vec<KeyView>),
-        (status = 400, description = "A project filter that is not ids.", body = crate::openapi::AdminError),
+        (status = 400, description = "A project filter that is not ids.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_keys(
@@ -314,8 +331,8 @@ pub(super) async fn project_options(State(state): State<AppState>, Extension(acc
 /// The answer holds its secret, this once; the gateway keeps only a hash.
 #[utoipa::path(post, path = "/keys", tag = "Virtual keys", request_body = KeyInput,
     responses(
-        (status = 201, description = "The new key and its secret.", body = crate::openapi::KeyCreated),
-        (status = 400, description = "Invalid key.", body = crate::openapi::AdminError),
+        (status = 201, description = "The new key and its secret.", body = KeyCreated),
+        (status = 400, description = "Invalid key.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_key(
@@ -323,7 +340,7 @@ pub(super) async fn create_key(
     Extension(actor): Extension<Actor>,
     Extension(access): Extension<Access>,
     Json(i): Json<KeyInput>,
-) -> R<(StatusCode, Json<Value>)> {
+) -> R<(StatusCode, Json<KeyCreated>)> {
     validate_key(&i)?;
     check_user_key(&access, &i)?;
     let project_active = check_project(&state, i.project_id).await?;
@@ -364,7 +381,14 @@ pub(super) async fn create_key(
     tracing::info!(key = %k.id, name = %k.name, scope = k.scope.as_str(), "virtual key created");
     audit::Event::new("key", "create").on(k.id, &k.name).details(audit::snapshot(&k)).record(&state, &actor).await;
     // The plaintext key is returned exactly once and never stored.
-    Ok((StatusCode::CREATED, Json(json!({ "key": secret, "record": k }))))
+    Ok((StatusCode::CREATED, Json(KeyCreated { key: secret, record: k })))
+}
+
+/// A new key. `key` is the secret, shown this once; the gateway keeps only its hash.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct KeyCreated {
+    key: String,
+    record: VirtualKey,
 }
 
 /// Update virtual key
@@ -372,8 +396,8 @@ pub(super) async fn create_key(
     request_body = KeyInput,
     responses(
         (status = 200, description = "The key.", body = crate::model::VirtualKey),
-        (status = 400, description = "Invalid key.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid key.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such key.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_key(
@@ -425,7 +449,7 @@ pub(super) async fn update_key(
 
 /// Delete virtual key
 #[utoipa::path(delete, path = "/keys/{id}", tag = "Virtual keys", params(("id" = Uuid, Path)),
-    responses((status = 204, description = "Deleted."), (status = 404, description = "No such key.", body = crate::openapi::AdminError)),
+    responses((status = 204, description = "Deleted."), (status = 404, description = "No such key.", body = crate::error::AdminErrorBody)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_key(
     State(state): State<AppState>,
@@ -449,8 +473,8 @@ pub(super) async fn delete_key(
 /// Gives the key a new secret. It keeps its settings, spend and history.
 #[utoipa::path(post, path = "/keys/{id}/regenerate", tag = "Virtual keys", params(("id" = Uuid, Path)),
     responses(
-        (status = 200, description = "The new secret.", body = crate::openapi::KeyRegenerated),
-        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+        (status = 200, description = "The new secret.", body = KeyRegenerated),
+        (status = 404, description = "No such key.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 // The old secret stops working as soon as each replica reloads.
@@ -459,7 +483,7 @@ pub(super) async fn regenerate_key(
     Extension(actor): Extension<Actor>,
     Extension(access): Extension<Access>,
     Path(id): Path<Uuid>,
-) -> R<Json<Value>> {
+) -> R<Json<KeyRegenerated>> {
     let k = db::get_key(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     check_sees_key(&access, &k)?;
     let (secret, hash, prefix) = crate::auth::generate_key();
@@ -471,7 +495,14 @@ pub(super) async fn regenerate_key(
     let details = json!({ "key_prefix": { "from": k.key_prefix, "to": prefix } });
     audit::Event::new("key", "regenerate").on(id, k.name).details(details).record(&state, &actor).await;
     // As on create, the plaintext key is returned exactly once and never stored.
-    Ok(Json(json!({ "key": secret, "key_prefix": prefix })))
+    Ok(Json(KeyRegenerated { key: secret, key_prefix: prefix }))
+}
+
+/// A key's new secret, shown this once. The old one stops working.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct KeyRegenerated {
+    key: String,
+    key_prefix: String,
 }
 
 /// Reset spend

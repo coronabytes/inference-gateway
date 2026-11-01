@@ -353,8 +353,8 @@ fn hub_deployments(ds: &[&Deployment]) -> Vec<HubDeployment> {
 #[utoipa::path(get, path = "/hub", operation_id = "model_hub", tag = "Model hub", params(HubQuery),
     responses(
         (status = 200, description = "The models.", body = HubView),
-        (status = 400, description = "No such key, or an unknown mode.", body = crate::openapi::AdminError),
-        (status = 403, description = "A key whose scope is the inference API asked for another key.", body = crate::openapi::AdminError),
+        (status = 400, description = "No such key, or an unknown mode.", body = crate::error::AdminErrorBody),
+        (status = 403, description = "A key whose scope is the inference API asked for another key.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("virtual_key" = []), ("admin_session" = [])))]
 pub(crate) async fn hub(
@@ -561,7 +561,7 @@ pub(super) fn check_metadata(mut m: Map<String, Value>) -> R<Map<String, Value>>
 #[utoipa::path(put, path = "/model-metadata", operation_id = "set_model_metadata", tag = "Model hub", request_body = MetadataInput,
     responses(
         (status = 200, description = "The stored metadata.", body = MetadataView),
-        (status = 400, description = "Invalid metadata, or no such model.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid metadata, or no such model.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn set_metadata(

@@ -345,8 +345,8 @@ fn candidates(provider: ProviderKind, model: &str) -> Vec<String> {
 #[utoipa::path(post, path = "/prices/import", operation_id = "import_prices", tag = "Price catalog",
     responses(
         (status = 200, description = "What changed.", body = ImportSummary),
-        (status = 400, description = "The download failed.", body = crate::openapi::AdminError),
-        (status = 409, description = "An import is running already.", body = crate::openapi::AdminError),
+        (status = 400, description = "The download failed.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "An import is running already.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn import(State(state): State<AppState>, Extension(actor): Extension<Actor>) -> R<Json<Value>> {

@@ -145,7 +145,7 @@ pub(crate) static LOG_SCANS: std::sync::LazyLock<tokio::sync::Semaphore> = std::
 #[utoipa::path(get, path = "/metrics", tag = "Usage", params(RangeQuery),
     responses(
         (status = 200, description = "Totals and series for the range.", body = Object),
-        (status = 400, description = "Invalid range.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid range.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 // Metrics come from the request log in Postgres, so they cover its whole retention and every replica's traffic.

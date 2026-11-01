@@ -46,7 +46,6 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use serde_json::json;
 use tower_http::{
     services::{ServeDir, ServeFile},
     set_header::SetResponseHeaderLayer,
@@ -365,12 +364,20 @@ async fn connect_db(cfg: &Config) -> Result<sqlx::PgPool, String> {
 /// Postgres answers and the configuration is loaded. Valkey is reported but not required;
 /// without it, limits are not enforced.
 #[utoipa::path(get, path = "/health/ready", operation_id = "health_ready", tag = "Health",
-    responses((status = 200, description = "Ready.", body = crate::openapi::Ready), (status = 503, description = "Not ready.", body = crate::openapi::Ready)))]
+    responses((status = 200, description = "Ready.", body = Ready), (status = 503, description = "Not ready.", body = Ready)))]
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     let (pg, valkey) = tokio::join!(db::ping(&state.db), state.cache.ping());
     let loaded = state.registry.snapshot().loaded_at.is_some();
     let status = if pg && loaded { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
-    (status, Json(json!({ "postgres": pg, "valkey": valkey, "registry_loaded": loaded })))
+    (status, Json(Ready { postgres: pg, valkey, registry_loaded: loaded }))
+}
+
+/// What readiness depends on, and whether each is there.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct Ready {
+    postgres: bool,
+    valkey: bool,
+    registry_loaded: bool,
 }
 
 async fn shutdown_signal() {

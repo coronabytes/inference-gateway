@@ -61,7 +61,7 @@ pub(crate) struct DiscoverInput {
 #[utoipa::path(post, path = "/oauth/discover", operation_id = "oauth_discover", tag = "Upstream OAuth", request_body = DiscoverInput,
     responses(
         (status = 200, description = "What was found.", body = crate::oauth::Discovered),
-        (status = 400, description = "Nothing found, or registration refused.", body = crate::openapi::AdminError),
+        (status = 400, description = "Nothing found, or registration refused.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 // The client's redirect URI is the gateway's address as the console reaches it.
@@ -170,7 +170,7 @@ fn slot_for(client: &oauth::Client, key: Uuid, labels: Option<&str>) -> R<Slot> 
 #[utoipa::path(get, path = "/keys/{id}/connections", operation_id = "key_connections", tag = "Upstream OAuth", params(("id" = Uuid, Path)),
     responses(
         (status = 200, description = "The upstreams.", body = Vec<Connection>),
-        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such key.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_connections(
@@ -273,7 +273,7 @@ pub(crate) struct SignIns {
     params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path), SignInsQuery),
     responses(
         (status = 200, description = "The sign-ins.", body = SignIns),
-        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such key.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_sign_ins(
@@ -357,7 +357,7 @@ pub(crate) struct ConnectStart {
     params(("id" = Uuid, Path), ("kind" = String, Path, description = "`mcp` or `a2a`."), ("upstream" = Uuid, Path), ConnectQuery),
     responses(
         (status = 200, description = "Where to send the browser.", body = ConnectStart),
-        (status = 404, description = "No such key, or no such upstream for it that signs keys in.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such key, or no such upstream for it that signs keys in.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn connect(
@@ -426,7 +426,7 @@ pub(crate) struct DisconnectQuery {
     params(("id" = Uuid, Path), ("kind" = String, Path), ("upstream" = Uuid, Path), DisconnectQuery),
     responses(
         (status = 204, description = "Signed out."),
-        (status = 404, description = "The key had not signed in.", body = crate::openapi::AdminError),
+        (status = 404, description = "The key had not signed in.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn disconnect(

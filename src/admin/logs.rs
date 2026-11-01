@@ -154,7 +154,7 @@ pub(crate) struct BodiesView {
     params(("id" = Uuid, Path, description = "Request log entry id")),
     responses(
         (status = 200, description = "The stored bodies.", body = BodiesView),
-        (status = 404, description = "No stored bodies, or not the caller's project.", body = crate::openapi::AdminError),
+        (status = 404, description = "No stored bodies, or not the caller's project.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 // An entry the caller may not see looks like one without bodies.
@@ -193,7 +193,7 @@ pub(crate) struct DeletedBodies {
 /// Count a key's stored prompts
 #[utoipa::path(get, path = "/keys/{id}/bodies", tag = "Virtual keys",
     params(("id" = Uuid, Path, description = "Key id")),
-    responses((status = 200, description = "How many are stored.", body = StoredBodies), (status = 404, description = "No such key.", body = crate::openapi::AdminError)),
+    responses((status = 200, description = "How many are stored.", body = StoredBodies), (status = 404, description = "No such key.", body = crate::error::AdminErrorBody)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn key_bodies(
     State(state): State<AppState>,
@@ -213,8 +213,8 @@ pub(super) async fn key_bodies(
     params(("id" = Uuid, Path, description = "Key id")),
     responses(
         (status = 200, description = "How many were deleted.", body = DeletedBodies),
-        (status = 404, description = "No such key.", body = crate::openapi::AdminError),
-        (status = 409, description = "Already being deleted.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such key.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "Already being deleted.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_key_bodies(
@@ -233,7 +233,7 @@ pub(super) async fn delete_key_bodies(
 /// Count a project's stored prompts
 #[utoipa::path(get, path = "/projects/{id}/bodies", tag = "Virtual keys",
     params(("id" = Uuid, Path, description = "Project id")),
-    responses((status = 200, description = "How many are stored.", body = StoredBodies), (status = 404, description = "No such project.", body = crate::openapi::AdminError)),
+    responses((status = 200, description = "How many are stored.", body = StoredBodies), (status = 404, description = "No such project.", body = crate::error::AdminErrorBody)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn project_bodies(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<StoredBodies>> {
     db::get_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
@@ -248,8 +248,8 @@ pub(super) async fn project_bodies(State(state): State<AppState>, Path(id): Path
     params(("id" = Uuid, Path, description = "Project id")),
     responses(
         (status = 200, description = "How many were deleted.", body = DeletedBodies),
-        (status = 404, description = "No such project.", body = crate::openapi::AdminError),
-        (status = 409, description = "Already being deleted.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such project.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "Already being deleted.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_project_bodies(
@@ -343,7 +343,7 @@ pub(crate) struct AuditQuery {
 #[utoipa::path(get, path = "/audit", tag = "Usage", params(AuditQuery),
     responses(
         (status = 200, description = "Audit log entries.", body = Vec<crate::db::AuditEntry>),
-        (status = 400, description = "Invalid range.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid range.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn audit_log(State(state): State<AppState>, Query(q): Query<AuditQuery>) -> R<Json<Vec<db::AuditEntry>>> {

@@ -410,8 +410,8 @@ pub(crate) async fn list_mcp_servers(State(state): State<AppState>) -> R<Json<Ve
 #[utoipa::path(post, path = "/mcp-servers", tag = "MCP", request_body = McpServerInput,
     responses(
         (status = 201, description = "The new MCP server.", body = McpServerView),
-        (status = 400, description = "Invalid MCP server.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid MCP server.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn create_mcp_server(
@@ -435,9 +435,9 @@ pub(crate) async fn create_mcp_server(
     request_body = McpServerInput,
     responses(
         (status = 200, description = "The MCP server.", body = McpServerView),
-        (status = 400, description = "Invalid MCP server.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such MCP server.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid MCP server.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such MCP server.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn update_mcp_server(
@@ -479,7 +479,7 @@ pub(crate) async fn update_mcp_server(
 #[utoipa::path(delete, path = "/mcp-servers/{id}", tag = "MCP", params(("id" = Uuid, Path)),
     responses(
         (status = 204, description = "Deleted."),
-        (status = 404, description = "No such MCP server.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such MCP server.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn delete_mcp_server(
@@ -524,7 +524,7 @@ pub(crate) struct McpServerTestResult {
 #[utoipa::path(post, path = "/mcp-servers/{id}/test", tag = "MCP", params(("id" = Uuid, Path)),
     responses(
         (status = 200, description = "The server's tools, or why it could not be used with `ok: false`.", body = McpServerTestResult),
-        (status = 404, description = "No such MCP server.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such MCP server.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn test_mcp_server(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<McpServerTestResult>> {

@@ -640,9 +640,9 @@ pub(crate) fn origin(headers: &HeaderMap, uri: &Uri) -> String {
 #[utoipa::path(get, path = "/a2a/{agent}/.well-known/agent-card.json", operation_id = "a2a_card", tag = "A2A", params(("agent" = String, Path)),
     responses(
         (status = 200, description = "The agent card.", body = Object),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
-        (status = 404, description = "No such agent for this key.", body = crate::openapi::OpenAiError),
-        (status = 502, description = "The agent's card could not be fetched or read.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 404, description = "No such agent for this key.", body = crate::error::OpenAiError),
+        (status = 502, description = "The agent's card could not be fetched or read.", body = crate::error::OpenAiError),
     ),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn card(
@@ -676,10 +676,10 @@ pub async fn card_for(state: &AppState, key: &Arc<VirtualKey>, name: &str, uri: 
     request_body(content = Object, content_type = "application/json"),
     responses(
         (status = 200, description = crate::openapi::A2A_STATES, content((Object = "application/json"), (String = "text/event-stream"))),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
-        (status = 404, description = "No such agent for this key.", body = crate::openapi::OpenAiError),
-        (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = crate::openapi::OpenAiError),
-        (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = crate::openapi::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 404, description = "No such agent for this key.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = crate::error::OpenAiError),
     ),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn jsonrpc(
@@ -710,10 +710,10 @@ pub async fn jsonrpc_for(state: &AppState, key: &Arc<VirtualKey>, name: &str, he
     request_body(content = Object, content_type = "application/json"),
     responses(
         (status = 200, description = crate::openapi::A2A_STATES, content((Object = "application/json"), (String = "text/event-stream"))),
-        (status = 403, description = "Listing tasks or the extended card, which are not offered.", body = crate::openapi::OpenAiError),
-        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::openapi::OpenAiError),
-        (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = crate::openapi::OpenAiError),
-        (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = crate::openapi::OpenAiError),
+        (status = 403, description = "Listing tasks or the extended card, which are not offered.", body = crate::error::OpenAiError),
+        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = crate::error::OpenAiError),
     ),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn rest(
@@ -741,7 +741,7 @@ pub async fn rest(
 #[utoipa::path(get, path = "/a2a/{agent}/rest/{*path}", operation_id = "a2a_rest_get", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path)),
     responses(
         (status = 200, description = "The agent's answer.", content((Object = "application/json"), (String = "text/event-stream"))),
-        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::openapi::OpenAiError),
+        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::error::OpenAiError),
     ),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn rest_get(
@@ -760,7 +760,7 @@ pub async fn rest_get(
 #[utoipa::path(delete, path = "/a2a/{agent}/rest/{*path}", operation_id = "a2a_rest_delete", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path)),
     responses(
         (status = 200, description = "The agent's answer."),
-        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::openapi::OpenAiError),
+        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::error::OpenAiError),
     ),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn rest_delete(

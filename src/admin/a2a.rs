@@ -182,8 +182,8 @@ pub(crate) async fn list_a2a_agents(State(state): State<AppState>) -> R<Json<Vec
 #[utoipa::path(post, path = "/a2a-agents", tag = "A2A", request_body = A2aAgentInput,
     responses(
         (status = 201, description = "The new A2A agent.", body = A2aAgentView),
-        (status = 400, description = "Invalid A2A agent.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid A2A agent.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn create_a2a_agent(
@@ -207,9 +207,9 @@ pub(crate) async fn create_a2a_agent(
     request_body = A2aAgentInput,
     responses(
         (status = 200, description = "The A2A agent.", body = A2aAgentView),
-        (status = 400, description = "Invalid A2A agent.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such A2A agent.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid A2A agent.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such A2A agent.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn update_a2a_agent(
@@ -251,7 +251,7 @@ pub(crate) async fn update_a2a_agent(
 #[utoipa::path(delete, path = "/a2a-agents/{id}", tag = "A2A", params(("id" = Uuid, Path)),
     responses(
         (status = 204, description = "Deleted."),
-        (status = 404, description = "No such A2A agent.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such A2A agent.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn delete_a2a_agent(
@@ -287,7 +287,7 @@ pub(crate) struct A2aAgentTestResult {
 #[utoipa::path(post, path = "/a2a-agents/{id}/test", tag = "A2A", params(("id" = Uuid, Path)),
     responses(
         (status = 200, description = "The card, or why it could not be used with `ok: false`.", body = A2aAgentTestResult),
-        (status = 404, description = "No such A2A agent.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such A2A agent.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 // Nothing is logged or charged.

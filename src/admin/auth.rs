@@ -259,7 +259,8 @@ pub async fn warn_if_no_sign_in(state: &AppState) {
 
 // ---------------------------------------------------------------- admin guard
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+/// How a request signed in to the admin API.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum Via {
     MasterKey,
@@ -522,11 +523,56 @@ pub fn browser_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(crate::admin::oauth::sign_in_link))
 }
 
+/// Who is signed in, and what the sign-in screen offers.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SessionInfo {
+    authenticated: bool,
+    /// Null while signed out.
+    via: Option<Via>,
+    user: Option<SessionUser>,
+    /// An admin may do everything; a user only works in `projects`. Null while signed out. The
+    /// console shows a user only their projects' keys, playground, request log and metrics.
+    role: Option<PersonRole>,
+    /// A user's projects; null for an admin.
+    projects: Option<Vec<Uuid>>,
+    /// Set when single sign-on is enabled.
+    sso: Option<SsoButton>,
+    /// Whether `GATEWAY_MASTER_KEY` is set; without it, single sign-on is the only sign-in.
+    master_key: bool,
+    /// Local development builds: the sign-in screen offers Dev Login.
+    dev: bool,
+    /// The git tag the gateway was built from, shown on the sign-in screen and in the console header.
+    version: &'static str,
+    /// Whether `/admin/openapi.json` and the API reference at `/admin/docs/` are served.
+    api_docs: bool,
+}
+
+/// Who signed in: a person (`id`, `email`, `name`), a virtual key (`id`, `name`), or Dev Login
+/// (`name`, and the local development user's `id`).
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SessionUser {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    id: Option<Uuid>,
+    /// Only for a person, and null when the identity provider gave none: the outer `Option` says
+    /// whether the field is sent at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    email: Option<Option<String>>,
+    name: Option<String>,
+}
+
+/// The single sign-on button on the sign-in screen.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct SsoButton {
+    display_name: String,
+}
+
 /// Session
 ///
 /// Who is signed in, and what the sign-in screen offers. Works signed out.
-#[utoipa::path(get, path = "/auth/session", operation_id = "session", tag = "Sign-in", responses((status = 200, description = "The session.", body = crate::openapi::SessionInfo)))]
-async fn session_info(State(state): State<AppState>, req: Request) -> R<Json<Value>> {
+#[utoipa::path(get, path = "/auth/session", operation_id = "session", tag = "Sign-in", responses((status = 200, description = "The session.", body = SessionInfo)))]
+async fn session_info(State(state): State<AppState>, req: Request) -> R<Json<SessionInfo>> {
     let via = authenticated_via(&state, &req).await;
     let user = req.extensions().get::<Auth>().and_then(|a| a.user.clone());
     let access = match via {
@@ -534,29 +580,27 @@ async fn session_info(State(state): State<AppState>, req: Request) -> R<Json<Val
         None => None,
     };
     let sso = enabled_settings(&state).await.map_err(|e| AdminError::bad_request(e.to_string()))?;
-    Ok(Json(json!({
-        "authenticated": access.is_some(),
-        "via": access.as_ref().and(via.map(|(v, _)| v)),
-        "user": match via {
-            Some((Via::Session, _)) => user.map(|u| json!({ "id": u.id, "email": u.email, "name": u.name })),
-            Some((Via::Dev, _)) => Some(json!({ "name": "Local development" })),
-            Some((Via::DevUser, id)) => Some(json!({ "id": id, "name": DEV_USER_NAME })),
-            Some((Via::VirtualKey | Via::ProjectKey, _)) => crate::auth::presented_virtual_key(&state, req.headers()).map(|k| json!({ "id": k.id, "name": k.name })),
+    let user =
+        match via {
+            Some((Via::Session, _)) => user.map(|u| SessionUser { id: Some(u.id), email: Some(u.email), name: u.name }),
+            Some((Via::Dev, _)) => Some(SessionUser { id: None, email: None, name: Some("Local development".into()) }),
+            Some((Via::DevUser, id)) => Some(SessionUser { id, email: None, name: Some(DEV_USER_NAME.into()) }),
+            Some((Via::VirtualKey | Via::ProjectKey, _)) => crate::auth::presented_virtual_key(&state, req.headers())
+                .map(|k| SessionUser { id: Some(k.id), email: None, name: Some(k.name.clone()) }),
             _ => None,
-        },
-        // "admin" or "user"; the console shows a user only their projects' keys, playground,
-        // request log and metrics.
-        "role": access.as_ref().map(|a| if a.projects().is_some() { "user" } else { "admin" }),
-        "projects": access.as_ref().and_then(Access::projects),
-        "sso": sso.map(|s| json!({ "display_name": s.display_name })),
-        "master_key": state.cfg.master_key.is_some(),
-        // The sign-in screen offers "Dev Login".
-        "dev": state.cfg.dev_login,
-        // Shown on the sign-in screen and in the console header.
-        "version": crate::VERSION,
-        // The console links to the API reference at /docs.
-        "api_docs": state.settings.get().api_docs,
-    })))
+        };
+    Ok(Json(SessionInfo {
+        authenticated: access.is_some(),
+        via: access.as_ref().and(via.map(|(v, _)| v)),
+        user,
+        role: access.as_ref().map(|a| if a.projects().is_some() { PersonRole::User } else { PersonRole::Admin }),
+        projects: access.as_ref().and_then(Access::projects).map(<[Uuid]>::to_vec),
+        sso: sso.map(|s| SsoButton { display_name: s.display_name }),
+        master_key: state.cfg.master_key.is_some(),
+        dev: state.cfg.dev_login,
+        version: crate::VERSION,
+        api_docs: state.settings.get().api_docs,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -1040,7 +1084,7 @@ fn valid_url(s: &str) -> bool {
 #[utoipa::path(put, path = "/settings/oidc", operation_id = "put_oidc_settings", tag = "Sign-in", request_body = SettingsInput,
     responses(
         (status = 200, description = "The saved settings.", body = SettingsView),
-        (status = 400, description = "Invalid settings.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid settings.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn put_settings(
@@ -1114,18 +1158,30 @@ async fn put_settings(
 ///
 /// Fetches the identity provider's discovery document with the saved settings.
 #[utoipa::path(post, path = "/settings/oidc/test", operation_id = "test_oidc_settings", tag = "Sign-in",
-    responses((status = 200, description = "Whether discovery worked.", body = crate::openapi::OidcTest)),
+    responses((status = 200, description = "Whether discovery worked.", body = OidcTest)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
-async fn test_settings(State(state): State<AppState>) -> R<Json<Value>> {
+async fn test_settings(State(state): State<AppState>) -> R<Json<OidcTest>> {
     let Some(row) = db::get_oidc_settings(&state.db).await? else {
         return Err(AdminError::bad_request("save the settings first"));
     };
     let sso = decrypt(&state, row).map_err(|e| AdminError::bad_request(e.to_string()))?;
     // The admin wants to know whether the provider answers now, not what it said ten minutes ago.
     Ok(Json(match client(&state.cfg.upstream_policy, &sso, false).await {
-        Ok(c) => json!({ "ok": true, "authorization_endpoint": c.auth_uri().to_string() }),
-        Err(e) => json!({ "ok": false, "error": e.to_string() }),
+        Ok(c) => OidcTest { ok: true, authorization_endpoint: Some(c.auth_uri().to_string()), error: None },
+        Err(e) => OidcTest { ok: false, authorization_endpoint: None, error: Some(e.to_string()) },
     }))
+}
+
+/// Whether the identity provider's discovery worked: its authorization endpoint, or the error.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct OidcTest {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    authorization_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    error: Option<String>,
 }
 
 /// Someone who signed in, with the projects they work in (users only; admins see every project).
@@ -1171,8 +1227,8 @@ pub(crate) struct PersonProjects {
     request_body = PersonProjects,
     responses(
         (status = 200, description = "The user with their projects.", body = PersonView),
-        (status = 400, description = "Not a user, or an unknown project.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such person.", body = crate::openapi::AdminError),
+        (status = 400, description = "Not a user, or an unknown project.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such person.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 // Takes effect on their next request.
@@ -1206,7 +1262,7 @@ async fn set_admin_projects(
 ///
 /// Their sessions end on their next request.
 #[utoipa::path(delete, path = "/admins/{id}", tag = "Sign-in", params(("id" = Uuid, Path)),
-    responses((status = 204, description = "Removed."), (status = 404, description = "No such admin.", body = crate::openapi::AdminError)),
+    responses((status = 204, description = "Removed."), (status = 404, description = "No such admin.", body = crate::error::AdminErrorBody)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 async fn delete_admin(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
     let admin = db::get_admin_user(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
@@ -1224,6 +1280,15 @@ mod tests {
     use axum::{Router, routing::get};
 
     use super::*;
+
+    /// A person's missing email is null; the other callers have no email field at all.
+    #[test]
+    fn session_users_send_only_their_fields() {
+        let person = SessionUser { id: Some(Uuid::nil()), email: Some(None), name: None };
+        assert_eq!(serde_json::to_value(person).unwrap(), json!({ "id": Uuid::nil(), "email": null, "name": null }));
+        let dev = SessionUser { id: None, email: None, name: Some("Local development".into()) };
+        assert_eq!(serde_json::to_value(dev).unwrap(), json!({ "name": "Local development" }));
+    }
 
     fn sso() -> Sso {
         Sso {

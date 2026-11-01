@@ -110,16 +110,13 @@ impl Modify for SecuritySchemes {
 
 pub(crate) use schemas::*;
 
-/// Request and response shapes that have no type of their own in the gateway: the provider APIs
-/// it speaks, and admin answers it builds as JSON. They are never built, only described.
+/// The provider APIs the gateway speaks, which have no type of their own in it: the inference
+/// handlers pass requests on as JSON, and answer in the provider's format. These describe the
+/// fields the gateway itself reads; they are never built, only documented.
 #[allow(dead_code)]
 mod schemas {
-    use chrono::{DateTime, Utc};
-    use serde::Serialize;
     use serde_json::Value;
     use utoipa::ToSchema;
-
-    use crate::model::VirtualKey;
 
     /// An OpenAI Chat Completions request. Any other field of the OpenAI API is accepted and
     /// passed on, as far as the deployment's provider supports it.
@@ -178,11 +175,6 @@ mod schemas {
         tools: Option<Vec<Value>>,
     }
 
-    #[derive(Serialize, ToSchema)]
-    pub struct TokenCount {
-        input_tokens: u64,
-    }
-
     /// An OpenAI embeddings request, on every provider.
     #[derive(ToSchema)]
     pub struct EmbeddingsRequest {
@@ -207,19 +199,6 @@ mod schemas {
         return_documents: Option<bool>,
         /// Cohere models only: truncate documents to this many tokens.
         max_tokens_per_doc: Option<u32>,
-    }
-
-    /// Ranked documents, most relevant first, as Cohere's v2 API returns them.
-    #[derive(Serialize, ToSchema)]
-    pub struct RerankResponse {
-        /// The request's id, as in the request log.
-        id: String,
-        model: String,
-        /// `{ index, relevance_score, document? }`: the document's position in the request, its
-        /// score, and its text with `return_documents`.
-        results: Vec<Value>,
-        /// `{ billed_units: { search_units, input_tokens? } }`.
-        meta: Value,
     }
 
     /// An OpenAI Decisions request.
@@ -249,205 +228,6 @@ mod schemas {
     #[derive(ToSchema)]
     #[schema(value_type = Object)]
     pub struct ProviderAnswer(Value);
-
-    /// An error, in the OpenAI API's format.
-    #[derive(Serialize, ToSchema)]
-    pub struct OpenAiError {
-        error: OpenAiErrorDetail,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct OpenAiErrorDetail {
-        message: String,
-        #[serde(rename = "type")]
-        kind: String,
-        param: Option<String>,
-        code: Option<String>,
-    }
-
-    /// An error, in the Anthropic API's format.
-    #[derive(Serialize, ToSchema)]
-    pub struct AnthropicError {
-        /// Always `error`.
-        #[serde(rename = "type")]
-        kind: String,
-        error: AnthropicErrorDetail,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct AnthropicErrorDetail {
-        #[serde(rename = "type")]
-        kind: String,
-        message: String,
-    }
-
-    /// The models a key may use, in the OpenAI format (or Anthropic's, for clients that send
-    /// `anthropic-version`).
-    #[derive(Serialize, ToSchema)]
-    pub struct ModelList {
-        object: String,
-        data: Vec<ModelEntry>,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct ModelEntry {
-        id: String,
-        object: String,
-        created: i64,
-        owned_by: String,
-        /// When the model will shut down (`YYYY-MM-DD`), from the price catalog; null if not
-        /// announced.
-        shutdown_date: Option<String>,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct ModelExtendedList {
-        object: String,
-        data: Vec<ModelExtendedEntry>,
-    }
-
-    /// A model with what the gateway knows about it. Where a model has several deployments, or
-    /// is an auto router, the limits are the lowest among them and `structured_outputs` is true
-    /// only if all of them support it.
-    #[derive(Serialize, ToSchema)]
-    pub struct ModelExtendedEntry {
-        id: String,
-        object: String,
-        created: i64,
-        owned_by: String,
-        /// When the model will shut down (`YYYY-MM-DD`), from the price catalog; null if not
-        /// announced.
-        shutdown_date: Option<String>,
-        /// What the model serves. Auto routers are `chat`.
-        mode: crate::model::Mode,
-        /// From the price catalog; null if unknown.
-        max_input_tokens: Option<u64>,
-        /// From the price catalog; null if unknown.
-        max_output_tokens: Option<u64>,
-        /// Whether the model supports JSON schema output, from the price catalog. False if unknown.
-        structured_outputs: bool,
-        /// The model's deployment tags, or an auto router's own tags.
-        tags: Vec<String>,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct Ready {
-        postgres: bool,
-        valkey: bool,
-        registry_loaded: bool,
-    }
-
-    /// An admin API error.
-    #[derive(Serialize, ToSchema)]
-    pub struct AdminError {
-        error: String,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct SessionInfo {
-        authenticated: bool,
-        /// `master_key`, `virtual_key`, `session` or `dev`.
-        via: Option<String>,
-        user: Option<Value>,
-        /// Set when single sign-on is enabled: `{ "display_name": … }`.
-        sso: Option<Value>,
-        /// Whether `GATEWAY_MASTER_KEY` is set.
-        master_key: bool,
-        /// Local development builds offer Dev Login.
-        dev: bool,
-        /// The git tag the gateway was built from.
-        version: String,
-        /// Whether `/admin/openapi.json` and the API reference at `/admin/docs/` are served.
-        api_docs: bool,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct OidcTest {
-        ok: bool,
-        authorization_endpoint: Option<String>,
-        error: Option<String>,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct DeploymentTest {
-        ok: bool,
-        latency_ms: u64,
-        /// The model's reply (chat), dimensions (embeddings) or an answer (decisions).
-        text: Option<String>,
-        usage: Option<Value>,
-        /// The HTTP status of a failed test.
-        status: Option<u16>,
-        error: Option<String>,
-    }
-
-    /// A new key. `key` is the secret, shown this once; the gateway keeps only its hash.
-    #[derive(Serialize, ToSchema)]
-    pub struct KeyCreated {
-        key: String,
-        record: VirtualKey,
-    }
-
-    /// A key's new secret, shown this once. The old one stops working.
-    #[derive(Serialize, ToSchema)]
-    pub struct KeyRegenerated {
-        key: String,
-        key_prefix: String,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct TagUsage {
-        tag: String,
-        /// Deployments carrying the tag.
-        deployments: usize,
-        /// Auto routers carrying the tag.
-        routers: usize,
-        /// MCP servers and A2A agents carrying the tag.
-        mcp_servers: usize,
-        /// Keys holding the tag (for a user, their projects' keys).
-        keys: usize,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct ImportChanges {
-        created: Vec<String>,
-        updated: Vec<String>,
-        /// Entries of the file that match one here that is already the same.
-        unchanged: usize,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct ImportResult {
-        dry_run: bool,
-        credentials: ImportChanges,
-        guardrails: ImportChanges,
-        projects: ImportChanges,
-        deployments: ImportChanges,
-        routers: ImportChanges,
-        aliases: ImportChanges,
-        /// The file's keys, and keys whose allowed models follow a renamed model.
-        keys: ImportChanges,
-        /// Models whose metadata the file sets, or that takes a renamed model's along.
-        model_metadata: ImportChanges,
-        mcp_servers: ImportChanges,
-        a2a_agents: ImportChanges,
-        tool_routers: ImportChanges,
-        /// New credentials that need their secrets entered before their deployments work.
-        needs_secrets: Vec<String>,
-        /// New MCP servers that work once their secret is entered.
-        mcp_servers_need_secrets: Vec<String>,
-        /// New A2A agents that work once their secret is entered.
-        a2a_agents_need_secrets: Vec<String>,
-    }
-
-    #[derive(Serialize, ToSchema)]
-    pub struct Status {
-        instance_id: String,
-        /// The git tag the gateway was built from.
-        version: String,
-        registry_loaded_at: Option<DateTime<Utc>>,
-        /// Deployments, routers and aliases that could not be loaded, and why.
-        registry_errors: Vec<String>,
-    }
 }
 
 /// The `x-gateway-labels` header, as the inference endpoints describe it.

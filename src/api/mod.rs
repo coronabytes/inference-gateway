@@ -143,11 +143,11 @@ pub fn sse_event(event: &str, data: &Value) -> Bytes {
     responses(
         (status = 200, description = "The message, or server-sent events with `stream: true`.",
             content((crate::openapi::ProviderAnswer = "application/json"), (String = "text/event-stream"))),
-        (status = 400, description = "Invalid request.", body = crate::openapi::AnthropicError),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::AnthropicError),
-        (status = 403, description = "The key may not use this model.", body = crate::openapi::AnthropicError),
-        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::openapi::AnthropicError),
-        (status = 502, description = "The provider failed.", body = crate::openapi::AnthropicError),
+        (status = 400, description = "Invalid request.", body = crate::error::AnthropicError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::AnthropicError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::AnthropicError),
+        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::error::AnthropicError),
+        (status = 502, description = "The provider failed.", body = crate::error::AnthropicError),
     ),
     params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
     security(("virtual_key_header" = []), ("virtual_key" = [])))]
@@ -168,12 +168,12 @@ pub async fn messages(
     responses(
         (status = 200, description = "The response, or server-sent events with `stream: true`.",
             content((crate::openapi::ProviderAnswer = "application/json"), (String = "text/event-stream"))),
-        (status = 400, description = "Invalid request.", body = crate::openapi::OpenAiError),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
-        (status = 403, description = "The key may not use this model.", body = crate::openapi::OpenAiError),
-        (status = 404, description = "The previous response is unknown, expired, or belongs to another key.", body = crate::openapi::OpenAiError),
-        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::openapi::OpenAiError),
-        (status = 502, description = "The provider failed.", body = crate::openapi::OpenAiError),
+        (status = 400, description = "Invalid request.", body = crate::error::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::OpenAiError),
+        (status = 404, description = "The previous response is unknown, expired, or belongs to another key.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The provider failed.", body = crate::error::OpenAiError),
     ),
     params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
@@ -194,11 +194,11 @@ pub async fn responses(
     responses(
         (status = 200, description = "The completion, or server-sent events with `stream: true`.",
             content((crate::openapi::ProviderAnswer = "application/json"), (String = "text/event-stream"))),
-        (status = 400, description = "Invalid request.", body = crate::openapi::OpenAiError),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
-        (status = 403, description = "The key may not use this model.", body = crate::openapi::OpenAiError),
-        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::openapi::OpenAiError),
-        (status = 502, description = "The provider failed.", body = crate::openapi::OpenAiError),
+        (status = 400, description = "Invalid request.", body = crate::error::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The provider failed.", body = crate::error::OpenAiError),
     ),
     params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
@@ -1240,10 +1240,10 @@ fn inspect(tracker: &mut Tracker, inbound: Inbound, v: &Value, pin: Option<&PinS
 /// estimated from the request's size. Counts against the key's limits like a request.
 #[utoipa::path(post, path = "/v1/messages/count_tokens", tag = "Inference", request_body = crate::openapi::CountTokensRequest,
     responses(
-        (status = 200, description = "The token count.", body = crate::openapi::TokenCount),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::AnthropicError),
-        (status = 403, description = "The key may not use this model.", body = crate::openapi::AnthropicError),
-        (status = 429, description = "A rate limit or the key's budget.", body = crate::openapi::AnthropicError),
+        (status = 200, description = "The token count.", body = TokenCount),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::AnthropicError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::AnthropicError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::error::AnthropicError),
     ),
     params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
     security(("virtual_key_header" = []), ("virtual_key" = [])))]
@@ -1307,7 +1307,13 @@ async fn count(
         return Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response());
     }
     let estimate = (body_len / 4).max(1);
-    Ok(Json(json!({ "input_tokens": estimate })).into_response())
+    Ok(Json(TokenCount { input_tokens: estimate }).into_response())
+}
+
+/// A token count, as Anthropic's API answers it.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct TokenCount {
+    input_tokens: usize,
 }
 
 #[cfg(test)]

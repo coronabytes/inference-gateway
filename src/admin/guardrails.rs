@@ -246,8 +246,8 @@ pub(crate) async fn list_guardrails(State(state): State<AppState>) -> R<Json<Vec
 #[utoipa::path(post, path = "/guardrails", tag = "Guardrails", request_body = GuardrailInput,
     responses(
         (status = 201, description = "The new guardrail.", body = GuardrailView),
-        (status = 400, description = "Invalid guardrail.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid guardrail.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn create_guardrail(
@@ -289,8 +289,8 @@ pub(crate) async fn create_guardrail(
     request_body = GuardrailInput,
     responses(
         (status = 200, description = "The guardrail.", body = GuardrailView),
-        (status = 400, description = "Invalid guardrail.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such guardrail.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid guardrail.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such guardrail.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn update_guardrail(
@@ -327,7 +327,7 @@ pub(crate) async fn update_guardrail(
 #[utoipa::path(delete, path = "/guardrails/{id}", tag = "Guardrails", params(("id" = Uuid, Path)),
     responses(
         (status = 204, description = "Deleted."),
-        (status = 404, description = "No such guardrail.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such guardrail.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn delete_guardrail(
@@ -379,7 +379,7 @@ pub(crate) struct GuardrailTestResult {
     request_body = GuardrailTest,
     responses(
         (status = 200, description = "The outcome, or the provider's error with `ok: false`.", body = GuardrailTestResult),
-        (status = 404, description = "No such guardrail.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such guardrail.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 // Nothing is charged to a key.

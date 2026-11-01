@@ -186,8 +186,8 @@ pub(crate) async fn list_tool_routers(State(state): State<AppState>) -> R<Json<V
 #[utoipa::path(post, path = "/tool-routers", tag = "Tool routers", request_body = ToolRouterInput,
     responses(
         (status = 201, description = "The new tool router.", body = ToolRouterView),
-        (status = 400, description = "Invalid tool router.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid tool router.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn create_tool_router(
@@ -209,9 +209,9 @@ pub(crate) async fn create_tool_router(
     request_body = ToolRouterInput,
     responses(
         (status = 200, description = "The tool router.", body = ToolRouterView),
-        (status = 400, description = "Invalid tool router.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such tool router.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid tool router.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such tool router.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken, by a tool router or an MCP server.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn update_tool_router(
@@ -238,7 +238,7 @@ pub(crate) async fn update_tool_router(
 #[utoipa::path(delete, path = "/tool-routers/{id}", tag = "Tool routers", params(("id" = Uuid, Path)),
     responses(
         (status = 204, description = "Deleted."),
-        (status = 404, description = "No such tool router.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such tool router.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn delete_tool_router(

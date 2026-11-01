@@ -2,7 +2,7 @@
 //! authenticate with the master key or an admin session (see `admin::auth`).
 
 use axum::{Json, extract::State, middleware};
-use serde_json::{Value, json};
+use serde_json::Value;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
@@ -170,14 +170,25 @@ const LIST_BUDGET_LOOKUPS: usize = 8;
 ///
 /// This replica.
 #[utoipa::path(get, path = "/status", tag = "Usage",
-    responses((status = 200, description = "The replica.", body = crate::openapi::Status)),
+    responses((status = 200, description = "The replica.", body = Status)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
-async fn status(State(state): State<AppState>) -> Json<Value> {
+async fn status(State(state): State<AppState>) -> Json<Status> {
     let snap = state.registry.snapshot();
-    Json(json!({
-        "instance_id": state.cfg.instance_id,
-        "version": crate::VERSION,
-        "registry_loaded_at": snap.loaded_at,
-        "registry_errors": snap.errors,
-    }))
+    Json(Status {
+        instance_id: state.cfg.instance_id.clone(),
+        version: crate::VERSION,
+        registry_loaded_at: snap.loaded_at,
+        registry_errors: snap.errors.clone(),
+    })
+}
+
+/// This replica, and how its configuration last loaded.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct Status {
+    instance_id: String,
+    /// The git tag the gateway was built from.
+    version: &'static str,
+    registry_loaded_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Deployments, routers and aliases that could not be loaded, and why.
+    registry_errors: Vec<String>,
 }

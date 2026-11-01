@@ -53,10 +53,10 @@ impl Route {
 #[utoipa::path(post, path = "/v1/systemone", tag = "Inference", request_body = crate::openapi::SystemOneRequest,
     responses(
         (status = 200, description = "The answers.", body = crate::openapi::ProviderAnswer),
-        (status = 400, description = "Invalid request.", body = crate::openapi::OpenAiError),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
-        (status = 403, description = "The key may not use this model.", body = crate::openapi::OpenAiError),
-        (status = 429, description = "A rate limit or the key's budget.", body = crate::openapi::OpenAiError),
+        (status = 400, description = "Invalid request.", body = crate::error::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::error::OpenAiError),
     ),
     params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]
@@ -77,10 +77,10 @@ pub async fn systemone(
 #[utoipa::path(post, path = "/v1/decisions", tag = "Inference", request_body = crate::openapi::DecisionsRequest,
     responses(
         (status = 200, description = "An answer per question.", body = crate::openapi::ProviderAnswer),
-        (status = 400, description = "Invalid request.", body = crate::openapi::OpenAiError),
-        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::openapi::OpenAiError),
-        (status = 403, description = "The key may not use this model.", body = crate::openapi::OpenAiError),
-        (status = 429, description = "A rate limit or the key's budget.", body = crate::openapi::OpenAiError),
+        (status = 400, description = "Invalid request.", body = crate::error::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::error::OpenAiError),
     ),
     params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
     security(("virtual_key" = []), ("virtual_key_header" = [])))]

@@ -262,8 +262,8 @@ pub(super) async fn list_credentials(State(state): State<AppState>, Query(q): Qu
 #[utoipa::path(post, path = "/credentials", tag = "Credentials", request_body = CredentialInput,
     responses(
         (status = 201, description = "The new credential.", body = CredentialView),
-        (status = 400, description = "Invalid credential.", body = crate::openapi::AdminError),
-        (status = 409, description = "The name is taken.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid credential.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_credential(
@@ -302,8 +302,8 @@ pub(super) async fn create_credential(
     request_body = CredentialInput,
     responses(
         (status = 200, description = "The credential.", body = CredentialView),
-        (status = 400, description = "Invalid credential.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such credential.", body = crate::openapi::AdminError),
+        (status = 400, description = "Invalid credential.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such credential.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_credential(
@@ -365,8 +365,8 @@ pub(super) async fn update_credential(
 #[utoipa::path(delete, path = "/credentials/{id}", tag = "Credentials", params(("id" = Uuid, Path)),
     responses(
         (status = 204, description = "Deleted."),
-        (status = 404, description = "No such credential.", body = crate::openapi::AdminError),
-        (status = 409, description = "Deployments use it.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such credential.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "Deployments use it.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_credential(
@@ -405,9 +405,9 @@ pub(super) async fn delete_credential(
 #[utoipa::path(get, path = "/credentials/{id}/foundry-deployments", tag = "Credentials", params(("id" = Uuid, Path)),
     responses(
         (status = 200, description = "The resource and its deployments.", body = crate::entra::FoundryDeployments),
-        (status = 400, description = "Not an Azure credential with Entra ID.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such credential.", body = crate::openapi::AdminError),
-        (status = 502, description = "Entra ID or Azure Resource Manager refused or failed.", body = crate::openapi::AdminError),
+        (status = 400, description = "Not an Azure credential with Entra ID.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such credential.", body = crate::error::AdminErrorBody),
+        (status = 502, description = "Entra ID or Azure Resource Manager refused or failed.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn foundry_deployments(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<crate::entra::FoundryDeployments>> {
@@ -446,9 +446,9 @@ pub(super) async fn aws_regions() -> Json<&'static [crate::aws::AwsRegion]> {
 #[utoipa::path(get, path = "/credentials/{id}/bedrock-models", tag = "Credentials", params(("id" = Uuid, Path)),
     responses(
         (status = 200, description = "The models, and what could not be read.", body = crate::aws::models::BedrockModels),
-        (status = 400, description = "Not a Bedrock credential, or one with a Bedrock API key.", body = crate::openapi::AdminError),
-        (status = 404, description = "No such credential.", body = crate::openapi::AdminError),
-        (status = 502, description = "No AWS region or credentials could be found.", body = crate::openapi::AdminError),
+        (status = 400, description = "Not a Bedrock credential, or one with a Bedrock API key.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such credential.", body = crate::error::AdminErrorBody),
+        (status = 502, description = "No AWS region or credentials could be found.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn bedrock_models(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<crate::aws::models::BedrockModels>> {

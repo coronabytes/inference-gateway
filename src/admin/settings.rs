@@ -78,7 +78,7 @@ pub(super) async fn get_settings(State(state): State<AppState>) -> R<Json<Settin
 #[utoipa::path(put, path = "/settings", tag = "Settings", request_body = crate::settings::Settings,
     responses(
         (status = 200, description = "The saved settings.", body = SettingsView),
-        (status = 400, description = "A setting is out of range.", body = crate::openapi::AdminError),
+        (status = 400, description = "A setting is out of range.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn put_settings(

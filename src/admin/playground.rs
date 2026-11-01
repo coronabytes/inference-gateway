@@ -69,7 +69,7 @@ pub(crate) struct PlaygroundGuardrail {
 #[utoipa::path(get, path = "/playground/options", tag = "Playground", params(PlaygroundQuery),
     responses(
         (status = 200, description = "The key's models, guardrails, MCP servers and A2A agents.", body = PlaygroundOptions),
-        (status = 404, description = "No such key, or not one of the caller's.", body = crate::openapi::AdminError),
+        (status = 404, description = "No such key, or not one of the caller's.", body = crate::error::AdminErrorBody),
     ),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn playground_options(
