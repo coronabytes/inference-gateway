@@ -801,11 +801,24 @@ function ModelTile({
       )}
       {m.metadata.description && <p className="hub-tile-description">{m.metadata.description}</p>}
       <div className="hub-tile-facts small">
-        {m.max_input_tokens != null && (
-          <span
-            title={`${m.max_input_tokens.toLocaleString()} input tokens${m.max_output_tokens != null ? `, ${m.max_output_tokens.toLocaleString()} output tokens` : ""}`}
-          >
-            {compact(m.max_input_tokens)} context
+        {m.max_input_tokens != null && m.max_input_tokens === m.max_output_tokens ? (
+          <span title={`${m.max_input_tokens.toLocaleString()} input and output tokens`}>{compact(m.max_input_tokens)} context &amp; output</span>
+        ) : (m.max_input_tokens != null || m.max_output_tokens != null) && (
+          <span>
+            {[
+              m.max_input_tokens != null && (
+                <span key="in" title={`${m.max_input_tokens.toLocaleString()} input tokens`}>
+                  {compact(m.max_input_tokens)} context
+                </span>
+              ),
+              m.max_output_tokens != null && (
+                <span key="out" title={`${m.max_output_tokens.toLocaleString()} output tokens`}>
+                  {compact(m.max_output_tokens)} output
+                </span>
+              ),
+            ]
+              .filter(Boolean)
+              .flatMap((s, i) => (i ? [" · ", s] : [s]))}
           </span>
         )}
         <TagList tags={m.tags} />
