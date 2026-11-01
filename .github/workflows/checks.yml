@@ -1,5 +1,5 @@
 # Checks formatting and lints, tests the gateway and the admin UI, checks the sqlx query metadata against a live database and
-# scans the dependencies for advisories.
+# the committed OpenAPI document and console API types against the handlers, and scans the dependencies for advisories.
 #
 # Runs on pushes to main and on pull requests, and as the first stage of the release workflow.
 # Actions are pinned to commit SHAs (Dependabot proposes the bumps); the comment names the version.
@@ -71,6 +71,15 @@ jobs:
           SQLX_OFFLINE: "true"
         run: cargo test --locked
 
+      # The console's API types are generated from the committed document, which must be the one the
+      # handlers describe.
+      - name: Check OpenAPI document
+        env:
+          SQLX_OFFLINE: "true"
+        run: |
+          cargo run --locked -- openapi > ui/openapi.json
+          git diff --exit-code ui/openapi.json
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -81,6 +90,8 @@ jobs:
         working-directory: ui
         run: |
           npm ci --no-audit --no-fund
+          npm run gen:api
+          git diff --exit-code src/api.gen.ts
           npm run typecheck
           npm run lint
           npm test
