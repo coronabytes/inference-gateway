@@ -2070,6 +2070,7 @@ mod tests {
                 None => vec![(prefix, src)],
             };
             for (prefix, text) in parts {
+                let text = one_line_routes(text);
                 for chunk in text.split(".route(\"").skip(1) {
                     let (path, rest) = chunk.split_once('"').expect("route path");
                     // The handler expression runs until the next builder call.
@@ -2082,6 +2083,26 @@ mod tests {
                     }
                 }
             }
+        }
+        out
+    }
+
+    /// The source with each `.route(…)` call that rustfmt broke over lines, being too long for
+    /// one, joined back into one line.
+    fn one_line_routes(src: &str) -> String {
+        let mut out = String::new();
+        let mut lines = src.lines();
+        while let Some(line) = lines.next() {
+            out.push_str(line);
+            if line.trim() == ".route(" {
+                for next in lines.by_ref() {
+                    out.push_str(next.trim());
+                    if next.trim_start().starts_with(')') {
+                        break;
+                    }
+                }
+            }
+            out.push('\n');
         }
         out
     }
