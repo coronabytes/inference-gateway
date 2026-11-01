@@ -79,6 +79,11 @@ static DOCUMENT: LazyLock<String> = LazyLock::new(|| {
     doc.to_pretty_json().expect("the OpenAPI document serializes")
 });
 
+/// Builds the served document now (see `STACK_BYTES` in main.rs).
+pub fn prepare() {
+    LazyLock::force(&DOCUMENT);
+}
+
 /// `GET /admin/openapi.json`.
 pub async fn document() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "application/json")], DOCUMENT.as_str())

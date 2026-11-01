@@ -59,8 +59,30 @@ use crate::{config::Config, state::AppState};
 /// The git tag this gateway was built from (see build.rs), e.g. `v1.0.0`.
 pub const VERSION: &str = env!("GATEWAY_VERSION");
 
-#[tokio::main]
-async fn main() {
+/// Stack for the thread the gateway starts on and for the runtime's workers. Building the routers
+/// and their OpenAPI document (utoipa) takes deep stack frames in debug builds, more than the 1 MB
+/// Windows gives a process's main thread.
+const STACK_BYTES: usize = 16 * 1024 * 1024;
+
+fn main() {
+    let gateway = std::thread::Builder::new()
+        .name("gateway".into())
+        .stack_size(STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(STACK_BYTES)
+                .build()
+                .expect("the async runtime starts")
+                .block_on(start())
+        })
+        .expect("the gateway thread starts");
+    if let Err(panic) = gateway.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn start() {
     // `inference-gateway healthcheck` for container health probes (the image has no shell or curl).
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
         std::process::exit(healthcheck());
@@ -185,6 +207,8 @@ async fn run() -> Result<(), String> {
         tracing::info!(%signals, "exporting OpenTelemetry");
     }
     let mut app: Router<AppState> = routes(Some(&state)).into();
+    // Built here, on the gateway's own thread, rather than on a worker at the first request.
+    openapi::prepare();
 
     // The former public addresses: off, or on to the new ones. Either way, not the file server,
     // which would hand out the reference's files and answer /openapi.json with the console's page.
