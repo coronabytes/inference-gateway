@@ -201,7 +201,7 @@ impl redis::aio::ConnectionLike for Conn {
 /// Where subscriptions connect to: they need a connection of their own.
 #[derive(Clone)]
 enum Target {
-    Single(Client),
+    Single(Box<Client>),
     Cluster(Vec<String>),
 }
 
