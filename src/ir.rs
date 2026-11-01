@@ -91,13 +91,36 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Part {
-    Text { text: String, cache: bool },
-    Image { source: ImageSource, cache: bool },
+    Text {
+        text: String,
+        cache: bool,
+    },
+    Image {
+        source: ImageSource,
+        cache: bool,
+    },
     /// A document such as a PDF, inline as base64. The gateway does not download or upload files.
-    File { media_type: String, data: String, filename: Option<String>, cache: bool },
-    ToolCall { id: String, name: String, arguments: String },
-    ToolResult { call_id: String, content: Vec<Part>, is_error: bool, cache: bool },
-    Reasoning { text: String, signature: Option<String> },
+    File {
+        media_type: String,
+        data: String,
+        filename: Option<String>,
+        cache: bool,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    },
+    ToolResult {
+        call_id: String,
+        content: Vec<Part>,
+        is_error: bool,
+        cache: bool,
+    },
+    Reasoning {
+        text: String,
+        signature: Option<String>,
+    },
 }
 
 // Externally tagged: an internal tag cannot wrap the plain string in `Url`.
@@ -302,31 +325,55 @@ pub enum BlockKind {
 /// started block is stopped before `Finish`.
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
-    BlockStart { index: usize, kind: BlockKind },
-    TextDelta { index: usize, text: String },
-    ToolArgsDelta { index: usize, json: String },
-    ReasoningDelta { index: usize, text: String },
-    SignatureDelta { index: usize, signature: String },
-    BlockStop { index: usize },
+    BlockStart {
+        index: usize,
+        kind: BlockKind,
+    },
+    TextDelta {
+        index: usize,
+        text: String,
+    },
+    ToolArgsDelta {
+        index: usize,
+        json: String,
+    },
+    ReasoningDelta {
+        index: usize,
+        text: String,
+    },
+    SignatureDelta {
+        index: usize,
+        signature: String,
+    },
+    BlockStop {
+        index: usize,
+    },
     /// A tool the provider ran itself, its call or its result (a web search and what it found),
     /// in the provider's own shape. On translated paths the client's API has no place for it, so
     /// encoders send nothing; logged requests keep it (see `capture`).
-    ServerTool { block: Value },
+    ServerTool {
+        block: Value,
+    },
     /// A citation the provider attached to the answer, in its own shape. Like `ServerTool`.
-    Annotation { annotation: Value },
+    Annotation {
+        annotation: Value,
+    },
     /// What the gateway did with its MCP tools (see `api::mcp_tools`): a whole item of the
     /// response at block `index`, never started or stopped. Responses and Messages return it,
     /// Chat Completions has no place for it.
-    Mcp { index: usize, item: McpItem },
-    Finish { stop_reason: StopReason, usage: Usage },
+    Mcp {
+        index: usize,
+        item: McpItem,
+    },
+    Finish {
+        stop_reason: StopReason,
+        usage: Usage,
+    },
 }
 
 impl StreamEvent {
     pub fn is_content(&self) -> bool {
-        matches!(
-            self,
-            Self::TextDelta { .. } | Self::ToolArgsDelta { .. } | Self::ReasoningDelta { .. } | Self::BlockStart { .. }
-        )
+        matches!(self, Self::TextDelta { .. } | Self::ToolArgsDelta { .. } | Self::ReasoningDelta { .. } | Self::BlockStart { .. })
     }
 }
 
@@ -354,11 +401,15 @@ impl McpItem {
                 _ => c.to_string(),
             })
             .collect();
-        if parts.is_empty() && let Some(s) = r.get("structuredContent") {
+        if parts.is_empty()
+            && let Some(s) = r.get("structuredContent")
+        {
             return Some(s.to_string());
         }
-        Some(parts.join("
-"))
+        Some(parts.join(
+            "
+",
+        ))
     }
 
     /// Whether a call failed, or its tool reported an error.
@@ -437,9 +488,7 @@ impl Aggregator {
                 }
                 self.blocks[*index] = Some(match kind {
                     BlockKind::Text => Part::Text { text: String::new(), cache: false },
-                    BlockKind::ToolCall { id, name } => {
-                        Part::ToolCall { id: id.clone(), name: name.clone(), arguments: String::new() }
-                    }
+                    BlockKind::ToolCall { id, name } => Part::ToolCall { id: id.clone(), name: name.clone(), arguments: String::new() },
                     BlockKind::Reasoning => Part::Reasoning { text: String::new(), signature: None },
                 });
             }
@@ -489,7 +538,14 @@ impl Aggregator {
                 p => p,
             })
             .collect();
-        ChatResponse { content, stop_reason: self.stop_reason, usage: self.usage, server_tools: self.server_tools, annotations: self.annotations, mcp }
+        ChatResponse {
+            content,
+            stop_reason: self.stop_reason,
+            usage: self.usage,
+            server_tools: self.server_tools,
+            annotations: self.annotations,
+            mcp,
+        }
     }
 }
 

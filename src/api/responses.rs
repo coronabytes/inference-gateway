@@ -9,8 +9,8 @@ use super::{StreamEncoder, sse_event};
 use crate::{
     error::GatewayError,
     ir::{
-        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, McpItem, Message, Part, Reasoning, Role,
-        StopReason, StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
+        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, McpItem, Message, Part, Reasoning, Role, StopReason,
+        StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
     },
     util::prefixed_id,
 };
@@ -37,9 +37,10 @@ fn parse_content(content: &Value) -> Result<Vec<Part>, GatewayError> {
                 out.push(Part::Image { source: ImageSource::from_url(url), cache: false });
             }
             "input_file" => {
-                let data = c.get("file_data").and_then(Value::as_str).ok_or_else(|| {
-                    GatewayError::invalid("input_file requires file_data (file_id and file_url are not supported)")
-                })?;
+                let data = c
+                    .get("file_data")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| GatewayError::invalid("input_file requires file_data (file_id and file_url are not supported)"))?;
                 let part = Part::file_from_data_url(data, c.get("filename").and_then(Value::as_str))
                     .ok_or_else(|| GatewayError::invalid("input_file file_data must be a base64 data URL"))?;
                 out.push(part);
@@ -127,9 +128,7 @@ pub fn parse_request(v: &Value) -> Result<ChatRequest, GatewayError> {
                         req.messages.push(Message { role: Role::Assistant, content: vec![Part::Text { text, cache: false }] });
                     }
                     other => {
-                        return Err(GatewayError::invalid(format!(
-                            "input item type '{other}' is not supported for this model's provider"
-                        )));
+                        return Err(GatewayError::invalid(format!("input item type '{other}' is not supported for this model's provider")));
                     }
                 }
             }
@@ -185,11 +184,7 @@ pub fn parse_request(v: &Value) -> Result<ChatRequest, GatewayError> {
         }
         req.json_schema = Some(s);
     }
-    req.user = v
-        .get("safety_identifier")
-        .or_else(|| v.get("user"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    req.user = v.get("safety_identifier").or_else(|| v.get("user")).and_then(Value::as_str).map(str::to_string);
     req.normalize();
     Ok(req)
 }
@@ -333,15 +328,7 @@ pub struct ResponsesEncoder {
 
 impl ResponsesEncoder {
     pub fn new(id: String, model: String) -> Self {
-        Self {
-            id,
-            model,
-            created: chrono::Utc::now().timestamp(),
-            seq: 0,
-            items: HashMap::new(),
-            next_output: 0,
-            done: Vec::new(),
-        }
+        Self { id, model, created: chrono::Utc::now().timestamp(), seq: 0, items: HashMap::new(), next_output: 0, done: Vec::new() }
     }
 
     fn emit(&mut self, ty: &str, mut data: Value) -> Bytes {
@@ -421,10 +408,9 @@ impl StreamEncoder for ResponsesEncoder {
                 if let Some(it) = self.items.get_mut(index) {
                     it.buf.push_str(delta);
                     let (id, oi) = (it.id.clone(), it.output_index);
-                    out.push(self.emit(
-                        "response.function_call_arguments.delta",
-                        json!({ "item_id": id, "output_index": oi, "delta": delta }),
-                    ));
+                    out.push(
+                        self.emit("response.function_call_arguments.delta", json!({ "item_id": id, "output_index": oi, "delta": delta })),
+                    );
                 }
             }
             StreamEvent::ReasoningDelta { index, text } => {
@@ -467,7 +453,9 @@ impl StreamEncoder for ResponsesEncoder {
                         out.push(self.emit("response.mcp_list_tools.completed", at));
                     }
                     McpItem::Call { result, .. } => {
-                        for (f, v) in [("arguments", json!("")), ("output", Value::Null), ("error", Value::Null), ("status", json!("in_progress"))] {
+                        for (f, v) in
+                            [("arguments", json!("")), ("output", Value::Null), ("error", Value::Null), ("status", json!("in_progress"))]
+                        {
                             added[f] = v;
                         }
                         out.push(self.emit("response.output_item.added", json!({ "output_index": oi, "item": added })));
@@ -579,7 +567,10 @@ mod tests {
             StreamEvent::BlockStart { index: 0, kind: BlockKind::Text },
             StreamEvent::TextDelta { index: 0, text: "hi".into() },
             StreamEvent::BlockStop { index: 0 },
-            StreamEvent::Finish { stop_reason: StopReason::EndTurn, usage: Usage { input_tokens: 3, output_tokens: 1, ..Default::default() } },
+            StreamEvent::Finish {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage { input_tokens: 3, output_tokens: 1, ..Default::default() },
+            },
         ] {
             all.extend(enc.event(&ev));
         }

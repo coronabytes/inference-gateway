@@ -41,7 +41,8 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::{
-    AliasInput, DeploymentInput, R, RouterInput, alias_row, check_alias, check_deployment, check_deployment_fits, check_router, clean_settings,
+    AliasInput, DeploymentInput, R, RouterInput, alias_row, check_alias, check_deployment, check_deployment_fits, check_router,
+    clean_settings,
     guardrails::{check_credential, check_guardrail},
     hub::check_metadata,
     rename_model, retarget_aliases, router_row, target_name, to_row,
@@ -419,10 +420,9 @@ pub(super) async fn import(
         let what = format!("credential '{name}'");
         let provider = ProviderKind::parse(&c.provider).ok_or_else(|| bad(format!("{what}: unknown provider '{}'", c.provider)))?;
         let settings = clean_settings(&state, provider, c.settings).map_err(about(&what))?;
-        let found = c
-            .id
-            .and_then(|id| creds.iter().position(|x| x.id == id))
-            .or_else(|| creds.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id)));
+        let found =
+            c.id.and_then(|id| creds.iter().position(|x| x.id == id))
+                .or_else(|| creds.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id)));
         match found {
             Some(ix) if creds[ix].provider != provider.as_str() => {
                 let x = &creds[ix];
@@ -470,7 +470,8 @@ pub(super) async fn import(
     }
 
     // Guardrails: by id, then by name, with their credential by name as it will be.
-    let (mut guard_changes, mut new_guards, mut changed_guards, mut claimed) = (Changes::default(), HashSet::new(), HashSet::new(), HashSet::new());
+    let (mut guard_changes, mut new_guards, mut changed_guards, mut claimed) =
+        (Changes::default(), HashSet::new(), HashSet::new(), HashSet::new());
     let file_ids: HashSet<Uuid> = doc.guardrails.iter().filter_map(|g| g.id).collect();
     for g in doc.guardrails {
         let what = format!("guardrail '{}'", g.name.trim());
@@ -480,14 +481,18 @@ pub(super) async fn import(
             .find(|c| c.name == g.credential)
             .ok_or_else(|| bad(format!("{what} uses credential '{}', which is neither in the file nor on this gateway", g.credential)))?;
         check_credential(provider, &cred.provider).map_err(about(&what))?;
-        let (name, description, config) = check_guardrail(provider, &g.name, g.description.as_deref(), &g.config, g.prices).map_err(about(&what))?;
-        let found = g
-            .id
-            .and_then(|id| guardrails.iter().position(|x| x.id == id))
-            .or_else(|| guardrails.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id)));
+        let (name, description, config) =
+            check_guardrail(provider, &g.name, g.description.as_deref(), &g.config, g.prices).map_err(about(&what))?;
+        let found =
+            g.id.and_then(|id| guardrails.iter().position(|x| x.id == id))
+                .or_else(|| guardrails.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id)));
         match found {
             Some(ix) if guardrails[ix].provider != provider.as_str() => {
-                return Err(bad(format!("{what} is for {} on this gateway but for {} in the file", guardrails[ix].provider, provider.as_str())));
+                return Err(bad(format!(
+                    "{what} is for {} on this gateway but for {} in the file",
+                    guardrails[ix].provider,
+                    provider.as_str()
+                )));
             }
             Some(ix) => {
                 claim(&mut claimed, guardrails[ix].id, &what)?;
@@ -550,7 +555,9 @@ pub(super) async fn import(
         let cred = creds
             .iter()
             .find(|c| c.name == cred_name)
-            .ok_or_else(|| bad(format!("deployment '{model}' uses credential '{cred_name}', which is neither in the file nor on this gateway")))?
+            .ok_or_else(|| {
+                bad(format!("deployment '{model}' uses credential '{cred_name}', which is neither in the file nor on this gateway"))
+            })?
             .clone();
         m.insert("credential_id".into(), json!(cred.id));
         // By name, to this gateway's projects; left out, an existing deployment keeps its own.
@@ -598,12 +605,14 @@ pub(super) async fn import(
         if let Some(ix) = existing {
             input.project_ids.get_or_insert_with(|| deployments[ix].project_ids.clone());
         }
-        check_deployment_fits(&input, provider, Some(id), &cred, &deployments, &routers, &aliases).map_err(about(&format!("deployment {label}")))?;
+        check_deployment_fits(&input, provider, Some(id), &cred, &deployments, &routers, &aliases)
+            .map_err(about(&format!("deployment {label}")))?;
         let row = to_row(id, input, created_at);
         match existing {
             Some(ix) => {
                 let before = &deployments[ix];
-                if before.credential_id == row.credential_id && deployment_doc(before, "", &projects) == deployment_doc(&row, "", &projects) {
+                if before.credential_id == row.credential_id && deployment_doc(before, "", &projects) == deployment_doc(&row, "", &projects)
+                {
                     dep_changes.unchanged += 1;
                 } else {
                     if before.model_name != row.model_name {
@@ -762,15 +771,20 @@ pub(super) async fn import(
 
     // Keys: by id, then by their secret's hash, with their project and guardrails by name.
     let followed_keys = changed_keys.clone();
-    let (mut key_changes, new_keys, matched_keys) = access::import_keys(doc.keys, &mut keys, &project_rows, &guardrails, &mut changed_keys, now)?;
+    let (mut key_changes, new_keys, matched_keys) =
+        access::import_keys(doc.keys, &mut keys, &project_rows, &guardrails, &mut changed_keys, now)?;
     key_changes.updated.extend(
-        keys.iter().filter(|k| followed_keys.contains(&k.id) && !matched_keys.contains(&k.id)).map(|k| format!("{} (follows a rename)", k.name)),
+        keys.iter()
+            .filter(|k| followed_keys.contains(&k.id) && !matched_keys.contains(&k.id))
+            .map(|k| format!("{} (follows a rename)", k.name)),
     );
 
     // Model metadata: renamed models take theirs along, as in the admin API, unless the new name
     // has its own; then the file's entries, by model name as the models will be.
     let named = |m: &str| {
-        deployments.iter().any(|d| d.model_name == m) || routers.iter().any(|r| r.model_name == m) || aliases.iter().any(|a| a.model_name == m)
+        deployments.iter().any(|d| d.model_name == m)
+            || routers.iter().any(|r| r.model_name == m)
+            || aliases.iter().any(|a| a.model_name == m)
     };
     let (mut meta_changes, mut changed_meta) = (Changes::default(), BTreeSet::new());
     for (old, new) in renames.iter().chain(&router_renames).chain(&alias_renames) {

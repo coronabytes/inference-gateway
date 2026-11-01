@@ -159,10 +159,7 @@ pub async fn list(state: &AppState, settings: &CredentialSettings, secrets: &Sec
     });
     let (limits, quotas_error) = match quotas {
         Ok(qs) => (limits(qs.iter().filter_map(|q| Some((q.quota_name()?, q.value()?)))), None),
-        Err(e) => (
-            HashMap::new(),
-            Some(denied_or("servicequotas:ListServiceQuotas", "the quotas", e.code(), &DisplayErrorContext(&e))),
-        ),
+        Err(e) => (HashMap::new(), Some(denied_or("servicequotas:ListServiceQuotas", "the quotas", e.code(), &DisplayErrorContext(&e)))),
     };
 
     let by_id: HashMap<&str, &Foundation> = foundation.iter().map(|f| (f.id.as_str(), f)).collect();
@@ -174,7 +171,16 @@ pub async fn list(state: &AppState, settings: &CredentialSettings, secrets: &Sec
             None => f.name.clone(),
         };
         let (rpm, tpm) = quota(&limits, InferenceKind::OnDemand, &name, &f.name);
-        models.push(BedrockModel { id: f.id.clone(), name, provider: f.provider.clone(), kind: InferenceKind::OnDemand, mode, rpm, tpm, legacy: f.legacy });
+        models.push(BedrockModel {
+            id: f.id.clone(),
+            name,
+            provider: f.provider.clone(),
+            kind: InferenceKind::OnDemand,
+            mode,
+            rpm,
+            tpm,
+            legacy: f.legacy,
+        });
     }
     for p in profiles.iter().filter(|p| *p.status() == InferenceProfileStatus::Active) {
         let id = p.inference_profile_id();

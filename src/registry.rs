@@ -16,8 +16,8 @@ use crate::{
     crypto::SecretBox,
     db,
     model::{
-        AliasRow, AutoRouter, CredentialRow, CredentialSettings, Deployment, DeploymentRow, Mode, ModelAlias, Pricing, ProjectRow, RouterRow, ProviderKind,
-        Rates, Secrets, VirtualKey,
+        AliasRow, AutoRouter, CredentialRow, CredentialSettings, Deployment, DeploymentRow, Mode, ModelAlias, Pricing, ProjectRow,
+        ProviderKind, Rates, RouterRow, Secrets, VirtualKey,
     },
 };
 
@@ -147,7 +147,10 @@ impl Registry {
         snap.projects = projects.into_iter().map(|p| (p.id, Arc::new(p))).collect();
         for g in guardrails {
             let resolved = match creds.get(&g.credential_id) {
-                Some(Ok(c)) if crate::guardrails::GuardrailProvider::parse(&g.provider).map(|p| p.credential_provider()) == Some(c.provider.as_str()) => {
+                Some(Ok(c))
+                    if crate::guardrails::GuardrailProvider::parse(&g.provider).map(|p| p.credential_provider())
+                        == Some(c.provider.as_str()) =>
+                {
                     Ok(c)
                 }
                 Some(Ok(_)) => Err("its credential is for another provider".to_string()),
@@ -270,10 +273,7 @@ fn build_alias(a: AliasRow, targets: &HashMap<Uuid, String>, snap: &Snapshot) ->
     Ok(ModelAlias { model_name: a.model_name, target: target.clone() })
 }
 
-fn build_deployment(
-    row: DeploymentRow,
-    creds: &HashMap<Uuid, Result<ResolvedCredential, String>>,
-) -> Result<Deployment, String> {
+fn build_deployment(row: DeploymentRow, creds: &HashMap<Uuid, Result<ResolvedCredential, String>>) -> Result<Deployment, String> {
     let ctx = |e: String| format!("deployment {} ({}): {e}", row.id, row.model_name);
     let provider = ProviderKind::parse(&row.provider).ok_or_else(|| ctx("unknown provider".into()))?;
     let mode = Mode::parse(&row.mode).ok_or_else(|| ctx(format!("unknown mode {}", row.mode)))?;

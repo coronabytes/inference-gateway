@@ -498,10 +498,7 @@ fn csrf_ok(req: &Request) -> bool {
 
 /// Admin API routes that work signed out (`/admin/api/auth/...`).
 pub fn api_routes() -> Router<AppState> {
-    Router::new()
-        .route("/auth/session", get(session_info))
-        .route("/auth/logout", post(logout))
-        .route("/auth/dev-login", post(dev_login))
+    Router::new().route("/auth/session", get(session_info)).route("/auth/logout", post(logout)).route("/auth/dev-login", post(dev_login))
 }
 
 /// Admin API routes behind the guard.
@@ -831,7 +828,8 @@ async fn discover(policy: &Policy, s: &Sso, cached: bool) -> Result<CoreProvider
 
 async fn client(policy: &Policy, s: &Sso, cached: bool) -> Result<Client, AuthError> {
     let metadata = discover(policy, s, cached).await?;
-    let redirect = RedirectUrl::new(format!("{}{CALLBACK_PATH}", s.public_url)).map_err(|e| AuthError::Oidc(format!("redirect URL: {e}")))?;
+    let redirect =
+        RedirectUrl::new(format!("{}{CALLBACK_PATH}", s.public_url)).map_err(|e| AuthError::Oidc(format!("redirect URL: {e}")))?;
     Ok(CoreClient::from_provider_metadata(metadata, ClientId::new(s.client_id.clone()), s.client_secret.clone().map(ClientSecret::new))
         .set_redirect_uri(redirect))
 }
@@ -856,11 +854,7 @@ async fn exchange(policy: &Policy, s: &Sso, creds: OidcCallback) -> Result<Ident
         issuer: claims.issuer().to_string(),
         subject: claims.subject().to_string(),
         email: claims.email().map(|e| e.to_string()),
-        name: claims
-            .name()
-            .and_then(|n| n.get(None))
-            .map(|n| n.to_string())
-            .or_else(|| claims.preferred_username().map(|u| u.to_string())),
+        name: claims.name().and_then(|n| n.get(None)).map(|n| n.to_string()).or_else(|| claims.preferred_username().map(|u| u.to_string())),
         roles,
     })
 }
@@ -920,14 +914,8 @@ impl<'c> openidconnect::AsyncHttpClient<'c> for HttpClient {
             let (parts, body) = request.into_parts();
             let url = parts.uri.to_string();
             self.1.check_url(&url).map_err(|why| HttpError(format!("address not allowed: {why}")))?;
-            let resp = self
-                .0
-                .request(parts.method, url)
-                .headers(parts.headers)
-                .body(body)
-                .send()
-                .await
-                .map_err(|e| HttpError(error_chain(&e)))?;
+            let resp =
+                self.0.request(parts.method, url).headers(parts.headers).body(body).send().await.map_err(|e| HttpError(error_chain(&e)))?;
             let mut out = openidconnect::http::Response::builder().status(resp.status());
             for (k, v) in resp.headers() {
                 out = out.header(k, v);
@@ -1024,7 +1012,11 @@ fn valid_url(s: &str) -> bool {
     })
 }
 
-async fn put_settings(State(state): State<AppState>, Extension(actor): Extension<Actor>, Json(i): Json<SettingsInput>) -> R<Json<SettingsView>> {
+async fn put_settings(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Json(i): Json<SettingsInput>,
+) -> R<Json<SettingsView>> {
     let existing = db::get_oidc_settings(&state.db).await?;
     let issuer_url = i.issuer_url.trim().trim_end_matches('/').to_string();
     let public_url = i.public_url.trim().trim_end_matches('/').to_string();
@@ -1292,7 +1284,8 @@ mod tests {
         use tower::ServiceExt;
 
         let project = Uuid::now_v7();
-        let state = crate::auth::tests::state_with_keys(&[("sk-gw-project", KeyScope::Project, true), ("sk-gw-orphan", KeyScope::Project, true)]);
+        let state =
+            crate::auth::tests::state_with_keys(&[("sk-gw-project", KeyScope::Project, true), ("sk-gw-orphan", KeyScope::Project, true)]);
         let mut snap = crate::registry::Snapshot::default();
         for (hash, k) in &state.registry.snapshot().keys {
             let mut k = (**k).clone();
@@ -1369,7 +1362,8 @@ mod tests {
         use axum::body::Body;
         use tower::ServiceExt;
 
-        let state = crate::auth::tests::state_with_keys(&[("sk-gw-inf", KeyScope::Inference, true), ("sk-gw-off", KeyScope::Inference, false)]);
+        let state =
+            crate::auth::tests::state_with_keys(&[("sk-gw-inf", KeyScope::Inference, true), ("sk-gw-off", KeyScope::Inference, false)]);
         let id = state.registry.snapshot().keys.values().find(|k| k.name == "sk-gw-inf").unwrap().id;
         // Not literals: the OpenAPI test reads `.route("…")` calls in this file as served routes.
         let (hub, keys) = ("/hub", "/keys");

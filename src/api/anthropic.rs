@@ -9,8 +9,8 @@ use super::{StreamEncoder, sse_event};
 use crate::{
     error::{Dialect, GatewayError},
     ir::{
-        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, McpItem, Message, Part, Reasoning, Role,
-        StopReason, StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
+        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, McpItem, Message, Part, Reasoning, Role, StopReason,
+        StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch, strings,
     },
     util::prefixed_id,
 };
@@ -91,9 +91,7 @@ fn parse_blocks(content: &Value) -> Result<Vec<Part>, GatewayError> {
                 out.push(Part::Text { text: format!("[The MCP tool's result: {text}]"), cache });
             }
             other => {
-                return Err(GatewayError::invalid(format!(
-                    "content block type '{other}' is not supported for this model's provider"
-                )));
+                return Err(GatewayError::invalid(format!("content block type '{other}' is not supported for this model's provider")));
             }
         }
     }
@@ -308,10 +306,7 @@ impl StreamEncoder for AnthropicEncoder {
                     BlockKind::ToolCall { id, name } => json!({ "type": "tool_use", "id": id, "name": name, "input": {} }),
                     BlockKind::Reasoning => json!({ "type": "thinking", "thinking": "", "signature": "" }),
                 };
-                vec![sse_event(
-                    "content_block_start",
-                    &json!({ "type": "content_block_start", "index": index, "content_block": block }),
-                )]
+                vec![sse_event("content_block_start", &json!({ "type": "content_block_start", "index": index, "content_block": block }))]
             }
             StreamEvent::TextDelta { index, text } => vec![delta(self.at(*index), json!({ "type": "text_delta", "text": text }))],
             StreamEvent::ToolArgsDelta { index, json } => {
@@ -334,7 +329,10 @@ impl StreamEncoder for AnthropicEncoder {
                 for block in mcp_blocks(item) {
                     let index = self.next;
                     self.next += 1;
-                    out.push(sse_event("content_block_start", &json!({ "type": "content_block_start", "index": index, "content_block": block })));
+                    out.push(sse_event(
+                        "content_block_start",
+                        &json!({ "type": "content_block_start", "index": index, "content_block": block }),
+                    ));
                     out.push(sse_event("content_block_stop", &json!({ "type": "content_block_stop", "index": index })));
                 }
                 out

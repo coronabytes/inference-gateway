@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { api, type PriceEntry, type PriceImport, type PriceSearch } from "../api";
+import { api, type ImportSummary, type PriceEntry, type PriceImport, type PriceSearch } from "../api";
 import { Banner, Button, Select, TextInput } from "../components/controls";
 import { ErrorBanner } from "../components/ui";
 import { compact, relative, until } from "../format";
@@ -61,8 +61,9 @@ export function PriceCatalog() {
     setImporting(true);
     setNotice(null);
     try {
-      const r = await api<PriceImport>("/prices/import", { method: "POST" });
-      setNotice(`Imported ${importSummary(r)}.`);
+      const r = await api<ImportSummary>("/prices/import", { method: "POST" });
+      const accepted = r.accepted === undefined ? "" : ` ${r.accepted} deployment${r.accepted === 1 ? "" : "s"} took the new prices.`;
+      setNotice(`Imported ${importSummary(r)}.${accepted}`);
       const page = await fetchPage(0);
       setData(page);
       setItems(page.items);

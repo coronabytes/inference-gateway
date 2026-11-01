@@ -18,7 +18,10 @@ use crate::{
     audit::{self, Actor},
     db,
     error::AdminError,
-    guardrails::{self, Callable, GuardrailConfig, GuardrailPrices, GuardrailProvider, GuardrailRow, MISTRAL_CATEGORIES, MODEL_ARMOR_FILTERS, Source, Verdict},
+    guardrails::{
+        self, Callable, GuardrailConfig, GuardrailPrices, GuardrailProvider, GuardrailRow, MISTRAL_CATEGORIES, MODEL_ARMOR_FILTERS, Source,
+        Verdict,
+    },
     registry,
     state::AppState,
     sync::broadcast_reload,
@@ -80,7 +83,11 @@ async fn validate(state: &AppState, provider: GuardrailProvider, i: &GuardrailIn
 /// A guardrail is called with a credential of its own provider.
 pub(super) fn check_credential(provider: GuardrailProvider, credential_provider: &str) -> R<()> {
     if credential_provider != provider.credential_provider() {
-        return Err(AdminError::bad_request(format!("a {} guardrail needs a {} credential", provider.as_str(), provider.credential_provider())));
+        return Err(AdminError::bad_request(format!(
+            "a {} guardrail needs a {} credential",
+            provider.as_str(),
+            provider.credential_provider()
+        )));
     }
     Ok(())
 }
@@ -126,8 +133,12 @@ pub(super) fn check_guardrail(
             if config.model.is_some() || config.threshold.is_some() {
                 return Err(only("a model and a threshold", "Mistral"));
             }
-            let template = config.template.as_deref().ok_or_else(|| AdminError::bad_request("the Model Armor template's id is required"))?;
-            let location = config.location.as_deref().ok_or_else(|| AdminError::bad_request("the Model Armor template's location is required, such as europe-west4"))?;
+            let template =
+                config.template.as_deref().ok_or_else(|| AdminError::bad_request("the Model Armor template's id is required"))?;
+            let location = config
+                .location
+                .as_deref()
+                .ok_or_else(|| AdminError::bad_request("the Model Armor template's location is required, such as europe-west4"))?;
             if !google_id(template) || !google_id(location) || config.project_id.as_deref().is_some_and(|p| !google_id(p)) {
                 return Err(AdminError::bad_request("the template id, location and project are letters, digits, - and _"));
             }
@@ -156,15 +167,21 @@ pub(super) fn check_guardrail(
             if model_armor_fields {
                 return Err(only("a template, location and project", "Model Armor"));
             }
-            let id = config.guardrail_identifier.as_deref().ok_or_else(|| AdminError::bad_request("the guardrail's id or ARN is required"))?;
+            let id =
+                config.guardrail_identifier.as_deref().ok_or_else(|| AdminError::bad_request("the guardrail's id or ARN is required"))?;
             let plain_id = |s: &str| !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
-            let arn_ok = id.starts_with("arn:aws") && guardrails::arn_region(id).is_some() && id.rsplit_once(":guardrail/").is_some_and(|(_, g)| plain_id(g));
+            let arn_ok = id.starts_with("arn:aws")
+                && guardrails::arn_region(id).is_some()
+                && id.rsplit_once(":guardrail/").is_some_and(|(_, g)| plain_id(g));
             if !arn_ok && !plain_id(id) {
                 return Err(AdminError::bad_request(
                     "the guardrail id is lowercase letters and digits (such as 50hag4klvigp), or an ARN such as arn:aws:bedrock:eu-central-1:123456789012:guardrail/50hag4klvigp",
                 ));
             }
-            let version = config.guardrail_version.as_deref().ok_or_else(|| AdminError::bad_request("the guardrail version is required (a number or DRAFT)"))?;
+            let version = config
+                .guardrail_version
+                .as_deref()
+                .ok_or_else(|| AdminError::bad_request("the guardrail version is required (a number or DRAFT)"))?;
             let numbered = !version.starts_with('0') && version.len() <= 8 && version.bytes().all(|b| b.is_ascii_digit());
             if version != "DRAFT" && !numbered {
                 return Err(AdminError::bad_request("the guardrail version is a number such as 1, or DRAFT"));
@@ -201,7 +218,8 @@ pub(crate) struct EnforcedOn {
 }
 
 pub(crate) async fn list_guardrails(State(state): State<AppState>) -> R<Json<Vec<GuardrailListItem>>> {
-    let (rows, creds, holders) = tokio::try_join!(db::list_guardrails(&state.db), db::list_credentials(&state.db), db::guardrail_holders(&state.db))?;
+    let (rows, creds, holders) =
+        tokio::try_join!(db::list_guardrails(&state.db), db::list_credentials(&state.db), db::guardrail_holders(&state.db))?;
     let name = |id: Uuid| creds.iter().find(|c| c.id == id).map(|c| c.name.clone());
     let mut enforced: HashMap<Uuid, EnforcedOn> = HashMap::new();
     for (guardrail, kind, holder) in holders {
@@ -281,7 +299,11 @@ pub(crate) async fn update_guardrail(
     Ok(Json(v))
 }
 
-pub(crate) async fn delete_guardrail(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
+pub(crate) async fn delete_guardrail(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+) -> R<StatusCode> {
     let name = db::get_guardrail(&state.db, id).await?.ok_or_else(AdminError::not_found)?.name;
     if !db::delete_guardrail(&state.db, id).await? {
         return Err(AdminError::not_found());
@@ -320,13 +342,20 @@ pub(crate) struct GuardrailTestResult {
 
 /// Checks a text with the guardrail, as the gateway would check a prompt or a response. Nothing
 /// is stored and nothing is charged to a key; the provider bills the check.
-pub(crate) async fn test_guardrail(State(state): State<AppState>, Path(id): Path<Uuid>, Json(t): Json<GuardrailTest>) -> R<Json<GuardrailTestResult>> {
+pub(crate) async fn test_guardrail(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(t): Json<GuardrailTest>,
+) -> R<Json<GuardrailTestResult>> {
     if t.text.trim().is_empty() {
         return Err(AdminError::bad_request("text is required"));
     }
     let row = db::get_guardrail(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
-    let cred = db::get_credential(&state.db, row.credential_id).await?.ok_or_else(|| AdminError::bad_request("the guardrail's credential is gone"))?;
-    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, cred.secrets.as_deref()).map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let cred = db::get_credential(&state.db, row.credential_id)
+        .await?
+        .ok_or_else(|| AdminError::bad_request("the guardrail's credential is gone"))?;
+    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, cred.secrets.as_deref())
+        .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let g = Callable { row: &row, settings: &cred.settings.0, secrets: &secrets };
     let started = std::time::Instant::now();
     let result = guardrails::check(&state, &g, t.source, &[t.text]).await;

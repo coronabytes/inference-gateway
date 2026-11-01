@@ -15,7 +15,6 @@ use utoipa::{
     openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme},
 };
 
-
 #[derive(OpenApi)]
 #[openapi(
     info(
@@ -117,10 +116,16 @@ impl Modify for SecuritySchemes {
         c.add_security_scheme("virtual_key", bearer("sk-gw-…", "A virtual key, as OpenAI clients send it."));
         c.add_security_scheme(
             "virtual_key_header",
-            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description("x-api-key", "A virtual key, as Anthropic clients send it."))),
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description(
+                "x-api-key",
+                "A virtual key, as Anthropic clients send it.",
+            ))),
         );
         c.add_security_scheme("master_key", bearer("GATEWAY_MASTER_KEY", "The gateway's master key."));
-        c.add_security_scheme("admin_key", bearer("sk-gw-…", "A virtual key whose scope is `admin`, `all` or `project` (its project only)."));
+        c.add_security_scheme(
+            "admin_key",
+            bearer("sk-gw-…", "A virtual key whose scope is `admin`, `all` or `project` (its project only)."),
+        );
         c.add_security_scheme(
             "admin_session",
             SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description(
@@ -475,7 +480,7 @@ mod schemas {
 #[allow(dead_code)]
 mod paths {
     use super::schemas::*;
-    use crate::{admin, admin_auth, api, budget, db, model, oauth};
+    use crate::{admin, admin_auth, api, budget, db, model, oauth, prices};
 
     // ------------------------------------------------------------ inference
 
@@ -2027,10 +2032,11 @@ mod paths {
     /// Import prices
     ///
     /// Replaces the catalog with LiteLLM's current price list. The gateway also does this on its
-    /// own, as often as the `price_import_hours` setting says, unless `price_import` is off.
+    /// own, as often as the `price_import_hours` setting says, unless `price_import` is off. With
+    /// `price_auto_accept` on, deployments whose prices no longer match the catalog take its prices.
     #[utoipa::path(post, path = "/admin/api/prices/import", tag = "Price catalog",
         responses(
-            (status = 200, description = "What changed.", body = db::PriceImport),
+            (status = 200, description = "What changed.", body = prices::ImportSummary),
             (status = 400, description = "The download failed.", body = AdminError),
             (status = 409, description = "An import is running already.", body = AdminError),
         ),

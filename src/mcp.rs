@@ -35,12 +35,11 @@ pub mod router;
 
 use crate::{
     accounting::Tracker,
-    auth,
-    mcp_auth::McpKey,
-    capture,
+    auth, capture,
     crypto::SecretBox,
     error::{Dialect, ErrorKind, GatewayError},
     labels::Labels,
+    mcp_auth::McpKey,
     model::VirtualKey,
     oauth::{Kind, OAuthConfig, Slot, UpstreamAuth, Who},
     sse::SseParser,
@@ -137,7 +136,9 @@ impl McpServer {
     pub fn build(row: McpServerRow, sb: &SecretBox) -> Result<Self, String> {
         let ctx = |e: String| format!("MCP server {} ({}): {e}", row.id, row.name);
         let oauth = row.oauth.as_ref().map(|o| &o.0);
-        let auth = UpstreamAuth::build(Kind::Mcp, row.id, &row.name, &row.auth, row.auth_header.as_deref(), row.secret.as_deref(), oauth, sb).map_err(ctx)?;
+        let auth =
+            UpstreamAuth::build(Kind::Mcp, row.id, &row.name, &row.auth, row.auth_header.as_deref(), row.secret.as_deref(), oauth, sb)
+                .map_err(ctx)?;
         Ok(Self {
             id: row.id,
             name: row.name,
@@ -203,7 +204,14 @@ pub async fn proxy(
     forward(&state, &key, &name, method, &headers, body).await.unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
 }
 
-async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Method, headers: &HeaderMap, body: Bytes) -> Result<Response, GatewayError> {
+async fn forward(
+    state: &AppState,
+    key: &Arc<VirtualKey>,
+    name: &str,
+    method: Method,
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Result<Response, GatewayError> {
     let server = state
         .registry
         .snapshot()
@@ -216,7 +224,9 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
     let messages = if method == Method::POST { messages(&body) } else { Vec::new() };
     // A `tools/call` is a request: one without an id (a string or a number) is refused here rather
     // than passed to a server that might run it unanswered, unlimited, unlogged and uncharged.
-    if let Some(m) = messages.iter().find(|m| m.get("method").and_then(Value::as_str) == Some("tools/call") && m.get("id").and_then(id_key).is_none()) {
+    if let Some(m) =
+        messages.iter().find(|m| m.get("method").and_then(Value::as_str) == Some("tools/call") && m.get("id").and_then(id_key).is_none())
+    {
         let mut t = Tracker::new(state, Some(key), &labels, &server.name, "mcp", false);
         t.tool(m.pointer("/params/name").and_then(Value::as_str).unwrap_or("?"));
         t.fail_status(400, "tools/call without an id");
@@ -239,7 +249,11 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
     }
     // `tools/list` answers are read whole, to take out the hidden tools.
     let lists: Vec<String> = match server.filters_tools() {
-        true => messages.iter().filter(|m| m.get("method").and_then(Value::as_str) == Some("tools/list")).filter_map(|m| m.get("id").and_then(id_key)).collect(),
+        true => messages
+            .iter()
+            .filter(|m| m.get("method").and_then(Value::as_str) == Some("tools/list"))
+            .filter_map(|m| m.get("id").and_then(id_key))
+            .collect(),
         false => Vec::new(),
     };
     let mut calls = Calls::new(state, key, &labels, &server, &messages);
@@ -306,7 +320,11 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
         tracing::warn!(server = %server.name, status = status.as_u16(), "MCP server refused the gateway's credentials");
         let e = GatewayError {
             upstream: true,
-            ..GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, format!("the MCP server refused the gateway's credentials (HTTP {})", status.as_u16()))
+            ..GatewayError::new(
+                ErrorKind::Upstream,
+                StatusCode::BAD_GATEWAY,
+                format!("the MCP server refused the gateway's credentials (HTTP {})", status.as_u16()),
+            )
         };
         calls.fail(&e);
         return Err(e);
@@ -357,7 +375,13 @@ fn call_of(m: &Value) -> Option<(&Value, &str)> {
 
 /// The answer to a POST with `tools/list` requests, read whole, without the tools the server's
 /// filters hide; the replies to tool calls in it settle those calls.
-async fn filtered(resp: reqwest::Response, sse: bool, server: &McpServer, lists: &[String], calls: &mut Calls) -> Result<Bytes, GatewayError> {
+async fn filtered(
+    resp: reqwest::Response,
+    sse: bool,
+    server: &McpServer,
+    lists: &[String],
+    calls: &mut Calls,
+) -> Result<Bytes, GatewayError> {
     let mut body = resp.bytes_stream();
     let mut buf = Vec::new();
     while let Some(chunk) = body.next().await {
@@ -377,7 +401,8 @@ async fn filtered(resp: reqwest::Response, sse: bool, server: &McpServer, lists:
         }
     };
     if !sse {
-        let mut v: Value = serde_json::from_slice(&buf).map_err(|_| GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "the MCP server's answer is not JSON"))?;
+        let mut v: Value = serde_json::from_slice(&buf)
+            .map_err(|_| GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "the MCP server's answer is not JSON"))?;
         match &mut v {
             Value::Array(batch) => batch.iter_mut().for_each(&mut edit),
             m => edit(m),
@@ -716,7 +741,9 @@ pub async fn probe(state: &AppState, server: &McpServer) -> Result<Probe, String
     let auth = match server.auth.header(state, None).await {
         Ok(a) => a,
         Err(e) if e.not_signed_in() => {
-            return Err("each key signs in to this server on its own; sign a key in on the Access page, then call the server with it".into());
+            return Err(
+                "each key signs in to this server on its own; sign a key in on the Access page, then call the server with it".into()
+            );
         }
         Err(e) => return Err(e.message()),
     };
@@ -783,7 +810,10 @@ async fn rpc(state: &AppState, server: &McpServer, session: &Session, msg: &Valu
             405 => " (check the URL: it is the server's MCP endpoint, often ending in /mcp)",
             _ => "",
         };
-        return Err(RpcError { status: Some(status.as_u16()), message: format!("{method}: the server answered HTTP {}{hint}", status.as_u16()) });
+        return Err(RpcError {
+            status: Some(status.as_u16()),
+            message: format!("{method}: the server answered HTTP {}{hint}", status.as_u16()),
+        });
     }
     let Some(id) = msg.get("id") else { return Ok((session, Value::Null)) };
     let mut body = resp.bytes_stream();
@@ -911,8 +941,19 @@ mod tests {
     }
 
     pub(super) fn server(id: Uuid) -> McpServer {
-        McpServer { id, name: "s".into(), url: "http://x".into(), auth: UpstreamAuth::None, tags: vec![], project_ids: vec![], timeout: Duration::from_secs(1),
-            allowed_tools: vec![], denied_tools: vec![], price_per_call: 0.0, tool_prices: BTreeMap::new() }
+        McpServer {
+            id,
+            name: "s".into(),
+            url: "http://x".into(),
+            auth: UpstreamAuth::None,
+            tags: vec![],
+            project_ids: vec![],
+            timeout: Duration::from_secs(1),
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            price_per_call: 0.0,
+            tool_prices: BTreeMap::new(),
+        }
     }
 
     #[tokio::test]
@@ -943,10 +984,16 @@ mod tests {
             }
             let id = m["id"].clone();
             let result = match (m["method"].as_str(), m.pointer("/params/name").and_then(Value::as_str)) {
-                (Some("initialize"), _) => return ([(SESSION, "up-1")], Json(json!({ "jsonrpc": "2.0", "id": id, "result": {} }))).into_response(),
-                (Some("tools/list"), _) => json!({ "tools": (["echo", "fail", "secret"].map(|n| json!({ "name": n, "inputSchema": { "type": "object" } })).to_vec()) }),
+                (Some("initialize"), _) => {
+                    return ([(SESSION, "up-1")], Json(json!({ "jsonrpc": "2.0", "id": id, "result": {} }))).into_response();
+                }
+                (Some("tools/list"), _) => {
+                    json!({ "tools": (["echo", "fail", "secret"].map(|n| json!({ "name": n, "inputSchema": { "type": "object" } })).to_vec()) })
+                }
                 (Some("tools/call"), Some("fail")) => json!({ "content": [{ "type": "text", "text": "it broke" }], "isError": true }),
-                (Some("tools/call"), _) if headers.get(SESSION).map(|v| v.as_bytes()) != Some(b"up-1") => return StatusCode::NOT_FOUND.into_response(),
+                (Some("tools/call"), _) if headers.get(SESSION).map(|v| v.as_bytes()) != Some(b"up-1") => {
+                    return StatusCode::NOT_FOUND.into_response();
+                }
                 (Some("tools/call"), _) => json!({ "content": [{ "type": "text", "text": m.pointer("/params/arguments/text") }] }),
                 _ => return StatusCode::ACCEPTED.into_response(),
             };
@@ -965,7 +1012,8 @@ mod tests {
 
     async fn call(app: &axum::Router, path: &str, session: Option<&str>, body: Value) -> (StatusCode, HeaderMap, Value) {
         use tower::ServiceExt;
-        let mut req = axum::http::Request::post(path).header("authorization", "Bearer sk-gw-client").header("content-type", "application/json");
+        let mut req =
+            axum::http::Request::post(path).header("authorization", "Bearer sk-gw-client").header("content-type", "application/json");
         if let Some(s) = session {
             req = req.header(SESSION, s);
         }
@@ -1011,7 +1059,13 @@ mod tests {
         let names: Vec<&str> = reply["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(names, ["echo", "fail"]);
 
-        let (status, _, reply) = call(&app, "/mcp/tools", Some(&session), json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "secret" } })).await;
+        let (status, _, reply) = call(
+            &app,
+            "/mcp/tools",
+            Some(&session),
+            json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "secret" } }),
+        )
+        .await;
         assert_eq!((status, &reply["error"]["code"]), (StatusCode::OK, &json!(-32602)));
         let r = records.try_recv().unwrap();
         assert_eq!((r.tool.as_deref(), r.status_code, r.cost_usd), (Some("secret"), 403, 0.0));
@@ -1028,11 +1082,18 @@ mod tests {
             assert_eq!((r.tool.as_deref(), r.status_code, r.cost_usd), (Some("echo"), 400, 0.0));
         }
 
-        let echo = json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "hi" } } });
+        let echo =
+            json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "hi" } } });
         call(&app, "/mcp/tools", Some(&session), echo).await;
         assert_eq!(records.try_recv().unwrap().cost_usd, 0.01);
         // A tool that reports an error has run, and is charged.
-        call(&app, "/mcp/tools", Some(&session), json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "fail" } })).await;
+        call(
+            &app,
+            "/mcp/tools",
+            Some(&session),
+            json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "fail" } }),
+        )
+        .await;
         let r = records.try_recv().unwrap();
         assert_eq!((r.status_code, r.cost_usd), (422, 0.5));
     }
@@ -1094,7 +1155,8 @@ mod tests {
         assert!(session.len() == TAG_LEN + 4 && session.ends_with("up-1"), "{session}");
         assert!(records.try_recv().is_err(), "only tool calls are logged");
 
-        let echo = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "hi" } } });
+        let echo =
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "hi" } } });
         let (status, _, reply) = call(&app, "/mcp/tools", Some(&session), echo.clone()).await;
         assert_eq!((status, &reply["result"]["content"][0]["text"]), (StatusCode::OK, &json!("hi")));
         let r = records.try_recv().unwrap();
@@ -1111,7 +1173,9 @@ mod tests {
         assert_eq!(records.try_recv().unwrap().status_code, 404);
 
         // Events: the reply comes after a notification, and is read from the stream.
-        let (status, _, reply) = call(&app, "/mcp/events", None, json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "fail" } })).await;
+        let (status, _, reply) =
+            call(&app, "/mcp/events", None, json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "fail" } }))
+                .await;
         assert_eq!((status, &reply["result"]["isError"]), (StatusCode::OK, &json!(true)));
         let r = records.try_recv().unwrap();
         assert_eq!((r.model.as_str(), r.status_code), ("events", 422));

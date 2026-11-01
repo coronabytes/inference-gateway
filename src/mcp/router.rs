@@ -83,7 +83,8 @@ impl ToolRouter {
     /// The routes to offer, by how sure the decision model is that each is needed (`sure`, in
     /// the order of `routes`): those at or above the threshold, surest first, at most `max_routes`.
     pub fn pick<'a>(&self, routes: &[&'a ToolRoute], sure: &[f64]) -> Vec<&'a ToolRoute> {
-        let mut picked: Vec<(&ToolRoute, f64)> = routes.iter().zip(sure).filter(|(_, p)| **p >= self.threshold).map(|(r, p)| (*r, *p)).collect();
+        let mut picked: Vec<(&ToolRoute, f64)> =
+            routes.iter().zip(sure).filter(|(_, p)| **p >= self.threshold).map(|(r, p)| (*r, *p)).collect();
         picked.sort_by(|a, b| b.1.total_cmp(&a.1));
         picked.truncate(self.max_routes.unwrap_or(usize::MAX));
         picked.into_iter().map(|(r, _)| r).collect()
@@ -116,12 +117,25 @@ mod tests {
     use super::*;
 
     fn route(name: &str, tools: &[&str]) -> ToolRoute {
-        ToolRoute { name: name.into(), description: String::new(), server_id: Uuid::nil(), tools: tools.iter().map(|t| t.to_string()).collect() }
+        ToolRoute {
+            name: name.into(),
+            description: String::new(),
+            server_id: Uuid::nil(),
+            tools: tools.iter().map(|t| t.to_string()).collect(),
+        }
     }
 
     #[test]
     fn routes_are_picked_by_threshold_surest_first() {
-        let router = ToolRouter { id: Uuid::nil(), name: "r".into(), decision_model: "d".into(), instructions: None, routes: vec![], threshold: 0.5, max_routes: Some(2) };
+        let router = ToolRouter {
+            id: Uuid::nil(),
+            name: "r".into(),
+            decision_model: "d".into(),
+            instructions: None,
+            routes: vec![],
+            threshold: 0.5,
+            max_routes: Some(2),
+        };
         let (a, b, c, d) = (route("a", &[]), route("b", &[]), route("c", &[]), route("d", &[]));
         let picked = router.pick(&[&a, &b, &c, &d], &[0.6, 0.2, 0.9, 0.5]);
         assert_eq!(picked.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["c", "a"]);

@@ -317,9 +317,7 @@ impl AnthropicHandler {
                         Some("text_delta") => evs.push(StreamEvent::TextDelta { index: i, text: s("text") }),
                         Some("input_json_delta") => evs.push(StreamEvent::ToolArgsDelta { index: i, json: s("partial_json") }),
                         Some("thinking_delta") => evs.push(StreamEvent::ReasoningDelta { index: i, text: s("thinking") }),
-                        Some("signature_delta") => {
-                            evs.push(StreamEvent::SignatureDelta { index: i, signature: s("signature") })
-                        }
+                        Some("signature_delta") => evs.push(StreamEvent::SignatureDelta { index: i, signature: s("signature") }),
                         Some("citations_delta") => evs.push(StreamEvent::Annotation { annotation: d["citation"].clone() }),
                         _ => {}
                     }

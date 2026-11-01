@@ -40,9 +40,7 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Value {
                             messages.push(json!({ "role": "tool", "tool_call_id": call_id, "content": text }));
                         }
                         Part::Text { text, .. } => content.push(json!({ "type": "text", "text": text })),
-                        Part::Image { source, .. } => {
-                            content.push(json!({ "type": "image_url", "image_url": { "url": source.to_url() } }))
-                        }
+                        Part::Image { source, .. } => content.push(json!({ "type": "image_url", "image_url": { "url": source.to_url() } })),
                         Part::File { media_type, data, filename, .. } => content.push(json!({
                             "type": "file",
                             "file": {

@@ -20,9 +20,7 @@ pub struct SecretBox {
 
 impl SecretBox {
     pub fn from_base64(key_b64: &str) -> Result<Self, String> {
-        let key = base64::engine::general_purpose::STANDARD
-            .decode(key_b64.trim())
-            .map_err(|_| "must be base64".to_string())?;
+        let key = base64::engine::general_purpose::STANDARD.decode(key_b64.trim()).map_err(|_| "must be base64".to_string())?;
         if key.len() != 32 {
             return Err(format!("must decode to 32 bytes, got {}", key.len()));
         }
@@ -48,10 +46,7 @@ impl SecretBox {
     pub fn seal(&self, plaintext: &[u8]) -> Vec<u8> {
         let nonce_bytes = crate::util::random_bytes::<NONCE_LEN>();
         let nonce = Nonce::try_from(&nonce_bytes[..]).expect("nonce length");
-        let ciphertext = self
-            .cipher
-            .encrypt(&nonce, plaintext)
-            .expect("AES-GCM encryption cannot fail for in-memory buffers");
+        let ciphertext = self.cipher.encrypt(&nonce, plaintext).expect("AES-GCM encryption cannot fail for in-memory buffers");
         let mut out = Vec::with_capacity(NONCE_LEN + ciphertext.len());
         out.extend_from_slice(&nonce_bytes);
         out.extend_from_slice(&ciphertext);
@@ -71,9 +66,7 @@ impl SecretBox {
         }
         let (nonce, ciphertext) = sealed.split_at(NONCE_LEN);
         let nonce = Nonce::try_from(nonce).map_err(|_| "bad nonce".to_string())?;
-        self.cipher
-            .decrypt(&nonce, ciphertext)
-            .map_err(|_| "decryption failed (wrong GATEWAY_ENCRYPTION_KEY?)".to_string())
+        self.cipher.decrypt(&nonce, ciphertext).map_err(|_| "decryption failed (wrong GATEWAY_ENCRYPTION_KEY?)".to_string())
     }
 
     /// Re-seals a value under the current key: `None` when it already is, the new value when the

@@ -9,8 +9,8 @@ use super::StreamEncoder;
 use crate::{
     error::{Dialect, GatewayError},
     ir::{
-        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, Message, Part, Reasoning, Role, StopReason,
-        StreamEvent, TextBlock, Tool, ToolChoice, Usage, WebSearch,
+        BlockKind, ChatRequest, ChatResponse, Effort, ImageSource, Location, Message, Part, Reasoning, Role, StopReason, StreamEvent,
+        TextBlock, Tool, ToolChoice, Usage, WebSearch,
     },
 };
 
@@ -114,11 +114,7 @@ pub fn parse_request(v: &Value) -> Result<ChatRequest, GatewayError> {
         Some(o @ Value::Object(_)) => o.pointer("/function/name").and_then(Value::as_str).map(|n| ToolChoice::Tool(n.to_string())),
         _ => None,
     };
-    req.max_tokens = v
-        .get("max_completion_tokens")
-        .or_else(|| v.get("max_tokens"))
-        .and_then(Value::as_u64)
-        .map(|n| n as u32);
+    req.max_tokens = v.get("max_completion_tokens").or_else(|| v.get("max_tokens")).and_then(Value::as_u64).map(|n| n as u32);
     req.temperature = v.get("temperature").and_then(Value::as_f64);
     req.top_p = v.get("top_p").and_then(Value::as_f64);
     req.stop = match v.get("stop") {
@@ -292,7 +288,10 @@ mod tests {
         let mut enc = ChatEncoder::new("chatcmpl-1".into(), "m".into(), true);
         let mut out = enc.start();
         out.extend(enc.event(&StreamEvent::TextDelta { index: 0, text: "hi".into() }));
-        out.extend(enc.event(&StreamEvent::Finish { stop_reason: StopReason::EndTurn, usage: Usage { input_tokens: 2, output_tokens: 1, ..Default::default() } }));
+        out.extend(enc.event(&StreamEvent::Finish {
+            stop_reason: StopReason::EndTurn,
+            usage: Usage { input_tokens: 2, output_tokens: 1, ..Default::default() },
+        }));
         let s: String = out.iter().map(|b| String::from_utf8_lossy(b).into_owned()).collect();
         assert!(s.contains("\"content\":\"hi\""));
         assert!(s.contains("\"finish_reason\":\"stop\""));

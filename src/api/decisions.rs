@@ -18,9 +18,9 @@ use sha2::{Digest, Sha256};
 use crate::{
     accounting::{Rollup, Tracker},
     auth::ClientKey,
-    labels::{ClientLabels, Labels},
     error::{Dialect, ErrorKind, GatewayError},
     ir::Usage,
+    labels::{ClientLabels, Labels},
     model::{AutoRouter, Deployment, Mode, ProviderKind, VirtualKey},
     providers::{self, Op},
     state::AppState,
@@ -132,14 +132,9 @@ async fn run(
     }
     let mut candidates = super::usable_deployments(state, &key, &model, Mode::Decision)?;
     if prepared.needs_images {
-        let opted_in = headers
-            .get(IMAGES_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
+        let opted_in = headers.get(IMAGES_HEADER).and_then(|v| v.to_str().ok()).is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
         if !opted_in {
-            return Err(GatewayError::invalid(
-                "images, assets and box questions need the TypeSafe-Danger-Zone-Images: true header",
-            ));
+            return Err(GatewayError::invalid("images, assets and box questions need the TypeSafe-Danger-Zone-Images: true header"));
         }
         candidates.retain(|d| d.provider == ProviderKind::Typesafe);
         if candidates.is_empty() {
@@ -203,7 +198,12 @@ async fn call(state: &AppState, d: &Deployment, p: &Prepared, client_headers: &H
 /// decision call is logged as a child of the router's entry.
 /// Asks the router's decision model which route fits the transcript; returns its name and the
 /// decision's confidence.
-pub async fn choose_route(state: &AppState, router: &AutoRouter, transcript: String, parent: &Arc<Rollup>) -> Result<(String, f64), GatewayError> {
+pub async fn choose_route(
+    state: &AppState,
+    router: &AutoRouter,
+    transcript: String,
+    parent: &Arc<Rollup>,
+) -> Result<(String, f64), GatewayError> {
     let model = &router.decision_model;
     let mut tracker = Tracker::child(state, parent, false, model, "decisions", false);
     let candidates = match super::deployments_for(state, model, Mode::Decision) {
@@ -222,7 +222,8 @@ pub async fn choose_route(state: &AppState, router: &AutoRouter, transcript: Str
         c.request(crate::capture::Body::Json(json!({ "model": model, "state": p.state, "questions": p.questions })));
     }
     let (p, no_headers) = (&p, &HeaderMap::new());
-    let resp = super::with_failover(state, &candidates, model, &mut tracker, |d| async move { call(state, &d, p, no_headers).await }).await?;
+    let resp =
+        super::with_failover(state, &candidates, model, &mut tracker, |d| async move { call(state, &d, p, no_headers).await }).await?;
     tracker.set_usage(usage(&resp));
     if let Some(c) = tracker.log() {
         c.response(crate::capture::Body::Json(resp.clone()));
@@ -275,7 +276,8 @@ pub async fn choose_tools(
         c.request(crate::capture::Body::Json(json!({ "model": model, "state": p.state, "questions": p.questions })));
     }
     let (p, no_headers) = (&p, &HeaderMap::new());
-    let resp = super::with_failover(state, &candidates, model, &mut tracker, |d| async move { call(state, &d, p, no_headers).await }).await?;
+    let resp =
+        super::with_failover(state, &candidates, model, &mut tracker, |d| async move { call(state, &d, p, no_headers).await }).await?;
     tracker.set_usage(usage(&resp));
     if let Some(c) = tracker.log() {
         c.response(crate::capture::Body::Json(resp.clone()));
@@ -290,8 +292,7 @@ pub async fn choose_tools(
 
 const DEFAULT_TOOLS_INSTRUCTIONS: &str =
     "Will answering the conversation's latest request need these tools? Answer true only if the answer would use them.";
-const DEFAULT_ROUTE_INSTRUCTIONS: &str =
-    "Which route should handle this request? Pick the route whose description fits the request best.";
+const DEFAULT_ROUTE_INSTRUCTIONS: &str = "Which route should handle this request? Pick the route whose description fits the request best.";
 
 /// Health check for the admin API: one yes/no question, outside of any key's accounting.
 pub async fn probe(state: &AppState, d: &Deployment) -> Result<Value, GatewayError> {
@@ -431,9 +432,7 @@ fn parse_assets(v: Option<&Value>) -> Result<Map<String, Value>, GatewayError> {
     let assets = v.as_object().ok_or_else(|| GatewayError::invalid("assets must be an object keyed by reference"))?;
     for (reference, a) in assets {
         if reference.trim().is_empty() || reference.len() > MAX_ASSET_REFERENCE_BYTES {
-            return Err(GatewayError::invalid(format!(
-                "asset references must be non-blank and at most {MAX_ASSET_REFERENCE_BYTES} bytes"
-            )));
+            return Err(GatewayError::invalid(format!("asset references must be non-blank and at most {MAX_ASSET_REFERENCE_BYTES} bytes")));
         }
         let invalid = || GatewayError::invalid(format!("assets.{reference} must be {{type: image, format: png|jpg|jpeg, data_base64}}"));
         let o = a.as_object().ok_or_else(invalid)?;
@@ -515,7 +514,10 @@ fn input_message(i: usize, m: &Value, texts: &mut Vec<String>, assets: &mut Map<
                     return Err(GatewayError::invalid(format!("{at}.{k} is not supported")));
                 }
                 if ty == "input_text" {
-                    let text = po.get("text").and_then(Value::as_str).ok_or_else(|| GatewayError::invalid(format!("{at}.text must be a string")))?;
+                    let text = po
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| GatewayError::invalid(format!("{at}.text must be a string")))?;
                     texts.push(text.to_string());
                 } else {
                     let url = po.get("image_url").and_then(Value::as_str).unwrap_or_default();
@@ -548,7 +550,14 @@ fn image_asset(url: &str) -> Option<(String, Value)> {
     if !params.any(|p| p.trim() == "base64") {
         return None;
     }
-    let data: String = data.chars().map(|c| match c { '-' => '+', '_' => '/', c => c }).collect();
+    let data: String = data
+        .chars()
+        .map(|c| match c {
+            '-' => '+',
+            '_' => '/',
+            c => c,
+        })
+        .collect();
     if !is_base64(&data) {
         return None;
     }
@@ -691,8 +700,7 @@ fn decisions_answer(q: &Question, a: &Value) -> Option<Value> {
             };
             let picked = a.get("choice")?.as_str()?;
             let choice = values.iter().find(|v| key(v) == picked).cloned().unwrap_or_else(|| picked.into());
-            let probabilities: Vec<Value> =
-                values.iter().map(|v| json!({ "value": v, "probability": probability(&key(v)) })).collect();
+            let probabilities: Vec<Value> = values.iter().map(|v| json!({ "value": v, "probability": probability(&key(v)) })).collect();
             json!({ "type": "choice", "name": q.name, "choice": choice, "probabilities": probabilities, "confidence": number("confidence")? })
         }
         (Asked::Score(labels), "score") => {

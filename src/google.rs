@@ -52,9 +52,8 @@ impl ServiceAccount {
 
     fn key_pair(&self) -> Result<RsaKeyPair, String> {
         let b64: String = self.private_key.lines().filter(|l| !l.starts_with("-----")).map(str::trim).collect();
-        let der = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .map_err(|_| "the key file's private_key is not a PEM key".to_string())?;
+        let der =
+            base64::engine::general_purpose::STANDARD.decode(b64).map_err(|_| "the key file's private_key is not a PEM key".to_string())?;
         RsaKeyPair::from_pkcs8(&der).map_err(|_| "the key file's private_key is not an RSA PKCS#8 key".to_string())
     }
 }
@@ -119,7 +118,10 @@ impl Google {
         }
         let built = match key {
             None => Builder::default().with_scopes([SCOPE]).build_access_token_credentials().map_err(|e| {
-                GatewayError::unavailable(format!("no Google Application Default Credentials in the gateway's environment: {}", first_line(&e.to_string())))
+                GatewayError::unavailable(format!(
+                    "no Google Application Default Credentials in the gateway's environment: {}",
+                    first_line(&e.to_string())
+                ))
             })?,
             Some(_) => {
                 let json = secrets.google_service_account.as_deref().unwrap_or_default();
@@ -186,10 +188,9 @@ mod tests {
         // No token endpoint is called (the file's points elsewhere): the token is a signed JWT.
         let secrets = Secrets { google_service_account: Some(key_file()), ..Default::default() };
         let token = Google::default().access_token(&CredentialSettings::default(), &secrets).await.unwrap();
-        let claims: Value = serde_json::from_slice(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(token.split('.').nth(1).unwrap()).unwrap(),
-        )
-        .unwrap();
+        let claims: Value =
+            serde_json::from_slice(&base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(token.split('.').nth(1).unwrap()).unwrap())
+                .unwrap();
         assert_eq!(claims["iss"], "gw@p1.iam.gserviceaccount.com");
         assert_eq!(claims["scope"], SCOPE);
     }

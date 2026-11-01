@@ -88,7 +88,12 @@ pub(super) fn project_doc(p: &ProjectRow, guardrails: &[GuardrailRow]) -> Projec
 }
 
 /// Projects: by id, then by name. Returns what changed and the ids to write.
-pub(super) fn import_projects(docs: Vec<ProjectDoc>, projects: &mut Vec<ProjectRow>, guardrails: &[GuardrailRow], now: DateTime<Utc>) -> R<(Changes, HashSet<Uuid>)> {
+pub(super) fn import_projects(
+    docs: Vec<ProjectDoc>,
+    projects: &mut Vec<ProjectRow>,
+    guardrails: &[GuardrailRow],
+    now: DateTime<Utc>,
+) -> R<(Changes, HashSet<Uuid>)> {
     let (mut changes, mut changed, mut claimed) = (Changes::default(), HashSet::new(), HashSet::new());
     let file_ids: HashSet<Uuid> = docs.iter().filter_map(|d| d.id).collect();
     for d in docs {
@@ -103,9 +108,9 @@ pub(super) fn import_projects(docs: Vec<ProjectDoc>, projects: &mut Vec<ProjectR
         }
         check_budget(d.max_budget_usd, d.budget_period.as_deref()).map_err(|e| bad(format!("{what}: {}", e.1)))?;
         let guardrail_ids = guardrail_ids(&d.guardrails, guardrails, &what)?;
-        let found = d.id.and_then(|id| projects.iter().position(|x| x.id == id)).or_else(|| {
-            projects.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id))
-        });
+        let found =
+            d.id.and_then(|id| projects.iter().position(|x| x.id == id))
+                .or_else(|| projects.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id)));
         let row = |id: Uuid, spend_reset_at: Option<DateTime<Utc>>, created_at: DateTime<Utc>| ProjectRow {
             id,
             name: name.clone(),
@@ -233,7 +238,10 @@ pub(super) fn import_keys(
         if name.is_empty() || name.len() > 200 {
             return Err(bad(format!("{what}: the name must be 1-200 characters")));
         }
-        let hash = hex::decode(d.key_hash.trim()).ok().filter(|h| h.len() == 32).ok_or_else(|| bad(format!("{what}: key_hash must be 64 hex digits")))?;
+        let hash = hex::decode(d.key_hash.trim())
+            .ok()
+            .filter(|h| h.len() == 32)
+            .ok_or_else(|| bad(format!("{what}: key_hash must be 64 hex digits")))?;
         let prefix = d.key_prefix.trim().to_string();
         if prefix.is_empty() || prefix.len() > 64 {
             return Err(bad(format!("{what}: key_prefix must be 1-64 characters")));
@@ -252,7 +260,9 @@ pub(super) fn import_keys(
             ),
         };
         match (project, d.scope) {
-            (Some(_), s) if !s.fits_project() => return Err(bad(format!("{what}: a key with the {} scope stays outside projects", s.as_str()))),
+            (Some(_), s) if !s.fits_project() => {
+                return Err(bad(format!("{what}: a key with the {} scope stays outside projects", s.as_str())));
+            }
             (None, KeyScope::Project) => return Err(bad(format!("{what}: a key with the project scope needs a project"))),
             _ => {}
         }
@@ -343,7 +353,8 @@ mod tests {
     use super::*;
 
     fn key(name: &str, hash: u8) -> VirtualKey {
-        let mut k = serde_json::from_value::<KeyDoc>(json!({ "name": name, "key_hash": hex::encode([hash; 32]), "key_prefix": "sk-gw-…" })).unwrap();
+        let mut k = serde_json::from_value::<KeyDoc>(json!({ "name": name, "key_hash": hex::encode([hash; 32]), "key_prefix": "sk-gw-…" }))
+            .unwrap();
         k.id = Some(Uuid::now_v7());
         let mut keys = Vec::new();
         import_keys(vec![k], &mut keys, &[], &[], &mut HashSet::new(), Utc::now()).unwrap();
@@ -370,7 +381,10 @@ mod tests {
         let docs: Vec<KeyDoc> = [renamed, by_hash, new].into_iter().map(|v| serde_json::from_value(v).unwrap()).collect();
         let mut changed = HashSet::new();
         let (changes, created, matched) = import_keys(docs, &mut keys, &[], &[], &mut changed, Utc::now()).unwrap();
-        assert_eq!((changes.created, changes.updated, changes.unchanged), (vec!["c".to_string()], vec!["a2, renamed from a".to_string()], 1));
+        assert_eq!(
+            (changes.created, changes.updated, changes.unchanged),
+            (vec!["c".to_string()], vec!["a2, renamed from a".to_string()], 1)
+        );
         assert_eq!(keys[0].key_hash, a.key_hash);
         assert_eq!((matched.len(), created.len(), changed.len()), (3, 1, 1));
         assert_eq!(keys[2].rpm_limit, Some(5));
@@ -380,7 +394,8 @@ mod tests {
         let e = import_keys(vec![serde_json::from_value(twin).unwrap()], &mut keys.clone(), &[], &[], &mut HashSet::new(), Utc::now());
         assert!(e.is_ok(), "matched by id first: an unknown id with a known secret is that key");
         let scoped = json!({ "name": "e", "key_hash": hex::encode([4; 32]), "key_prefix": "x", "scope": "project" });
-        let e = import_keys(vec![serde_json::from_value(scoped).unwrap()], &mut keys, &[], &[], &mut HashSet::new(), Utc::now()).unwrap_err();
+        let e =
+            import_keys(vec![serde_json::from_value(scoped).unwrap()], &mut keys, &[], &[], &mut HashSet::new(), Utc::now()).unwrap_err();
         assert!(e.1.contains("needs a project"));
     }
 }

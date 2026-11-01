@@ -55,13 +55,7 @@ pub fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<Arc<Virtual
     let presented = presented_key(headers).ok_or_else(|| GatewayError::unauthorized("missing API key"))?;
     let hash = crate::util::sha256(presented.as_bytes());
     // Lookup by SHA-256 of a 256-bit random secret: no timing oracle on the secret itself.
-    let key = state
-        .registry
-        .snapshot()
-        .keys
-        .get(&hash)
-        .cloned()
-        .ok_or_else(|| GatewayError::unauthorized("invalid API key"))?;
+    let key = state.registry.snapshot().keys.get(&hash).cloned().ok_or_else(|| GatewayError::unauthorized("invalid API key"))?;
     for_inference(usable(key)?)
 }
 

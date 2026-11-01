@@ -241,12 +241,17 @@ impl Active {
 /// project (`enforced`), and those it asks for in `HEADER`. A name that is not a guardrail is
 /// refused rather than skipped, as the client expects its text to be screened; so is a request
 /// whose key or project must go through a guardrail that did not load (see `registry`).
-pub fn for_request(all: &BTreeMap<String, Arc<Active>>, enforced: &[Uuid], requested: Option<&str>) -> Result<Vec<Arc<Active>>, GatewayError> {
+pub fn for_request(
+    all: &BTreeMap<String, Arc<Active>>,
+    enforced: &[Uuid],
+    requested: Option<&str>,
+) -> Result<Vec<Arc<Active>>, GatewayError> {
     let mut picked: BTreeMap<&str, Arc<Active>> = BTreeMap::new();
     for id in enforced {
-        let g = all.values().find(|g| g.row.id == *id).ok_or_else(|| {
-            GatewayError::unavailable("a guardrail this key must go through is misconfigured; see the Guardrails page")
-        })?;
+        let g = all
+            .values()
+            .find(|g| g.row.id == *id)
+            .ok_or_else(|| GatewayError::unavailable("a guardrail this key must go through is misconfigured; see the Guardrails page"))?;
         picked.insert(g.row.name.as_str(), g.clone());
     }
     for name in requested.unwrap_or_default().split(',').map(str::trim).filter(|n| !n.is_empty()) {
@@ -482,15 +487,8 @@ fn apply_guardrail_json(out: &aws_sdk_bedrockruntime::operation::apply_guardrail
 /// Posts a guardrail request and returns the JSON it answers.
 async fn send(state: &AppState, g: &Callable<'_>, url: &str, headers: HeaderMap, body: Vec<u8>) -> Result<Value, GatewayError> {
     let started = Instant::now();
-    let resp = state
-        .http
-        .post(url)
-        .headers(headers)
-        .timeout(TIMEOUT)
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| GatewayError::from_reqwest(&e))?;
+    let resp =
+        state.http.post(url).headers(headers).timeout(TIMEOUT).body(body).send().await.map_err(|e| GatewayError::from_reqwest(&e))?;
     let status = resp.status();
     let text = resp.text().await.map_err(|e| GatewayError::from_reqwest(&e))?;
     if !status.is_success() {
@@ -561,7 +559,12 @@ async fn model_armor(state: &AppState, g: &Callable<'_>, source: Source, texts: 
 /// Reads Model Armor's answers, one for each text: a filter that matched blocks when the guardrail
 /// blocks on it and is flagged otherwise; sensitive data a de-identify template rewrote is masked
 /// instead. Model Armor reports no usage, so tokens are estimated from the texts' length.
-fn parse_model_armor(answers: &[Value], texts: &[String], cfg: &GuardrailConfig, prices: &GuardrailPrices) -> Result<Verdict, GatewayError> {
+fn parse_model_armor(
+    answers: &[Value],
+    texts: &[String],
+    cfg: &GuardrailConfig,
+    prices: &GuardrailPrices,
+) -> Result<Verdict, GatewayError> {
     let mut findings: Vec<Finding> = Vec::new();
     let mut outputs: Vec<String> = Vec::with_capacity(texts.len());
     let mut add = |f: Finding| {
@@ -595,18 +598,42 @@ fn parse_model_armor(answers: &[Value], texts: &[String], cfg: &GuardrailConfig,
         let pi = &f["pi_and_jailbreak"]["piAndJailbreakFilterResult"];
         if matched(pi) {
             let confidence = pi["confidenceLevel"].as_str().map(str::to_string);
-            add(Finding { policy: "pi_and_jailbreak", kind: "prompt injection or jailbreak".into(), action: action("pi_and_jailbreak"), matched: None, confidence });
+            add(Finding {
+                policy: "pi_and_jailbreak",
+                kind: "prompt injection or jailbreak".into(),
+                action: action("pi_and_jailbreak"),
+                matched: None,
+                confidence,
+            });
         }
         let uris = &f["malicious_uris"]["maliciousUriFilterResult"];
         if matched(uris) {
             for u in uris["maliciousUriMatchedItems"].as_array().into_iter().flatten() {
                 let uri = u["uri"].as_str().map(str::to_string);
-                add(Finding { policy: "malicious_uris", kind: "malicious URI".into(), action: action("malicious_uris"), matched: uri, confidence: None });
+                add(Finding {
+                    policy: "malicious_uris",
+                    kind: "malicious URI".into(),
+                    action: action("malicious_uris"),
+                    matched: uri,
+                    confidence: None,
+                });
             }
-            add(Finding { policy: "malicious_uris", kind: "malicious URI".into(), action: action("malicious_uris"), matched: None, confidence: None });
+            add(Finding {
+                policy: "malicious_uris",
+                kind: "malicious URI".into(),
+                action: action("malicious_uris"),
+                matched: None,
+                confidence: None,
+            });
         }
         if matched(&f["csam"]["csamFilterFilterResult"]) {
-            add(Finding { policy: "csam", kind: "child sexual abuse material".into(), action: action("csam"), matched: None, confidence: None });
+            add(Finding {
+                policy: "csam",
+                kind: "child sexual abuse material".into(),
+                action: action("csam"),
+                matched: None,
+                confidence: None,
+            });
         }
         let sdp = &f["sdp"]["sdpFilterResult"];
         let deidentified = &sdp["deidentifyResult"];
@@ -692,7 +719,8 @@ fn parse_mistral(v: &Value, cfg: &GuardrailConfig, prices: &GuardrailPrices) -> 
     } else {
         Action::Flagged
     };
-    let outputs = if blocked.is_empty() { vec![] } else { vec![format!("The request was blocked by moderation ({}).", blocked.join(", "))] };
+    let outputs =
+        if blocked.is_empty() { vec![] } else { vec![format!("The request was blocked by moderation ({}).", blocked.join(", "))] };
     let usage = GuardrailUsage { tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0), ..Default::default() };
     Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(v.clone()) }
 }
@@ -828,11 +856,10 @@ mod tests {
         let r = parse_mistral(&v, &block(&["dangerous"]), &prices);
         assert_eq!(r.action, Action::Blocked);
         assert_eq!(r.outputs, ["The request was blocked by moderation (dangerous)."]);
-        assert_eq!(r.findings.iter().map(|f| (f.kind.as_str(), f.action.as_str())).collect::<Vec<_>>(), [
-            ("criminal", "NONE"),
-            ("dangerous", "BLOCKED"),
-            ("pii", "NONE")
-        ]);
+        assert_eq!(
+            r.findings.iter().map(|f| (f.kind.as_str(), f.action.as_str())).collect::<Vec<_>>(),
+            [("criminal", "NONE"), ("dangerous", "BLOCKED"), ("pii", "NONE")]
+        );
         assert_eq!(r.findings[2].confidence.as_deref(), Some("1.00"));
         assert!((r.cost_usd - 179.0 * 0.10 / 1e6).abs() < 1e-15);
 
@@ -861,7 +888,8 @@ mod tests {
                 "text": "is there anything malicious running on [IP_ADDRESS]?", "transformedBytes": "7", "infoTypes": ["IP_ADDRESS"]
             } } }
         } } });
-        let clean = json!({ "sanitizationResult": { "filterMatchState": "NO_MATCH_FOUND", "invocationResult": "SUCCESS", "filterResults": {} } });
+        let clean =
+            json!({ "sanitizationResult": { "filterMatchState": "NO_MATCH_FOUND", "invocationResult": "SUCCESS", "filterResults": {} } });
         let prices = GuardrailPrices::list(GuardrailProvider::ModelArmor);
         let all = GuardrailConfig { block: MODEL_ARMOR_FILTERS.iter().map(|f| f.to_string()).collect(), ..Default::default() };
         let texts = |n: usize| (0..n).map(|i| format!("text {i}")).collect::<Vec<_>>();
@@ -879,7 +907,10 @@ mod tests {
         let r = parse_model_armor(&[clean.clone(), masked], &texts(2), &all, &prices).unwrap();
         assert_eq!(r.action, Action::Masked);
         assert_eq!(r.outputs, ["text 0", "is there anything malicious running on [IP_ADDRESS]?"]);
-        assert_eq!(r.findings.iter().map(|f| (f.policy, f.kind.as_str(), f.action.as_str())).collect::<Vec<_>>(), [("sdp", "IP_ADDRESS", "ANONYMIZED")]);
+        assert_eq!(
+            r.findings.iter().map(|f| (f.policy, f.kind.as_str(), f.action.as_str())).collect::<Vec<_>>(),
+            [("sdp", "IP_ADDRESS", "ANONYMIZED")]
+        );
 
         assert_eq!(parse_model_armor(&[clean], &texts(1), &all, &prices).unwrap().action, Action::Passed);
         assert!(parse_model_armor(&[json!({})], &texts(1), &all, &prices).is_err());

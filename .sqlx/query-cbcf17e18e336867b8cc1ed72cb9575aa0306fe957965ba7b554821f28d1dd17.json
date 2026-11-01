@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE deployments SET input_cost_per_mtok = $3, output_cost_per_mtok = $4, cache_read_cost_per_mtok = $5,\n             cache_write_cost_per_mtok = $6, long_context_threshold = $7, long_input_cost_per_mtok = $8,\n             long_output_cost_per_mtok = $9, long_cache_read_cost_per_mtok = $10, long_cache_write_cost_per_mtok = $11,\n             cost_per_k_searches = $12, base_model = COALESCE(base_model, $13), updated_at = now()\n         WHERE id = $1 AND updated_at = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Int4",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cbcf17e18e336867b8cc1ed72cb9575aa0306fe957965ba7b554821f28d1dd17"
+}

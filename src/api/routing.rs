@@ -309,7 +309,11 @@ mod tests {
         // As is: a translated request gets the nearest effort its model takes later.
         let messages = with(Inbound::Messages, ReasoningEffort::Minimal, json!({ "output_config": null }));
         assert_eq!(messages["output_config"], json!({ "effort": "minimal" }));
-        let off = with(Inbound::Messages, ReasoningEffort::None, json!({ "thinking": { "type": "adaptive" }, "output_config": { "effort": "high", "format": {} } }));
+        let off = with(
+            Inbound::Messages,
+            ReasoningEffort::None,
+            json!({ "thinking": { "type": "adaptive" }, "output_config": { "effort": "high", "format": {} } }),
+        );
         assert_eq!(off["thinking"], json!({ "type": "disabled" }));
         assert_eq!(off["output_config"], json!({ "format": {} }));
     }
@@ -320,7 +324,10 @@ mod tests {
             system: vec![TextBlock { text: "Be brief.".into(), cache: false }],
             messages: vec![
                 Message { role: Role::User, content: vec![Part::Text { text: "Fix my SQL".into(), cache: false }] },
-                Message { role: Role::Assistant, content: vec![Part::ToolCall { id: "1".into(), name: "run".into(), arguments: "{}".into() }] },
+                Message {
+                    role: Role::Assistant,
+                    content: vec![Part::ToolCall { id: "1".into(), name: "run".into(), arguments: "{}".into() }],
+                },
             ],
             ..Default::default()
         };

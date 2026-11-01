@@ -73,9 +73,8 @@ impl Body {
         match self {
             Body::Bytes(b) => {
                 let n = b.len();
-                let v = serde_json::from_slice(&b).unwrap_or_else(|_| {
-                    json!({ "x_gateway_text": crate::util::truncate(&String::from_utf8_lossy(&b), 4096) })
-                });
+                let v = serde_json::from_slice(&b)
+                    .unwrap_or_else(|_| json!({ "x_gateway_text": crate::util::truncate(&String::from_utf8_lossy(&b), 4096) }));
                 (v, n)
             }
             Body::Json(v) => {
@@ -985,7 +984,9 @@ mod tests {
         let mut c = Capture::new("responses", Budget::new(1 << 20));
         c.request(Body::Bytes(Bytes::from(r#"{"model":"m","previous_response_id":"resp_0","input":"I am Ada Lovelace"}"#)));
         c.screened(json!({ "model": "m", "previous_response_id": "resp_0", "input": "I am {NAME}" }));
-        c.response(Body::Json(json!({ "id": "resp_1", "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "Hello" }] }] })));
+        c.response(Body::Json(
+            json!({ "id": "resp_1", "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "Hello" }] }] }),
+        ));
         let s = c.finish(1 << 20);
         // Found by what was sent; the masked request is stored, not indexed.
         assert!(s.text.contains("I am Ada Lovelace") && !s.text.contains("{NAME}"), "{}", s.text);

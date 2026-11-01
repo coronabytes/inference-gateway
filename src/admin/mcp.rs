@@ -18,8 +18,8 @@ use crate::{
     db,
     error::AdminError,
     mcp::{McpAuth, McpServer, McpServerRow, ProbedTool, hub::SEPARATOR},
-    oauth::OAuthConfig,
     model::normalize_tags,
+    oauth::OAuthConfig,
     state::AppState,
     sync::broadcast_reload,
 };
@@ -137,7 +137,9 @@ pub(super) fn check_name(name: &str, what: &str) -> R<String> {
         && name.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
         && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
     if !ok {
-        return Err(AdminError::bad_request(format!("the {what}'s name is 1-64 lowercase letters, digits, - and _, starting with a letter or digit")));
+        return Err(AdminError::bad_request(format!(
+            "the {what}'s name is 1-64 lowercase letters, digits, - and _, starting with a letter or digit"
+        )));
     }
     Ok(name.to_string())
 }
@@ -220,7 +222,9 @@ fn check_oauth(state: &AppState, auth: McpAuth, oauth: Option<OAuthConfig>) -> R
     let mut scopes: Vec<String> = o.scopes.iter().flat_map(|s| s.split_whitespace()).map(str::to_string).collect();
     scopes.dedup();
     if let Some(m) = o.token_auth.as_deref().filter(|m| !matches!(*m, "client_secret_basic" | "client_secret_post" | "none")) {
-        return Err(AdminError::bad_request(format!("'{m}' is not a token authentication: use client_secret_basic, client_secret_post or none")));
+        return Err(AdminError::bad_request(format!(
+            "'{m}' is not a token authentication: use client_secret_basic, client_secret_post or none"
+        )));
     }
     // The resource and the redirect URI are compared as given, so only checked to be URLs.
     let url = |u: Option<String>, what: &str| -> R<Option<String>> {
@@ -231,7 +235,9 @@ fn check_oauth(state: &AppState, auth: McpAuth, oauth: Option<OAuthConfig>) -> R
         }
     };
     if !crate::oauth::valid_sign_in_by(&o.sign_in_by) {
-        return Err(AdminError::bad_request("sign-ins are per key, per tenant ([\"tenant\"]) or per tenant and user ([\"tenant\", \"user\"])"));
+        return Err(AdminError::bad_request(
+            "sign-ins are per key, per tenant ([\"tenant\"]) or per tenant and user ([\"tenant\", \"user\"])",
+        ));
     }
     if auth != McpAuth::OAuthUser && !o.sign_in_by.is_empty() {
         return Err(AdminError::bad_request("only servers that keys sign in to on their own keep sign-ins per tenant or user"));
@@ -241,7 +247,9 @@ fn check_oauth(state: &AppState, auth: McpAuth, oauth: Option<OAuthConfig>) -> R
         Some(d) if !range.contains(&d) => {
             return Err(AdminError::bad_request(format!("unused sign-ins are kept {} to {} days", range.start(), range.end())));
         }
-        Some(_) if auth != McpAuth::OAuthUser => return Err(AdminError::bad_request("only servers that keys sign in to on their own keep sign-ins")),
+        Some(_) if auth != McpAuth::OAuthUser => {
+            return Err(AdminError::bad_request("only servers that keys sign in to on their own keep sign-ins"));
+        }
         _ => {}
     }
     Ok(OAuthConfig {
@@ -291,7 +299,12 @@ pub(super) async fn check_projects(state: &AppState, mut project_ids: Vec<Uuid>)
 }
 
 /// A server's tool filters, sorted and deduplicated, and its prices, checked.
-pub(super) fn check_tools(allowed: Vec<String>, denied: Vec<String>, price_per_call: f64, tool_prices: &BTreeMap<String, f64>) -> R<(Vec<String>, Vec<String>)> {
+pub(super) fn check_tools(
+    allowed: Vec<String>,
+    denied: Vec<String>,
+    price_per_call: f64,
+    tool_prices: &BTreeMap<String, f64>,
+) -> R<(Vec<String>, Vec<String>)> {
     // Tool names as servers give them: case matters; at most 128 characters, without control characters.
     let tool_name = |t: &str| (1..=128).contains(&t.len()) && !t.chars().any(char::is_control);
     let tool_list = |list: Vec<String>, what: &str| -> R<Vec<String>> {
@@ -330,7 +343,15 @@ async fn row(state: &AppState, i: McpServerInput, existing: Option<&McpServerRow
     }
     let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     let url = check_url(state, &i.url)?;
-    let auth = check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), i.oauth, existing.and_then(|e| e.secret.as_deref()), &MCP_RESERVED)?;
+    let auth = check_auth(
+        state,
+        i.auth,
+        i.auth_header.as_deref(),
+        i.secret.as_deref(),
+        i.oauth,
+        existing.and_then(|e| e.secret.as_deref()),
+        &MCP_RESERVED,
+    )?;
     let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;
     let project_ids = check_projects(state, i.project_ids).await?;
     let timeout_secs = i.timeout_secs.unwrap_or(existing.map_or(300, |e| e.timeout_secs));
@@ -394,7 +415,14 @@ pub(crate) async fn update_mcp_server(
     let before = view(existing.clone());
     let row = row(&state, i, Some(&existing)).await?;
     db::update_mcp_server(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
-    let dropped = super::oauth::drop_stale_sign_ins(&state, crate::oauth::Kind::Mcp, id, (&existing.auth, existing.oauth.as_deref()), (&row.auth, row.oauth.as_deref())).await?;
+    let dropped = super::oauth::drop_stale_sign_ins(
+        &state,
+        crate::oauth::Kind::Mcp,
+        id,
+        (&existing.auth, existing.oauth.as_deref()),
+        (&row.auth, row.oauth.as_deref()),
+    )
+    .await?;
     broadcast_reload(&state, "MCP server updated").await;
     tracing::info!(mcp_server = %id, "MCP server updated");
     let v = view(row);
@@ -411,7 +439,11 @@ pub(crate) async fn update_mcp_server(
     Ok(Json(v))
 }
 
-pub(crate) async fn delete_mcp_server(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
+pub(crate) async fn delete_mcp_server(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+) -> R<StatusCode> {
     let name = db::get_mcp_server(&state.db, id).await?.ok_or_else(AdminError::not_found)?.name;
     let routers = super::tool_routers::routers_using(&state, id).await?;
     if !routers.is_empty() {
@@ -451,7 +483,16 @@ pub(crate) async fn test_mcp_server(State(state): State<AppState>, Path(id): Pat
     let result = crate::mcp::probe(&state, &server).await;
     let latency_ms = started.elapsed().as_millis() as u64;
     Ok(Json(match result {
-        Ok(p) => McpServerTestResult { ok: true, latency_ms, protocol_version: p.protocol_version, server_info: p.server_info, tools: p.tools, error: None },
-        Err(e) => McpServerTestResult { ok: false, latency_ms, protocol_version: None, server_info: None, tools: Vec::new(), error: Some(e) },
+        Ok(p) => McpServerTestResult {
+            ok: true,
+            latency_ms,
+            protocol_version: p.protocol_version,
+            server_info: p.server_info,
+            tools: p.tools,
+            error: None,
+        },
+        Err(e) => {
+            McpServerTestResult { ok: false, latency_ms, protocol_version: None, server_info: None, tools: Vec::new(), error: Some(e) }
+        }
     }))
 }

@@ -85,11 +85,7 @@ impl Config {
 /// read before the configuration, for telemetry's `service.instance.id`.
 pub fn instance_id() -> &'static str {
     static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    ID.get_or_init(|| {
-        env::var("GATEWAY_INSTANCE_ID")
-            .or_else(|_| env::var("HOSTNAME"))
-            .unwrap_or_else(|_| crate::util::random_hex(6))
-    })
+    ID.get_or_init(|| env::var("GATEWAY_INSTANCE_ID").or_else(|_| env::var("HOSTNAME")).unwrap_or_else(|_| crate::util::random_hex(6)))
 }
 
 /// Where the console's files are: `ui` next to the binary (`/ui` in the image), else `ui/dist`
@@ -103,10 +99,7 @@ fn ui_dir() -> PathBuf {
 }
 
 fn req(name: &str) -> Result<String, String> {
-    env::var(name)
-        .ok()
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| format!("missing required environment variable {name}"))
+    env::var(name).ok().filter(|v| !v.is_empty()).ok_or_else(|| format!("missing required environment variable {name}"))
 }
 
 fn opt<T: std::str::FromStr>(name: &str, default: T) -> Result<T, String> {

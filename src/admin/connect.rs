@@ -45,18 +45,20 @@ fn host(url: &str) -> String {
 }
 
 async fn pending(state: &AppState, id: &str) -> R<Pending> {
-    let saved = state.cache.peek(&mcp_auth::request_key(id)).await.map_err(|e| AdminError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    saved
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .ok_or_else(|| AdminError(StatusCode::NOT_FOUND, "this sign-in has expired or was answered already; start it again in the app".into()))
+    let saved =
+        state.cache.peek(&mcp_auth::request_key(id)).await.map_err(|e| AdminError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
+    saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or_else(|| {
+        AdminError(StatusCode::NOT_FOUND, "this sign-in has expired or was answered already; start it again in the app".into())
+    })
 }
 
 /// Takes the request: it is answered once.
 async fn take(state: &AppState, id: &str) -> R<Pending> {
-    let saved = state.cache.take(&mcp_auth::request_key(id)).await.map_err(|e| AdminError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    saved
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .ok_or_else(|| AdminError(StatusCode::NOT_FOUND, "this sign-in has expired or was answered already; start it again in the app".into()))
+    let saved =
+        state.cache.take(&mcp_auth::request_key(id)).await.map_err(|e| AdminError(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
+    saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or_else(|| {
+        AdminError(StatusCode::NOT_FOUND, "this sign-in has expired or was answered already; start it again in the app".into())
+    })
 }
 
 /// `GET /admin/api/connect/{id}`: a waiting sign-in, as the console shows it.
@@ -104,7 +106,11 @@ pub(crate) async fn approve(
     let (client, resource) = (p.client_name.clone().unwrap_or_else(|| p.client_id.clone()), p.resource.clone());
     let by = actor.name.clone().unwrap_or_else(|| actor.kind.to_string());
     let redirect = mcp_auth::approve(&state, p, key.id, Some(by)).await.map_err(|e| AdminError(StatusCode::SERVICE_UNAVAILABLE, e))?;
-    audit::Event::new("key", "connect_app").on(key.id, &key.name).details(serde_json::json!({ "client": client, "resource": resource })).record(&state, &actor).await;
+    audit::Event::new("key", "connect_app")
+        .on(key.id, &key.name)
+        .details(serde_json::json!({ "client": client, "resource": resource }))
+        .record(&state, &actor)
+        .await;
     Ok(Json(ConnectAnswer { redirect }))
 }
 
@@ -115,7 +121,11 @@ pub(crate) async fn deny(State(state): State<AppState>, Path(id): Path<String>) 
 }
 
 /// `GET /admin/api/keys/{id}/apps`: the MCP clients signed in as this key.
-pub(crate) async fn list_apps(State(state): State<AppState>, Extension(access): Extension<Access>, Path(id): Path<Uuid>) -> R<Json<Vec<ClientGrant>>> {
+pub(crate) async fn list_apps(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Path(id): Path<Uuid>,
+) -> R<Json<Vec<ClientGrant>>> {
     let key = db::get_key(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     check_sees_key(&access, &key)?;
     Ok(Json(db::list_client_grants(&state.db, id).await?))
@@ -134,6 +144,10 @@ pub(crate) async fn revoke_app(
     let g = db::delete_client_grant(&state.db, id, grant).await?.ok_or_else(AdminError::not_found)?;
     state.mcp_auth.forget_tokens();
     let client = g.client_name.unwrap_or(g.client_id);
-    audit::Event::new("key", "disconnect_app").on(id, &key.name).details(serde_json::json!({ "client": client })).record(&state, &actor).await;
+    audit::Event::new("key", "disconnect_app")
+        .on(id, &key.name)
+        .details(serde_json::json!({ "client": client }))
+        .record(&state, &actor)
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }

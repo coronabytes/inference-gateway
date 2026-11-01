@@ -25,9 +25,9 @@ use serde_json::{Value, json};
 use crate::{
     accounting::Tracker,
     auth::ClientKey,
-    labels::{ClientLabels, Labels},
     error::{Dialect, ErrorKind, GatewayError},
     ir::Usage,
+    labels::{ClientLabels, Labels},
     model::{Deployment, Mode, ProviderKind, VirtualKey},
     providers::{self, Op},
     state::AppState,
@@ -239,7 +239,8 @@ fn bedrock_request(req: &RerankRequest, model_arn: &str) -> Value {
 /// Bedrock's Rerank through the Agent Runtime SDK, the same request as `bedrock_request`.
 async fn bedrock_rerank(state: &AppState, d: &Deployment, req: &RerankRequest, model_arn: &str) -> Result<Vec<Ranked>, GatewayError> {
     use aws_sdk_bedrockagentruntime::types as at;
-    let build = |e: aws_smithy_types::error::operation::BuildError| GatewayError::invalid(format!("not a valid Bedrock rerank request: {e}"));
+    let build =
+        |e: aws_smithy_types::error::operation::BuildError| GatewayError::invalid(format!("not a valid Bedrock rerank request: {e}"));
     let text = |t: &str| at::RerankTextDocument::builder().text(t).build();
     let query = at::RerankQuery::builder().r#type(at::RerankQueryContentType::Text).text_query(text(&req.query)).build().map_err(build)?;
     let sources = req
@@ -389,7 +390,10 @@ mod tests {
         let arn = "arn:aws:bedrock:eu-central-1::foundation-model/amazon.rerank-v1:0";
         let b = bedrock_request(&req(None, false), arn);
         assert_eq!(b["queries"], json!([{ "type": "TEXT", "textQuery": { "text": "q" } }]));
-        assert_eq!(b["sources"][1], json!({ "type": "INLINE", "inlineDocumentSource": { "type": "TEXT", "textDocument": { "text": "b" } } }));
+        assert_eq!(
+            b["sources"][1],
+            json!({ "type": "INLINE", "inlineDocumentSource": { "type": "TEXT", "textDocument": { "text": "b" } } })
+        );
         assert_eq!(b.pointer("/rerankingConfiguration/bedrockRerankingConfiguration/numberOfResults"), Some(&json!(3)));
         assert_eq!(b.pointer("/rerankingConfiguration/bedrockRerankingConfiguration/modelConfiguration/modelArn"), Some(&json!(arn)));
         let v = json!({ "results": [{ "index": 1, "relevanceScore": 0.7 }] });
@@ -398,7 +402,12 @@ mod tests {
 
     #[test]
     fn responses_are_sorted_and_cut_to_top_n() {
-        let ranked = vec![Ranked { index: 0, score: 0.2 }, Ranked { index: 2, score: 0.8 }, Ranked { index: 1, score: 0.5 }, Ranked { index: 9, score: 1.0 }];
+        let ranked = vec![
+            Ranked { index: 0, score: 0.2 },
+            Ranked { index: 2, score: 0.8 },
+            Ranked { index: 1, score: 0.5 },
+            Ranked { index: 9, score: 1.0 },
+        ];
         let usage = Usage { search_units: 1, ..Default::default() };
         let v = response("id", &req(Some(2), true), ranked, &usage);
         assert_eq!(

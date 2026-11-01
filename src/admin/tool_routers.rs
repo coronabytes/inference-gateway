@@ -101,7 +101,12 @@ async fn row(state: &AppState, i: ToolRouterInput, existing: Option<&ToolRouterR
 
 /// Checks an input against the MCP servers (id and name) and decision models there are, and
 /// builds the row it describes.
-pub(super) fn check(i: ToolRouterInput, servers: &[(Uuid, &str)], is_decision_model: impl Fn(&str) -> bool, existing: Option<&ToolRouterRow>) -> R<ToolRouterRow> {
+pub(super) fn check(
+    i: ToolRouterInput,
+    servers: &[(Uuid, &str)],
+    is_decision_model: impl Fn(&str) -> bool,
+    existing: Option<&ToolRouterRow>,
+) -> R<ToolRouterRow> {
     let name = check_name(&i.name, "tool router")?;
     if name.contains(SEPARATOR) {
         return Err(AdminError::bad_request(format!("the tool router's name cannot contain {SEPARATOR}")));
@@ -208,7 +213,11 @@ pub(crate) async fn update_tool_router(
     Ok(Json(v))
 }
 
-pub(crate) async fn delete_tool_router(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
+pub(crate) async fn delete_tool_router(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+) -> R<StatusCode> {
     let name = db::get_tool_router(&state.db, id).await?.ok_or_else(AdminError::not_found)?.name;
     if !db::delete_tool_router(&state.db, id).await? {
         return Err(AdminError::not_found());
@@ -221,5 +230,10 @@ pub(crate) async fn delete_tool_router(State(state): State<AppState>, Extension(
 
 /// The tool routers whose routes use an MCP server, by name: it cannot be deleted while they do.
 pub(crate) async fn routers_using(state: &AppState, server: Uuid) -> R<Vec<String>> {
-    Ok(db::list_tool_routers(&state.db).await?.into_iter().filter(|r| r.routes.0.iter().any(|x| x.server_id == server)).map(|r| r.name).collect())
+    Ok(db::list_tool_routers(&state.db)
+        .await?
+        .into_iter()
+        .filter(|r| r.routes.0.iter().any(|x| x.server_id == server))
+        .map(|r| r.name)
+        .collect())
 }

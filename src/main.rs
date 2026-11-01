@@ -6,18 +6,18 @@ mod affinity;
 mod api;
 mod audit;
 mod auth;
-mod budget;
 mod aws;
-mod capture;
-mod google;
-mod guardrails;
+mod budget;
 mod cache;
+mod capture;
 mod config;
 mod conversations;
 mod crypto;
 mod db;
 mod entra;
 mod error;
+mod google;
+mod guardrails;
 mod ir;
 mod labels;
 mod mcp;
@@ -258,12 +258,13 @@ async fn run() -> Result<(), String> {
         // Vite names everything under assets/ after its content hash, so those files can be cached
         // for good. index.html (and anything else at the root) is revalidated on every load, so a
         // rebuild shows up on a plain reload instead of needing a hard refresh.
-        let assets: Router = Router::new()
-            .fallback_service(ServeDir::new(dir.join("assets")))
-            .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, |res: &Response| {
+        let assets: Router = Router::new().fallback_service(ServeDir::new(dir.join("assets"))).layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            |res: &Response| {
                 // Only hits are immutable; a 404 for a hash that is not there yet must not stick.
                 res.status().is_success().then(|| HeaderValue::from_static("public, max-age=31536000, immutable"))
-            }));
+            },
+        ));
         let index: Router = Router::new()
             .fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html"))))
             .layer(cache_control("no-cache"));
@@ -297,10 +298,7 @@ async fn run() -> Result<(), String> {
 
 fn healthcheck() -> i32 {
     use std::io::{Read, Write};
-    let port = std::env::var("GATEWAY_LISTEN")
-        .ok()
-        .and_then(|a| a.parse::<std::net::SocketAddr>().ok())
-        .map_or(8080, |a| a.port());
+    let port = std::env::var("GATEWAY_LISTEN").ok().and_then(|a| a.parse::<std::net::SocketAddr>().ok()).map_or(8080, |a| a.port());
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let Ok(mut s) = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else { return 1 };
     let _ = s.set_read_timeout(Some(Duration::from_secs(2)));

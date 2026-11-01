@@ -19,15 +19,20 @@ use serde_json::{Value, json};
 use crate::{
     accounting::Tracker,
     auth::ClientKey,
-    labels::{ClientLabels, Labels},
     error::{Dialect, GatewayError},
     ir::Usage,
+    labels::{ClientLabels, Labels},
     model::{Deployment, Mode, ProviderKind, VirtualKey},
     providers::{self, Op},
     state::AppState,
 };
 
-pub async fn embeddings(State(state): State<AppState>, ClientKey(key): ClientKey, ClientLabels(labels): ClientLabels, body: Bytes) -> Response {
+pub async fn embeddings(
+    State(state): State<AppState>,
+    ClientKey(key): ClientKey,
+    ClientLabels(labels): ClientLabels,
+    body: Bytes,
+) -> Response {
     serve(&state, key, labels, body).await.unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
 }
 

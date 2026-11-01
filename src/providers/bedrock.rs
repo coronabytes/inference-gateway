@@ -192,7 +192,9 @@ where
             match tokio::time::timeout(timeout, st.rx.recv()).await {
                 Ok(Ok(Some(ev))) => (st.feed)(ev, &mut out),
                 Ok(Err(e)) => out.push(Err(stream_sdk_error(e))),
-                Err(_) => out.push(Err(GatewayError::upstream_stream(ErrorKind::Timeout, "Bedrock sent nothing within the deployment's timeout"))),
+                Err(_) => {
+                    out.push(Err(GatewayError::upstream_stream(ErrorKind::Timeout, "Bedrock sent nothing within the deployment's timeout")))
+                }
                 Ok(Ok(None)) => {
                     st.eof = true;
                     (st.end)(&mut out);
@@ -256,7 +258,11 @@ fn converse_request(
                 .set_max_tokens(ic.get("maxTokens").and_then(Value::as_i64).map(|n| n as i32))
                 .set_temperature(f("temperature"))
                 .set_top_p(f("topP"))
-                .set_stop_sequences(ic.get("stopSequences").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()))
+                .set_stop_sequences(
+                    ic.get("stopSequences")
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()),
+                )
                 .build(),
         );
     }
@@ -457,8 +463,7 @@ fn document(media_type: &str, data: &str, filename: &Option<String>) -> Result<V
 /// document's name; the extension goes, since `format` gives the type.
 fn document_name(filename: &Option<String>) -> String {
     let stem = filename.as_deref().map(|f| f.rsplit_once('.').map_or(f, |(s, _)| s)).unwrap_or_default();
-    let cleaned: String =
-        stem.chars().map(|c| if c.is_ascii_alphanumeric() || "-()[]".contains(c) { c } else { ' ' }).collect();
+    let cleaned: String = stem.chars().map(|c| if c.is_ascii_alphanumeric() || "-()[]".contains(c) { c } else { ' ' }).collect();
     let name = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     if name.is_empty() { "document".into() } else { name }
 }
@@ -766,13 +771,18 @@ fn event_json(ev: &bt::ConverseStreamOutput) -> Option<(&'static str, Value)> {
     Some(match ev {
         O::ContentBlockStart(e) => {
             let bt::ContentBlockStart::ToolUse(t) = e.start()? else { return None };
-            ("contentBlockStart", json!({ "contentBlockIndex": e.content_block_index(), "start": { "toolUse": { "toolUseId": t.tool_use_id(), "name": t.name() } } }))
+            (
+                "contentBlockStart",
+                json!({ "contentBlockIndex": e.content_block_index(), "start": { "toolUse": { "toolUseId": t.tool_use_id(), "name": t.name() } } }),
+            )
         }
         O::ContentBlockDelta(e) => {
             let delta = match e.delta()? {
                 bt::ContentBlockDelta::Text(t) => json!({ "text": t }),
                 bt::ContentBlockDelta::ToolUse(t) => json!({ "toolUse": { "input": t.input() } }),
-                bt::ContentBlockDelta::ReasoningContent(bt::ReasoningContentBlockDelta::Text(t)) => json!({ "reasoningContent": { "text": t } }),
+                bt::ContentBlockDelta::ReasoningContent(bt::ReasoningContentBlockDelta::Text(t)) => {
+                    json!({ "reasoningContent": { "text": t } })
+                }
                 bt::ContentBlockDelta::ReasoningContent(bt::ReasoningContentBlockDelta::Signature(s)) => {
                     json!({ "reasoningContent": { "signature": s } })
                 }
@@ -815,7 +825,8 @@ mod tests {
 
     #[test]
     fn structured_output_becomes_the_text_format() {
-        let d = crate::providers::tests::deployment(crate::model::ProviderKind::Bedrock, crate::model::ApiStyle::Converse, "anthropic.claude");
+        let d =
+            crate::providers::tests::deployment(crate::model::ProviderKind::Bedrock, crate::model::ApiStyle::Converse, "anthropic.claude");
         let schema = json!({ "type": "object", "properties": { "name": { "type": "string" } } });
         let req = ChatRequest { json_schema: Some(json!({ "name": "contact", "schema": schema, "strict": true })), ..Default::default() };
         let body = build_body(&req, &d).unwrap();
@@ -861,7 +872,8 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(event_json(&start).unwrap().1["start"]["toolUse"]["name"], "f");
-        let stop = bt::ConverseStreamOutput::MessageStop(bt::MessageStopEvent::builder().stop_reason(bt::StopReason::MaxTokens).build().unwrap());
+        let stop =
+            bt::ConverseStreamOutput::MessageStop(bt::MessageStopEvent::builder().stop_reason(bt::StopReason::MaxTokens).build().unwrap());
         assert_eq!(event_json(&stop), Some(("messageStop", json!({ "stopReason": "max_tokens" }))));
     }
 

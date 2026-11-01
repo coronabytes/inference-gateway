@@ -32,8 +32,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    auth,
-    db,
+    auth, db,
     error::{Dialect, GatewayError},
     model::VirtualKey,
     state::AppState,
@@ -150,7 +149,8 @@ fn is_loopback(host: &str) -> bool {
 /// A Client Identifier URL (CIMD 3): https, with a path, without credentials, fragment or dot
 /// segments. Plain http only on loopback, for development (the network policy still decides).
 pub fn check_client_id(raw: &str) -> Result<reqwest::Url, String> {
-    let url = reqwest::Url::parse(raw).map_err(|_| "client_id is not a URL: this gateway only takes clients that identify with a metadata document URL".to_string())?;
+    let url = reqwest::Url::parse(raw)
+        .map_err(|_| "client_id is not a URL: this gateway only takes clients that identify with a metadata document URL".to_string())?;
     let loopback = url.host_str().is_some_and(is_loopback);
     if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
         return Err("client_id must be an https URL".into());
@@ -174,9 +174,8 @@ pub fn check_client_id(raw: &str) -> Result<reqwest::Url, String> {
 
 /// Where a client may be sent back to: https, or http on loopback for programs on the person's computer.
 fn valid_redirect(raw: &str) -> bool {
-    reqwest::Url::parse(raw).is_ok_and(|u| {
-        u.fragment().is_none() && (u.scheme() == "https" || (u.scheme() == "http" && u.host_str().is_some_and(is_loopback)))
-    })
+    reqwest::Url::parse(raw)
+        .is_ok_and(|u| u.fragment().is_none() && (u.scheme() == "https" || (u.scheme() == "http" && u.host_str().is_some_and(is_loopback))))
 }
 
 /// Checks a fetched document (CIMD 4, MCP): it names itself, lists its redirect URIs, and
@@ -191,22 +190,29 @@ pub fn parse_document(client_id: &str, v: &Value) -> Result<ClientDoc, String> {
     }
     match o.get("token_endpoint_auth_method").and_then(Value::as_str) {
         None | Some("none") => {}
-        Some("private_key_jwt") => return Err("this gateway takes public clients only (token_endpoint_auth_method none), not private_key_jwt yet".into()),
+        Some("private_key_jwt") => {
+            return Err("this gateway takes public clients only (token_endpoint_auth_method none), not private_key_jwt yet".into());
+        }
         Some(m) => return Err(format!("token_endpoint_auth_method {m} is not allowed for clients with a metadata document")),
     }
     let has = |field: &str, value: &str| o.get(field).and_then(Value::as_array).is_none_or(|a| a.iter().any(|x| x.as_str() == Some(value)));
     if !has("grant_types", "authorization_code") || !has("response_types", "code") {
         return Err("the client does not use the authorization code flow".into());
     }
-    let redirect_uris: Vec<String> =
-        o.get("redirect_uris").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+    let redirect_uris: Vec<String> = o
+        .get("redirect_uris")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
     if redirect_uris.is_empty() {
         return Err("the client's metadata document lists no redirect_uris".into());
     }
     if let Some(bad) = redirect_uris.iter().find(|u| !valid_redirect(u)) {
         return Err(format!("redirect URI {bad} is neither https nor on localhost"));
     }
-    let text = |field: &str| o.get(field).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(|s| s.chars().take(200).collect::<String>());
+    let text = |field: &str| {
+        o.get(field).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(|s| s.chars().take(200).collect::<String>())
+    };
     Ok(ClientDoc { client_id: client_id.to_string(), client_name: text("client_name"), client_uri: text("client_uri"), redirect_uris })
 }
 
@@ -276,7 +282,11 @@ impl Store {
             return Ok(doc.clone());
         }
         check_client_id(client_id)?;
-        state.cfg.upstream_policy.check_url(client_id).map_err(|why| format!("the client's metadata document is at an address the gateway may not reach: {why}"))?;
+        state
+            .cfg
+            .upstream_policy
+            .check_url(client_id)
+            .map_err(|why| format!("the client's metadata document is at an address the gateway may not reach: {why}"))?;
         let unreadable = |why: String| {
             tracing::info!(client = %client_id, why, "an MCP client's metadata document could not be read");
             format!("the client's metadata document at {client_id} could not be read (see the gateway log)")
@@ -338,7 +348,9 @@ impl Store {
         if c.resource != "/" && c.resource != path.trim_end_matches('/') {
             return Err(GatewayError::unauthorized(format!("the access token is for {}, not this MCP endpoint", c.resource)));
         }
-        auth::key_by_id(state, c.key_id).map_err(|e| if e.status == StatusCode::NOT_FOUND { GatewayError::unauthorized("the access token's key no longer exists") } else { e })
+        auth::key_by_id(state, c.key_id).map_err(|e| {
+            if e.status == StatusCode::NOT_FOUND { GatewayError::unauthorized("the access token's key no longer exists") } else { e }
+        })
     }
 
     /// Forgets what this replica read of a grant's tokens, after a revocation here.
@@ -411,8 +423,10 @@ pub fn challenge(parts: &Parts, token_presented: bool) -> HeaderValue {
     let origin = origin(&parts.headers, &parts.uri);
     let path = parts.uri.path().trim_end_matches('/');
     let error = if token_presented { "error=\"invalid_token\", " } else { "" };
-    HeaderValue::from_str(&format!("Bearer {error}resource_metadata=\"{origin}/.well-known/oauth-protected-resource{path}\", scope=\"{SCOPE}\""))
-        .unwrap_or_else(|_| HeaderValue::from_static("Bearer"))
+    HeaderValue::from_str(&format!(
+        "Bearer {error}resource_metadata=\"{origin}/.well-known/oauth-protected-resource{path}\", scope=\"{SCOPE}\""
+    ))
+    .unwrap_or_else(|_| HeaderValue::from_static("Bearer"))
 }
 
 /// The key an MCP request acts as: an OAuth access token's, or a virtual key presented directly.
@@ -460,7 +474,11 @@ fn refuse_with(status: StatusCode, msg: &str) -> Response {
 
 /// Back to the client with an OAuth error, its `state` and the issuer (RFC 9207).
 fn error_redirect(redirect_uri: &str, error: &str, description: &str, state: Option<&str>, issuer: &str) -> Response {
-    Redirect::to(&with_params(redirect_uri, &[("error", Some(error)), ("error_description", Some(description)), ("state", state), ("iss", Some(issuer))])).into_response()
+    Redirect::to(&with_params(
+        redirect_uri,
+        &[("error", Some(error)), ("error_description", Some(description)), ("state", state), ("iss", Some(issuer))],
+    ))
+    .into_response()
 }
 
 pub fn with_params(base: &str, params: &[(&str, Option<&str>)]) -> String {
@@ -485,9 +503,7 @@ pub fn resource_path(resource: Option<&str>, issuer: &str) -> Result<(String, St
         return Err("resource must not have a query or fragment".into());
     }
     let path = url.path().trim_end_matches('/');
-    let ok = path.is_empty()
-        || path == "/mcp"
-        || path.strip_prefix("/mcp/").is_some_and(|s| !s.is_empty() && !s.contains('/'));
+    let ok = path.is_empty() || path == "/mcp" || path.strip_prefix("/mcp/").is_some_and(|s| !s.is_empty() && !s.contains('/'));
     if !ok {
         return Err(format!("{r} is not an MCP endpoint of this gateway"));
     }
@@ -502,7 +518,10 @@ pub async fn authorize(State(state): State<AppState>, headers: HeaderMap, uri: U
     let Some(client_id) = param("client_id") else { return refuse_page("The app did not say who it is (client_id).") };
     if !state.mcp_auth.allow_authorization() {
         tracing::warn!(client = %client_id, "MCP client sign-ins are being started faster than this replica takes them");
-        return refuse_with(StatusCode::TOO_MANY_REQUESTS, "Too many apps are signing in to this gateway right now; try again in a minute.");
+        return refuse_with(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many apps are signing in to this gateway right now; try again in a minute.",
+        );
     }
     let doc = match state.mcp_auth.document(&state, client_id).await {
         Ok(d) => d,
@@ -563,12 +582,15 @@ pub async fn approve(state: &AppState, request: Pending, key_id: Uuid, created_b
 
 /// Where to send the person who denied a request.
 pub fn denied(request: &Pending) -> String {
-    with_params(&request.redirect_uri, &[
-        ("error", Some("access_denied")),
-        ("error_description", Some("the request was denied")),
-        ("state", request.state.as_deref()),
-        ("iss", Some(&request.issuer)),
-    ])
+    with_params(
+        &request.redirect_uri,
+        &[
+            ("error", Some("access_denied")),
+            ("error_description", Some("the request was denied")),
+            ("state", request.state.as_deref()),
+            ("iss", Some(&request.issuer)),
+        ],
+    )
 }
 
 // ---------------------------------------------------------------- tokens
@@ -610,13 +632,21 @@ fn later(d: Duration) -> DateTime<Utc> {
 pub async fn token(State(state): State<AppState>, headers: HeaderMap, uri: Uri, body: Bytes) -> Response {
     let f = form(&body);
     let param = |k: &str| f.get(k).map(String::as_str).filter(|v| !v.is_empty());
-    let Some(client_id) = param("client_id") else { return token_error(StatusCode::UNAUTHORIZED, "invalid_client", "client_id is required") };
+    let Some(client_id) = param("client_id") else {
+        return token_error(StatusCode::UNAUTHORIZED, "invalid_client", "client_id is required");
+    };
     match param("grant_type") {
         Some("authorization_code") => {
             let Some(code) = param("code") else { return token_error(StatusCode::BAD_REQUEST, "invalid_request", "code is required") };
             let taken = match state.cache.take(&code_key(code)).await {
                 Ok(t) => t,
-                Err(e) => return token_error(StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable", &format!("the code could not be read: {e}")),
+                Err(e) => {
+                    return token_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "temporarily_unavailable",
+                        &format!("the code could not be read: {e}"),
+                    );
+                }
             };
             let Some(a) = taken.and_then(|t| serde_json::from_str::<Approved>(&t).ok()) else {
                 return token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the code is invalid, expired or used");
@@ -628,14 +658,18 @@ pub async fn token(State(state): State<AppState>, headers: HeaderMap, uri: Uri, 
             if param("redirect_uri").is_some_and(|u| u != r.redirect_uri) {
                 return token_error(StatusCode::BAD_REQUEST, "invalid_grant", "redirect_uri differs from the authorization request's");
             }
-            let verified = param("code_verifier").is_some_and(|v| bool::from(subtle::ConstantTimeEq::ct_eq(crate::oauth::challenge(v).as_bytes(), r.code_challenge.as_bytes())));
+            let verified = param("code_verifier").is_some_and(|v| {
+                bool::from(subtle::ConstantTimeEq::ct_eq(crate::oauth::challenge(v).as_bytes(), r.code_challenge.as_bytes()))
+            });
             if !verified {
                 return token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the code_verifier does not match the code_challenge");
             }
             if let Some(res) = param("resource") {
                 match resource_path(Some(res), &origin(&headers, &uri)) {
                     Ok((path, _)) if path == r.resource => {}
-                    _ => return token_error(StatusCode::BAD_REQUEST, "invalid_target", "resource differs from the authorization request's"),
+                    _ => {
+                        return token_error(StatusCode::BAD_REQUEST, "invalid_target", "resource differs from the authorization request's");
+                    }
                 }
             }
             if auth::key_by_id(&state, a.key_id).is_err() {
@@ -664,10 +698,21 @@ pub async fn token(State(state): State<AppState>, headers: HeaderMap, uri: Uri, 
             token_response(&access, &refresh, &grant.scope)
         }
         Some("refresh_token") => {
-            let Some(old) = param("refresh_token") else { return token_error(StatusCode::BAD_REQUEST, "invalid_request", "refresh_token is required") };
+            let Some(old) = param("refresh_token") else {
+                return token_error(StatusCode::BAD_REQUEST, "invalid_request", "refresh_token is required");
+            };
             let (access, refresh, _) = new_tokens();
             let hash = |t: &str| crate::util::sha256(t.as_bytes());
-            let rotated = db::rotate_client_grant(&state.db, client_id, &hash(old), &hash(&access), later(ACCESS_TTL), &hash(&refresh), later(REFRESH_TTL)).await;
+            let rotated = db::rotate_client_grant(
+                &state.db,
+                client_id,
+                &hash(old),
+                &hash(&access),
+                later(ACCESS_TTL),
+                &hash(&refresh),
+                later(REFRESH_TTL),
+            )
+            .await;
             match rotated {
                 Ok(Some(g)) if auth::key_by_id(&state, g.key_id).is_ok() => {
                     // The replaced access token stops working here at once, on other replicas within a minute.
@@ -680,9 +725,17 @@ pub async fn token(State(state): State<AppState>, headers: HeaderMap, uri: Uri, 
                     Ok(Some(id)) => {
                         state.mcp_auth.forget_tokens();
                         tracing::warn!(grant = %id, client = %client_id, "a replaced refresh token was presented again; the grant is revoked");
-                        token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the refresh token was used before; the grant has been revoked, sign in again")
+                        token_error(
+                            StatusCode::BAD_REQUEST,
+                            "invalid_grant",
+                            "the refresh token was used before; the grant has been revoked, sign in again",
+                        )
                     }
-                    Ok(None) => token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the refresh token is invalid, expired, used or not this client's"),
+                    Ok(None) => token_error(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_grant",
+                        "the refresh token is invalid, expired, used or not this client's",
+                    ),
                     Err(e) => token_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &format!("the grant could not be read: {e}")),
                 },
                 Err(e) => token_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &format!("the grant could not be read: {e}")),
@@ -768,7 +821,14 @@ mod tests {
     #[test]
     fn the_document_cache_is_bounded_and_sign_ins_are_limited() {
         let store = Store::default();
-        let doc = |n: usize| Arc::new(ClientDoc { client_id: format!("https://c.example/{n}.json"), client_name: None, client_uri: None, redirect_uris: vec![] });
+        let doc = |n: usize| {
+            Arc::new(ClientDoc {
+                client_id: format!("https://c.example/{n}.json"),
+                client_name: None,
+                client_uri: None,
+                redirect_uris: vec![],
+            })
+        };
         let now = Instant::now();
         for n in 0..MAX_DOCUMENTS {
             store.keep_document(&doc(n).client_id, doc(n), now + Duration::from_secs(100 + n as u64));
@@ -777,7 +837,11 @@ mod tests {
         let docs = store.docs.lock().unwrap();
         assert_eq!(docs.len(), MAX_DOCUMENTS);
         // The one that expired soonest made room.
-        assert!(!docs.contains_key("https://c.example/0.json") && docs.contains_key("https://c.example/1.json") && docs.contains_key("https://c.example/new.json"));
+        assert!(
+            !docs.contains_key("https://c.example/0.json")
+                && docs.contains_key("https://c.example/1.json")
+                && docs.contains_key("https://c.example/new.json")
+        );
         drop(docs);
 
         for _ in 0..AUTHORIZE_PER_MINUTE {
