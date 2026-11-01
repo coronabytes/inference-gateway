@@ -70,6 +70,27 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   return data as T;
 }
 
+/** The most rows a list endpoint returns at once (its `limit`). */
+const MAX_PAGE = 1000;
+
+/**
+ * The first `want` rows of a list endpoint that takes `limit` and `offset`, in as few requests as
+ * the endpoint allows, and whether it has more.
+ */
+export async function loadPages<T>(path: string, want: number): Promise<{ items: T[]; more: boolean }> {
+  const items: T[] = [];
+  const sep = path.includes("?") ? "&" : "?";
+  for (;;) {
+    const rest = want - items.length;
+    // One more than wanted tells whether there are more.
+    const limit = Math.min(MAX_PAGE, rest + 1);
+    const page = await api<T[]>(`${path}${sep}limit=${limit}&offset=${items.length}`);
+    if (limit === rest + 1) return { items: items.concat(page.slice(0, rest)), more: page.length > rest };
+    items.push(...page);
+    if (page.length < limit) return { items, more: false };
+  }
+}
+
 /** `GET /admin/api/auth/session`: works signed out. */
 export type SessionInfo = S["SessionInfo"];
 

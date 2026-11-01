@@ -15,9 +15,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    LIST_BUDGET_LOOKUPS, R,
+    LIST_BUDGET_LOOKUPS, R, csv_ids,
     keys::{check_budget, pick_guardrails, restart_spend},
-    search_text, yes,
+    page, search_text, yes,
 };
 use crate::{
     admin::auth::Access,
@@ -93,6 +93,12 @@ fn project_fields(i: ProjectInput) -> R<(String, Option<String>)> {
 pub(crate) struct ProjectQuery {
     /// Just the projects whose name or description contains this text, ignoring case.
     q: Option<String>,
+    /// Just these projects (ids, comma-separated).
+    ids: Option<String>,
+    /// At most this many projects (1 to 1000), by name; all without it.
+    limit: Option<i64>,
+    /// Projects to skip, with `limit`.
+    offset: Option<i64>,
 }
 
 /// List projects
@@ -108,7 +114,8 @@ pub(super) async fn list_projects(
     Query(q): Query<ProjectQuery>,
 ) -> R<Json<Vec<ProjectView>>> {
     let search = search_text(q.q.as_deref());
-    let projects = db::list_projects(&state.db, search.as_deref(), access.projects()).await?;
+    let ids = csv_ids(q.ids.as_deref(), "ids")?;
+    let projects = db::list_projects(&state.db, search.as_deref(), access.projects(), ids.as_deref(), page(q.limit, q.offset)?).await?;
     let views = futures::stream::iter(projects.into_iter().map(|(project, keys)| ProjectView::new(&state, project, keys)));
     Ok(Json(views.buffered(LIST_BUDGET_LOOKUPS).collect().await))
 }
@@ -206,7 +213,11 @@ pub(super) async fn update_project(
     if !changes.is_empty() {
         audit::Event::new("project", "update").on(id, &p.name).details(changes.into()).record(&state, &actor).await;
     }
-    let keys = db::list_projects(&state.db, None, Some(&[id])).await?.into_iter().find(|(x, _)| x.id == id).map_or(0, |(_, n)| n);
+    let keys = db::list_projects(&state.db, None, Some(&[id]), None, db::Page::default())
+        .await?
+        .into_iter()
+        .find(|(x, _)| x.id == id)
+        .map_or(0, |(_, n)| n);
     Ok(Json(ProjectView::new(&state, p, keys).await))
 }
 

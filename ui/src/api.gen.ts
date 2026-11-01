@@ -6622,6 +6622,13 @@ export interface operations {
                 projects?: string;
                 /** @description Just the keys whose prompts and responses are logged now. */
                 logging?: boolean;
+                /**
+                 * @description At most this many keys (1 to 1000); all without it. Keys come by project name (keys
+                 *     without a project last), newest first, so pages fill the console's project cards in order.
+                 */
+                limit?: number;
+                /** @description Keys to skip, with `limit`. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -7756,6 +7763,12 @@ export interface operations {
             query?: {
                 /** @description Just the projects whose name or description contains this text, ignoring case. */
                 q?: string;
+                /** @description Just these projects (ids, comma-separated). */
+                ids?: string;
+                /** @description At most this many projects (1 to 1000), by name; all without it. */
+                limit?: number;
+                /** @description Projects to skip, with `limit`. */
+                offset?: number;
             };
             header?: never;
             path?: never;

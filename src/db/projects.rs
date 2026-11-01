@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::model::{ProjectRow, PromptLogging};
 
-use super::NamedItem;
+use super::{NamedItem, Page};
 
 /// The projects a user works in.
 pub async fn user_projects(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Uuid>> {
@@ -31,7 +31,15 @@ pub async fn set_user_projects(pool: &PgPool, user_id: Uuid, projects: &[Uuid]) 
 
 /// Projects by name, with how many keys each groups: those whose name or description contains
 /// `search` (lower case), among `projects` (a user's; `None` for all).
-pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option<&[Uuid]>) -> sqlx::Result<Vec<(ProjectRow, i64)>> {
+/// Projects by name, with how many keys each groups: those `search` matches, among `projects` when
+/// given, and of those the ones in `ids` when given, one `page` of them.
+pub async fn list_projects(
+    pool: &PgPool,
+    search: Option<&str>,
+    projects: Option<&[Uuid]>,
+    ids: Option<&[Uuid]>,
+    page: Page,
+) -> sqlx::Result<Vec<(ProjectRow, i64)>> {
     let rows = sqlx::query!(
         r#"SELECT p.id, p.name, p.description, p.enabled, p.max_budget_usd, p.budget_period, p.spend_reset_at,
                   p.guardrail_ids, p.web_search, p.prompt_logging AS "prompt_logging: PromptLogging", p.created_at, p.updated_at,
@@ -39,9 +47,14 @@ pub async fn list_projects(pool: &PgPool, search: Option<&str>, projects: Option
            FROM projects p LEFT JOIN virtual_keys k ON k.project_id = p.id
            WHERE ($1::text IS NULL OR strpos(lower(p.name || ' ' || coalesce(p.description, '')), $1) > 0)
              AND ($2::uuid[] IS NULL OR p.id = ANY($2))
-           GROUP BY p.id ORDER BY lower(p.name)"#,
+             AND ($3::uuid[] IS NULL OR p.id = ANY($3))
+           GROUP BY p.id ORDER BY lower(p.name), p.id
+           LIMIT $4 OFFSET $5"#,
         search,
         projects,
+        ids,
+        page.limit,
+        page.offset,
     )
     .fetch_all(pool)
     .await?;

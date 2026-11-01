@@ -626,6 +626,11 @@ fn card_error(e: String) -> GatewayError {
 
 /// Where clients reach the gateway, as they called it: the forwarded scheme and host when a proxy
 /// is in front of it.
+///
+/// `X-Forwarded-Host` and `X-Forwarded-Proto` are taken as they come. That is by design, not an
+/// oversight: the gateway always runs behind a reverse proxy (see docs/production.md), which sets
+/// both headers and drops any a client sent, so a client cannot choose the address the gateway
+/// publishes (OAuth metadata, client ID documents, sign-in links).
 pub(crate) fn origin(headers: &HeaderMap, uri: &Uri) -> String {
     let h = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).map(|v| v.split(',').next().unwrap_or(v).trim().to_string());
     let host = h("x-forwarded-host")
