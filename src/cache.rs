@@ -238,7 +238,7 @@ impl Cache {
             .set_number_of_retries(2)
             .set_max_delay(Duration::from_secs(2));
         let conn = ConnectionManager::new_lazy_with_config(client.clone(), config)?;
-        Ok(Self { target: Target::Single(client), conn: Conn::Single(conn) })
+        Ok(Self { target: Target::Single(Box::new(client)), conn: Conn::Single(conn) })
     }
 
     fn conn(&self) -> Conn {
