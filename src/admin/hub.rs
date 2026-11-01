@@ -193,9 +193,6 @@ pub(crate) struct HubModel {
     /// Who makes it: the metadata's `vendor`, or without one the vendor its names suggest.
     #[serde(skip_serializing_if = "Option::is_none")]
     vendor: Option<String>,
-    /// Whether `vendor` is suggested from its names rather than saved.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    vendor_suggested: bool,
     tags: Vec<String>,
     /// A model alias's target: the model name it serves.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -412,13 +409,11 @@ pub(crate) async fn hub(
                     std::iter::once(name.as_str()).chain(ds.iter().map(|d| d.upstream_model.as_str())).collect::<Vec<_>>().join(" ");
                 suggest_vendor(&names.to_lowercase()).map(str::to_string)
             };
-            let vendor_suggested = saved.is_none();
             let vendor = saved.or_else(suggested);
             HubModel {
                 name: name.clone(),
                 kind,
                 mode,
-                vendor_suggested: vendor_suggested && vendor.is_some(),
                 vendor,
                 metadata,
                 tags,
@@ -649,7 +644,6 @@ mod tests {
             kind,
             mode,
             vendor: metadata.get("vendor").and_then(Value::as_str).map(str::to_string),
-            vendor_suggested: false,
             metadata,
             tags: Vec::new(),
             target: None,

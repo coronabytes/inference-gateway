@@ -3,8 +3,8 @@ import { api, type Hub, type HubDeployment, type HubModel, type HubPrices, type 
 import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, TextArea, TextInput, useDebounced } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
-import { VendorLogo } from "../components/VendorLogo";
-import { Badge, BracesIcon, DetailsIcon, DocumentIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, PlayIcon, ReasoningIcon, TilesIcon, TokenPrices } from "../components/ui";
+import { VendorIcon, VendorLogo } from "../components/VendorLogo";
+import { AliasIcon, BracesIcon, ChatIcon, DecisionIcon, DetailsIcon, DocumentIcon, EmbeddingIcon, EditIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, PlayIcon, ReasoningIcon, RerankIcon, RouterIcon, TilesIcon, TokenPrices } from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
@@ -19,6 +19,36 @@ const CAPABILITIES: { path: string; label: string; icon: ReactNode }[] = [
   { path: "structured_outputs", label: "Structured output", icon: <BracesIcon /> },
   { path: "server_tools.web_search", label: "Web search", icon: <GlobeIcon /> },
 ];
+
+/** What a model is for as an icon: its mode, or "router". */
+const MODE_ICON: Record<string, ReactNode> = {
+  chat: <ChatIcon />,
+  embedding: <EmbeddingIcon />,
+  decision: <DecisionIcon />,
+  rerank: <RerankIcon />,
+  router: <RouterIcon />,
+};
+
+/**
+ * The Mode filter's choices, with their icons: the modes, and "router". A function, as Models.tsx
+ * (which holds `MODES`) imports this module too and has not run yet when this one loads.
+ */
+const modeOptions = () => [
+  ...MODES.map((m) => ({ value: m.value as string, label: m.label, icon: MODE_ICON[m.value], endpoints: m.endpoints })),
+  { value: "router", label: "Router", icon: MODE_ICON.router, endpoints: "the endpoints of the models it picks among" },
+];
+
+/** A model's mode (or "router") as an icon, named by its tooltip and for screen readers. */
+function ModeIcon({ model: m }: { model: HubModel }) {
+  const mode = m.kind === "router" ? "router" : m.mode;
+  const o = modeOptions().find((x) => x.value === mode);
+  const label = o ? `${o.label}: ${o.endpoints}` : mode;
+  return (
+    <span className="cap-icon mode-icon" role="img" aria-label={o?.label ?? mode} title={label}>
+      {o?.icon ?? mode.charAt(0).toUpperCase()}
+    </span>
+  );
+}
 
 type Capable = { capabilities: Record<string, boolean | null> | null };
 const capabilitiesOf = (m: Capable) => CAPABILITIES.filter((c) => m.capabilities?.[c.path] === true);
@@ -380,14 +410,18 @@ export function ModelHub() {
           />
           <MultiSelect
             caption="Mode"
-            options={[...MODES.filter((m) => knownModes.has(m.value)), ...(knownModes.has("router") ? [{ value: "router", label: "Router" }] : [])]}
+            options={modeOptions().filter((m) => knownModes.has(m.value)).map(({ value, label, icon }) => ({ value, label, icon }))}
             values={modes}
             onChange={setModeFilter}
           />
           {knownVendors.length > 0 && (
             <MultiSelect
               caption="Vendor"
-              options={[...knownVendors.map((v) => ({ value: v, label: v })), { value: NO_VENDOR, label: "No vendor" }]}
+              options={[
+                ...knownVendors.map((v) => ({ value: v, label: v, icon: <VendorIcon vendor={v} /> })),
+                // An empty icon, so the label lines up with the vendors'.
+                { value: NO_VENDOR, label: "No vendor", icon: <VendorIcon vendor="" /> },
+              ]}
               values={vendors}
               onChange={setVendorFilter}
             />
@@ -395,7 +429,7 @@ export function ModelHub() {
           <MultiSelect
             caption="Capability"
             hint="Only models with all the picked capabilities. Clicking a capability's icon on a model picks it too."
-            options={CAPABILITIES.map((c) => ({ value: c.path, label: c.label }))}
+            options={CAPABILITIES.map((c) => ({ value: c.path, label: c.label, icon: c.icon }))}
             values={capFilter}
             onChange={setCapFilter}
           />
@@ -522,17 +556,17 @@ export function ModelHub() {
                       <td className="logo middle">
                         <VendorLogo vendor={m.vendor ?? ""} fallback={m.name} />
                       </td>
-                      <td>
+                      <td className="middle">
                         <div className="hub-model-line">
-                          <span className="hub-name clip" title={displayName(m)}>
+                          <ModeIcon model={m} />
+                          <span className="hub-name clip" title={displayName(m) === m.name ? m.name : `${displayName(m)} (${m.name})`}>
                             {displayName(m)}
                           </span>
-                          <Badge tone="neutral">{m.kind === "router" ? "router" : m.mode}</Badge>
-                          {m.target && <Badge tone="neutral">alias</Badge>}
-                        </div>
-                        <div className="muted small clip">
-                          <Vendor model={m} />
-                          {m.metadata.display_name && <span className="mono" title={m.name}> · {m.name}</span>}
+                          {m.target && (
+                            <span className="alias-icon" role="img" aria-label={`Alias of ${m.target}`} title={`Alias of ${m.target}`}>
+                              <AliasIcon />
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -734,6 +768,7 @@ function ModelTile({
           <VendorLogo vendor={vendor} fallback={m.name} />
         </button>
         <div className="hub-tile-title">
+          <ModeIcon model={m} />
           <div className="hub-name clip" title={name === m.name ? name : `${name} (${m.name})`}>
             {name}
           </div>
@@ -743,15 +778,16 @@ function ModelTile({
           <PlayButton model={m.name} keyId={keyId} />
         </div>
       </div>
+      {m.target && (
+        <p className="hub-tile-alias small">
+          <span className="alias-icon" aria-hidden="true">
+            <AliasIcon />
+          </span>
+          Alias of <span className="mono">{m.target}</span>
+        </p>
+      )}
       {m.metadata.description && <p className="hub-tile-description">{m.metadata.description}</p>}
       <div className="hub-tile-facts small">
-        {/* Most models chat: only the others say what they are. */}
-        {(m.kind === "router" || m.mode !== "chat") && <Badge tone="neutral">{m.kind === "router" ? "router" : m.mode}</Badge>}
-        {m.target && (
-          <span>
-            alias of <span className="mono">{m.target}</span>
-          </span>
-        )}
         {m.max_input_tokens != null && (
           <span
             title={`${m.max_input_tokens.toLocaleString()} input tokens${m.max_output_tokens != null ? `, ${m.max_output_tokens.toLocaleString()} output tokens` : ""}`}
@@ -777,19 +813,6 @@ function ModelTile({
         )}
       </div>
     </article>
-  );
-}
-
-/** A model's vendor; without one saved, the one its names suggest, marked as such. */
-function Vendor({ model }: { model: HubModel }) {
-  const vendor = model.vendor;
-  if (!vendor) return <span className="muted">–</span>;
-  return !model.vendor_suggested ? (
-    <span title={vendor}>{vendor}</span>
-  ) : (
-    <span className="vendor-suggested" title="Suggested from the model's name; edit the model to save it">
-      {vendor}
-    </span>
   );
 }
 

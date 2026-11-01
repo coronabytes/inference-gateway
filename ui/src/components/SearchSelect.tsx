@@ -9,6 +9,8 @@ export interface SelectOption {
   group?: string;
   /** Small text after the label, such as "router". */
   note?: string;
+  /** Drawn before the label in the list, such as a vendor's logo. */
+  icon?: ReactNode;
   /** A child of the last option before it without `indent`, such as a project's key: shown indented. */
   indent?: boolean;
   /** Shown but cannot be picked, e.g. an effort the model does not take; `note` can say why. */
@@ -214,7 +216,14 @@ export function SearchSelect({
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => pick(o)}
                   >
-                    <span>{o.label}</span>
+                    <span>
+                      {o.icon != null && (
+                        <span className="select-icon" aria-hidden="true">
+                          {o.icon}
+                        </span>
+                      )}
+                      {o.label}
+                    </span>
                     {o.note && <span className="select-note">{o.note}</span>}
                   </li>,
                 ];

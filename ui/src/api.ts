@@ -1130,8 +1130,6 @@ export interface HubModel extends HubLimits {
   metadata: ModelMetadata;
   /** Who makes it: the metadata's vendor, or without one the vendor its names suggest. */
   vendor?: string;
-  /** Set when `vendor` is suggested from its names rather than saved. */
-  vendor_suggested?: boolean;
   tags: string[];
   /** Set for a model alias: the model name it serves. */
   target?: string;
