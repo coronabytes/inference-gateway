@@ -218,10 +218,7 @@ pub struct RateDecision {
 
 /// A cluster client for the comma-separated seed nodes in `nodes`; it learns the rest itself.
 fn cluster_builder(nodes: &[String]) -> ClusterClientBuilder {
-    ClusterClientBuilder::new(nodes.to_vec())
-        .connection_timeout(CONNECTION_TIMEOUT)
-        .response_timeout(RESPONSE_TIMEOUT)
-        .retries(2)
+    ClusterClientBuilder::new(nodes.to_vec()).connection_timeout(CONNECTION_TIMEOUT).response_timeout(RESPONSE_TIMEOUT).retries(2)
 }
 
 impl Cache {
@@ -230,9 +227,7 @@ impl Cache {
     pub fn new(url: &str, cluster: bool) -> RedisResult<Self> {
         if cluster {
             let nodes: Vec<String> = url.split(',').map(str::trim).filter(|n| !n.is_empty()).map(String::from).collect();
-            let config = ClusterConfig::new()
-                .set_connection_timeout(CONNECTION_TIMEOUT)
-                .set_response_timeout(RESPONSE_TIMEOUT);
+            let config = ClusterConfig::new().set_connection_timeout(CONNECTION_TIMEOUT).set_response_timeout(RESPONSE_TIMEOUT);
             let conn = cluster_builder(&nodes).build()?.get_pending_async_connection_with_config(config);
             return Ok(Self { target: Target::Cluster(nodes), conn: Conn::Cluster(conn) });
         }
@@ -308,19 +303,10 @@ impl Cache {
         let prev_weight = 1000 - elapsed_permille;
         let cur_key = format!("gw:rl:{{{scope}}}:{window}");
         let prev_key = format!("gw:rl:{{{scope}}}:{}", window - 1);
-        let res: RedisResult<(i64, i64)> = RATE_SCRIPT
-            .key(cur_key)
-            .key(prev_key)
-            .arg(limit)
-            .arg(prev_weight)
-            .arg(incr)
-            .invoke_async(&mut self.conn())
-            .await;
+        let res: RedisResult<(i64, i64)> =
+            RATE_SCRIPT.key(cur_key).key(prev_key).arg(limit).arg(prev_weight).arg(incr).invoke_async(&mut self.conn()).await;
         match res {
-            Ok((allowed, _)) => RateDecision {
-                allowed: allowed == 1,
-                retry_after: (60 - (now_ms % 60_000) / 1000).max(1) as u64,
-            },
+            Ok((allowed, _)) => RateDecision { allowed: allowed == 1, retry_after: (60 - (now_ms % 60_000) / 1000).max(1) as u64 },
             Err(e) => {
                 tracing::warn!(error = %e, "valkey rate check failed; allowing request");
                 RateDecision { allowed: true, retry_after: 0 }
@@ -332,23 +318,14 @@ impl Cache {
     async fn rate_add(&self, scope: &str, amount: u64) {
         let window = crate::util::now_ms() / 60_000;
         let key = format!("gw:rl:{{{scope}}}:{window}");
-        let r: RedisResult<()> = redis::pipe()
-            .incr(&key, amount)
-            .ignore()
-            .expire(&key, 130)
-            .ignore()
-            .query_async(&mut self.conn())
-            .await;
+        let r: RedisResult<()> = redis::pipe().incr(&key, amount).ignore().expire(&key, 130).ignore().query_async(&mut self.conn()).await;
         if let Err(e) = r {
             tracing::warn!(error = %e, "failed to record token usage in valkey");
         }
     }
 
     pub async fn set_cooldown(&self, deployment: Uuid, dur: Duration) {
-        let r: RedisResult<()> = self
-            .conn()
-            .set_ex(format!("gw:cd:{deployment}"), 1, dur.as_secs().max(1))
-            .await;
+        let r: RedisResult<()> = self.conn().set_ex(format!("gw:cd:{deployment}"), 1, dur.as_secs().max(1)).await;
         if let Err(e) = r {
             tracing::warn!(error = %e, "failed to set cooldown");
         }
@@ -357,17 +334,11 @@ impl Cache {
     /// Which of the given deployments are currently cooling down. One command per deployment:
     /// their keys are in different slots.
     pub async fn cooldowns(&self, ids: &[Uuid]) -> Vec<bool> {
-        join_all(ids.iter().map(|id| async move {
-            self.conn().exists::<_, bool>(format!("gw:cd:{id}")).await.unwrap_or(false)
-        }))
-        .await
+        join_all(ids.iter().map(|id| async move { self.conn().exists::<_, bool>(format!("gw:cd:{id}")).await.unwrap_or(false) })).await
     }
 
     pub async fn cooldown_ttls(&self, ids: &[Uuid]) -> HashMap<Uuid, i64> {
-        let ttls = join_all(ids.iter().map(|id| async move {
-            self.conn().ttl::<_, i64>(format!("gw:cd:{id}")).await.unwrap_or(-2)
-        }))
-        .await;
+        let ttls = join_all(ids.iter().map(|id| async move { self.conn().ttl::<_, i64>(format!("gw:cd:{id}")).await.unwrap_or(-2) })).await;
         ids.iter().copied().zip(ttls).filter(|(_, ttl)| *ttl > 0).collect()
     }
 
@@ -458,7 +429,8 @@ impl Cache {
 
     /// Records the key an A2A task or context belongs to, unless another key holds it already.
     pub async fn set_a2a_owner(&self, key: &str, owner: &str, ttl: Duration) {
-        let r: RedisResult<()> = redis::cmd("SET").arg(key).arg(owner).arg("NX").arg("EX").arg(ttl.as_secs().max(1)).query_async(&mut self.conn()).await;
+        let r: RedisResult<()> =
+            redis::cmd("SET").arg(key).arg(owner).arg("NX").arg("EX").arg(ttl.as_secs().max(1)).query_async(&mut self.conn()).await;
         if let Err(e) = r {
             tracing::warn!(error = %e, "failed to save an A2A task's owner");
         }
@@ -519,12 +491,8 @@ impl Cache {
     }
 
     pub async fn instances(&self) -> Vec<serde_json::Value> {
-        let vals: Vec<Option<String>> = INSTANCES_SCRIPT
-            .key(INSTANCES_KEY)
-            .key(INSTANCES_SEEN_KEY)
-            .invoke_async(&mut self.conn())
-            .await
-            .unwrap_or_default();
+        let vals: Vec<Option<String>> =
+            INSTANCES_SCRIPT.key(INSTANCES_KEY).key(INSTANCES_SEEN_KEY).invoke_async(&mut self.conn()).await.unwrap_or_default();
         vals.into_iter().flatten().filter_map(|v| serde_json::from_str(&v).ok()).collect()
     }
 
@@ -630,11 +598,7 @@ impl Cache {
         let mut turn = redis::pipe();
         turn.hset(&key, response_id, sealed).ignore().expire(&key, ttl.as_secs() as i64).ignore();
         let mut index = redis::pipe();
-        index
-            .zadd(CONVERSATIONS_KEY, root, now + ttl.as_secs() as i64)
-            .ignore()
-            .zrembyscore(CONVERSATIONS_KEY, "-inf", now)
-            .ignore();
+        index.zadd(CONVERSATIONS_KEY, root, now + ttl.as_secs() as i64).ignore().zrembyscore(CONVERSATIONS_KEY, "-inf", now).ignore();
         let (mut c1, mut c2) = (self.conn(), self.conn());
         tokio::try_join!(turn.query_async::<()>(&mut c1), index.query_async::<()>(&mut c2)).map(|_| ())
     }

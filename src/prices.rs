@@ -14,15 +14,16 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::{
     audit::{self, Actor},
     db,
     error::AdminError,
-    model::ProviderKind,
+    model::{DeploymentRow, ProviderKind},
     state::AppState,
+    sync::broadcast_reload,
 };
 
 type R<T> = Result<T, AdminError>;
@@ -126,6 +127,20 @@ async fn best_match(State(state): State<AppState>, Query(q): Query<MatchQuery>) 
 /// The admin UI compares the entry with the deployment's prices.
 async fn check(State(state): State<AppState>) -> R<Json<Value>> {
     let deployments = db::list_deployments(&state.db).await?;
+    let entries = catalog_entries(&state, &deployments).await?;
+    let out: Vec<Value> = deployments
+        .iter()
+        .zip(entries)
+        .map(|(d, e)| {
+            let (key, data) = e.unzip();
+            json!({ "deployment_id": d.id, "key": key, "data": data })
+        })
+        .collect();
+    Ok(Json(json!(out)))
+}
+
+/// Each deployment's catalog entry (key and data), in the same order; `None` without one.
+async fn catalog_entries(state: &AppState, deployments: &[DeploymentRow]) -> R<Vec<Option<(String, Value)>>> {
     let wanted: Vec<Vec<String>> = deployments
         .iter()
         .map(|d| match ProviderKind::parse(&d.provider) {
@@ -135,15 +150,138 @@ async fn check(State(state): State<AppState>) -> R<Json<Value>> {
         .collect();
     let keys: Vec<String> = wanted.iter().flatten().cloned().collect::<BTreeSet<_>>().into_iter().collect();
     let found: HashMap<String, Value> = db::get_prices(&state.db, &keys).await?.into_iter().collect();
-    let out: Vec<Value> = deployments
-        .iter()
-        .zip(&wanted)
-        .map(|(d, keys)| {
-            let key = keys.iter().find(|k| found.contains_key(*k));
-            json!({ "deployment_id": d.id, "key": key, "data": key.map(|k| &found[k]) })
-        })
-        .collect();
-    Ok(Json(json!(out)))
+    Ok(wanted.iter().map(|keys| keys.iter().find_map(|k| found.get(k).map(|data| (k.clone(), data.clone())))).collect())
+}
+
+/// A deployment's price fields, as stored (see `DeploymentRow`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Prices {
+    pub input_cost_per_mtok: f64,
+    pub output_cost_per_mtok: f64,
+    pub cache_read_cost_per_mtok: Option<f64>,
+    pub cache_write_cost_per_mtok: Option<f64>,
+    pub long_context_threshold: Option<i32>,
+    pub long_input_cost_per_mtok: Option<f64>,
+    pub long_output_cost_per_mtok: Option<f64>,
+    pub long_cache_read_cost_per_mtok: Option<f64>,
+    pub long_cache_write_cost_per_mtok: Option<f64>,
+    pub cost_per_k_searches: Option<f64>,
+}
+
+impl Prices {
+    fn of(d: &DeploymentRow) -> Self {
+        Self {
+            input_cost_per_mtok: d.input_cost_per_mtok,
+            output_cost_per_mtok: d.output_cost_per_mtok,
+            cache_read_cost_per_mtok: d.cache_read_cost_per_mtok,
+            cache_write_cost_per_mtok: d.cache_write_cost_per_mtok,
+            long_context_threshold: d.long_context_threshold,
+            long_input_cost_per_mtok: d.long_input_cost_per_mtok,
+            long_output_cost_per_mtok: d.long_output_cost_per_mtok,
+            long_cache_read_cost_per_mtok: d.long_cache_read_cost_per_mtok,
+            long_cache_write_cost_per_mtok: d.long_cache_write_cost_per_mtok,
+            cost_per_k_searches: d.cost_per_k_searches,
+        }
+    }
+
+    /// The prices a deployment of `mode` gets from a catalog entry, exactly as the console's
+    /// deployment form fills them in (`deploymentPrices` in `ui/src/pricing.ts`): cache prices stay
+    /// empty when they equal the input price, embedding and rerank models have no output price,
+    /// only chat models get cache and long-context prices, and rerank models a price per search,
+    /// chat models one per web search.
+    fn from_catalog(data: &Value, mode: &str) -> Self {
+        // LiteLLM prices per token and per query; to 8 significant digits, as the console rounds.
+        let scaled = |v: Option<&Value>, by: f64| v.and_then(Value::as_f64).and_then(|v| format!("{:.7e}", v * by).parse::<f64>().ok());
+        let per_m = |k: &str| scaled(data.get(k), 1e6);
+        let chat = mode == "chat";
+        let differs = |v: Option<f64>, base: Option<f64>| v.filter(|v| Some(*v) != base);
+        let (input, cache_read, cache_write) =
+            (per_m("input_cost_per_token"), per_m("cache_read_input_token_cost"), per_m("cache_creation_input_token_cost"));
+        // The lowest long-context tier, with both an input and an output price.
+        let long = data
+            .as_object()
+            .into_iter()
+            .flat_map(|o| o.keys())
+            .filter_map(|k| k.strip_prefix("input_cost_per_token_above_")?.strip_suffix("k_tokens")?.parse::<i32>().ok())
+            .min()
+            .filter(|_| chat)
+            .and_then(|k| {
+                let tier = |name: &str| per_m(&format!("{name}_above_{k}k_tokens"));
+                let (input, output) = (tier("input_cost_per_token")?, tier("output_cost_per_token")?);
+                Some((k * 1000, input, output, tier("cache_read_input_token_cost"), tier("cache_creation_input_token_cost")))
+            });
+        let web_search = data.get("supports_web_search") == Some(&Value::Bool(true))
+            && !data.get("litellm_provider").and_then(Value::as_str).unwrap_or("").starts_with("bedrock");
+        Self {
+            input_cost_per_mtok: input.unwrap_or(0.0),
+            output_cost_per_mtok: if mode == "embedding" || mode == "rerank" { 0.0 } else { per_m("output_cost_per_token").unwrap_or(0.0) },
+            cache_read_cost_per_mtok: if chat { differs(cache_read, input) } else { None },
+            cache_write_cost_per_mtok: if chat { differs(cache_write, input) } else { None },
+            long_context_threshold: long.map(|l| l.0),
+            long_input_cost_per_mtok: long.map(|l| l.1),
+            long_output_cost_per_mtok: long.map(|l| l.2),
+            long_cache_read_cost_per_mtok: long.and_then(|l| differs(l.3, Some(l.1))),
+            long_cache_write_cost_per_mtok: long.and_then(|l| differs(l.4, Some(l.1))),
+            cost_per_k_searches: match mode {
+                "rerank" => scaled(data.get("input_cost_per_query"), 1000.0),
+                "chat" if web_search => scaled(data.pointer("/search_context_cost_per_query/search_context_size_medium"), 1000.0),
+                _ => None,
+            },
+        }
+    }
+
+    /// The prices as billed, field by field: an empty cache price is the input price of its tier.
+    fn billed(&self) -> [Option<f64>; 10] {
+        let long = self.long_context_threshold.is_some();
+        [
+            Some(self.input_cost_per_mtok),
+            Some(self.output_cost_per_mtok),
+            self.cache_read_cost_per_mtok.or(Some(self.input_cost_per_mtok)),
+            self.cache_write_cost_per_mtok.or(Some(self.input_cost_per_mtok)),
+            self.long_context_threshold.map(f64::from),
+            self.long_input_cost_per_mtok,
+            self.long_output_cost_per_mtok,
+            if long { self.long_cache_read_cost_per_mtok.or(self.long_input_cost_per_mtok) } else { None },
+            if long { self.long_cache_write_cost_per_mtok.or(self.long_input_cost_per_mtok) } else { None },
+            self.cost_per_k_searches,
+        ]
+    }
+
+    /// Whether both bill the same, beyond floating-point noise (`priceDifferences` in the console).
+    fn bills_like(&self, other: &Self) -> bool {
+        let same = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (Some(a), Some(b)) => (a - b).abs() <= 1e-9 * 1f64.max(a.abs()).max(b.abs()),
+            (a, b) => a == b,
+        };
+        self.billed().into_iter().zip(other.billed()).all(|(a, b)| same(a, b))
+    }
+}
+
+/// Deployments whose prices no longer match their catalog entry take the catalog's, and keep the
+/// entry as their base model, as the console's Accept button after a price check does. Each is
+/// audited as an update by `actor`. Returns how many changed.
+pub(crate) async fn accept_changes(state: &AppState, actor: &Actor) -> R<usize> {
+    let deployments = db::list_deployments(&state.db).await?;
+    let entries = catalog_entries(state, &deployments).await?;
+    let mut accepted = 0;
+    for (d, entry) in deployments.iter().zip(entries) {
+        let Some((key, data)) = entry else { continue };
+        let (before, after) = (Prices::of(d), Prices::from_catalog(&data, &d.mode));
+        if before.bills_like(&after) || !db::accept_catalog_prices(&state.db, d.id, d.updated_at, &key, &after).await? {
+            continue;
+        }
+        accepted += 1;
+        let mut changes = audit::changes(&before, &after);
+        if d.base_model.is_none() {
+            changes.insert("base_model".into(), json!({ "from": null, "to": key }));
+        }
+        tracing::info!(deployment = %d.id, key, "deployment takes the price catalog's prices");
+        audit::Event::new("deployment", "update").on(d.id, &d.model_name).details(changes.into()).record(state, actor).await;
+    }
+    if accepted > 0 {
+        broadcast_reload(state, "catalog prices accepted").await;
+    }
+    Ok(accepted)
 }
 
 /// Catalog keys for a deployment, best first: its base model, or else the exact match for its
@@ -220,7 +358,7 @@ pub async fn run_scheduled_import(state: AppState) {
 }
 
 /// The scheduled import, if it is due and no other replica is importing.
-async fn import_if_due(state: &AppState, every: Duration) -> R<Option<db::PriceImport>> {
+async fn import_if_due(state: &AppState, every: Duration) -> R<Option<ImportSummary>> {
     if !is_due(state, every).await? {
         return Ok(None);
     }
@@ -240,7 +378,7 @@ async fn is_due(state: &AppState, every: Duration) -> sqlx::Result<bool> {
 }
 
 /// Download LiteLLM's catalog and make the stored one equal to it.
-async fn download_and_replace(state: &AppState, actor: &Actor) -> R<db::PriceImport> {
+async fn download_and_replace(state: &AppState, actor: &Actor) -> R<ImportSummary> {
     let resp = state
         .http
         .get(SOURCE_URL)
@@ -262,20 +400,42 @@ async fn download_and_replace(state: &AppState, actor: &Actor) -> R<db::PriceImp
     if catalog.is_empty() {
         return Err(AdminError::bad_request("the price catalog has no entries; nothing was changed"));
     }
-    let summary = db::replace_prices(&state.db, catalog, SOURCE_URL).await?;
-    tracing::info!(total = summary.total, added = summary.added, updated = summary.updated, removed = summary.removed, "price catalog imported");
+    let import = db::replace_prices(&state.db, catalog, SOURCE_URL).await?;
+    tracing::info!(
+        total = import.total,
+        added = import.added,
+        updated = import.updated,
+        removed = import.removed,
+        "price catalog imported"
+    );
+    // The catalog is in; a failure here leaves the deployments for the next import.
+    let accepted = match state.settings.get().price_auto_accept {
+        true => accept_changes(state, actor)
+            .await
+            .inspect_err(|e| tracing::warn!(error = %e.1, "accepting the price catalog's prices failed"))
+            .ok(),
+        false => None,
+    };
+    let summary = ImportSummary { import, accepted };
     audit::Event::new("price_catalog", "import").details(json!(summary)).record(state, actor).await;
     Ok(summary)
+}
+
+/// What an import changed.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ImportSummary {
+    #[serde(flatten)]
+    pub import: db::PriceImport,
+    /// Deployments that took the catalog's new prices, when `price_auto_accept` is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted: Option<usize>,
 }
 
 /// Catalog entries: every object-valued key except LiteLLM's `sample_spec` template.
 fn parse(bytes: &[u8]) -> R<Vec<(String, Value)>> {
     let all: Map<String, Value> =
         serde_json::from_slice(bytes).map_err(|e| AdminError::bad_request(format!("the price catalog is not a JSON object: {e}")))?;
-    Ok(all
-        .into_iter()
-        .filter(|(k, v)| k != "sample_spec" && v.is_object() && !k.is_empty() && k.len() <= MAX_KEY_LEN)
-        .collect())
+    Ok(all.into_iter().filter(|(k, v)| k != "sample_spec" && v.is_object() && !k.is_empty() && k.len() <= MAX_KEY_LEN).collect())
 }
 
 #[cfg(test)]
@@ -290,7 +450,10 @@ mod tests {
         let b = candidates(ProviderKind::Bedrock, "us.anthropic.claude-sonnet-4-5-v1:0");
         assert!(b.contains(&"anthropic.claude-sonnet-4-5-v1:0".to_string()) && b[0] == "us.anthropic.claude-sonnet-4-5-v1:0");
         assert_eq!(candidates(ProviderKind::Mistral, "mistral-large-latest")[0], "mistral/mistral-large-latest");
-        assert_eq!(candidates(ProviderKind::Vertex, "google/gemini-2.5-pro"), ["gemini-2.5-pro", "vertex_ai/gemini-2.5-pro", "google/gemini-2.5-pro"]);
+        assert_eq!(
+            candidates(ProviderKind::Vertex, "google/gemini-2.5-pro"),
+            ["gemini-2.5-pro", "vertex_ai/gemini-2.5-pro", "google/gemini-2.5-pro"]
+        );
         assert_eq!(candidates(ProviderKind::Vertex, "claude-sonnet-4-5@20250929")[1], "vertex_ai/claude-sonnet-4-5@20250929");
         assert_eq!(strip_region("global.amazon.nova"), "amazon.nova");
         assert_eq!(strip_region("amazon.titan-embed-text-v2:0"), "amazon.titan-embed-text-v2:0");
@@ -298,9 +461,51 @@ mod tests {
 
     #[test]
     fn parse_skips_the_template() {
-        let rows = parse(br#"{"sample_spec": {"input_cost_per_token": 0}, "gpt-4o": {"input_cost_per_token": 2.5e-6}, "bad": 3}"#).ok().unwrap();
+        let rows =
+            parse(br#"{"sample_spec": {"input_cost_per_token": 0}, "gpt-4o": {"input_cost_per_token": 2.5e-6}, "bad": 3}"#).ok().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, "gpt-4o");
         assert!(parse(b"[1, 2]").is_err());
+    }
+
+    #[test]
+    fn catalog_prices_as_the_deployment_form_fills_them_in() {
+        let entry = json!({
+            "input_cost_per_token": 3e-6, "output_cost_per_token": 1.5e-5,
+            "cache_read_input_token_cost": 3e-7, "cache_creation_input_token_cost": 3e-6,
+            "input_cost_per_token_above_200k_tokens": 6e-6, "output_cost_per_token_above_200k_tokens": 2.25e-5,
+            "cache_read_input_token_cost_above_200k_tokens": 6e-7,
+            "input_cost_per_token_above_1000k_tokens": 1e-5,
+            "supports_web_search": true, "litellm_provider": "anthropic",
+            "search_context_cost_per_query": { "search_context_size_medium": 0.01 },
+        });
+        let chat = Prices::from_catalog(&entry, "chat");
+        assert_eq!((chat.input_cost_per_mtok, chat.output_cost_per_mtok), (3.0, 15.0));
+        // Equal to the input price, the cache write price stays empty.
+        assert_eq!((chat.cache_read_cost_per_mtok, chat.cache_write_cost_per_mtok), (Some(0.3), None));
+        assert_eq!(
+            (chat.long_context_threshold, chat.long_input_cost_per_mtok, chat.long_output_cost_per_mtok),
+            (Some(200_000), Some(6.0), Some(22.5))
+        );
+        assert_eq!((chat.long_cache_read_cost_per_mtok, chat.long_cache_write_cost_per_mtok), (Some(0.6), None));
+        assert_eq!(chat.cost_per_k_searches, Some(10.0));
+        let embedding = Prices::from_catalog(&entry, "embedding");
+        assert_eq!(
+            (embedding.output_cost_per_mtok, embedding.cache_read_cost_per_mtok, embedding.long_context_threshold),
+            (0.0, None, None)
+        );
+        let rerank = Prices::from_catalog(&json!({ "input_cost_per_query": 0.002 }), "rerank");
+        assert_eq!(rerank.cost_per_k_searches, Some(2.0));
+    }
+
+    #[test]
+    fn prices_compare_as_billed() {
+        let catalog = Prices::from_catalog(&json!({ "input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5 }), "chat");
+        // A cache price equal to the input price bills like an empty one, and noise is ignored.
+        let stored = Prices { input_cost_per_mtok: 2.5 + 1e-12, cache_read_cost_per_mtok: Some(2.5), ..catalog.clone() };
+        assert!(stored.bills_like(&catalog));
+        let raised = Prices { output_cost_per_mtok: 12.0, ..catalog.clone() };
+        assert!(!raised.bills_like(&catalog));
+        assert!(!Prices { cost_per_k_searches: Some(10.0), ..catalog.clone() }.bills_like(&catalog));
     }
 }

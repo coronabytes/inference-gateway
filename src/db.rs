@@ -10,21 +10,21 @@ use sqlx::{Connection, PgExecutor, PgPool, migrate::Migrator, postgres::PgPoolOp
 use uuid::Uuid;
 
 use crate::{
+    a2a::A2aAgentRow,
     accounting::RequestRecord,
     capture::Stored,
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailRow},
-    a2a::A2aAgentRow,
     mcp::{
         McpServerRow,
         router::{ToolRoute, ToolRouterRow},
     },
     mcp_auth::ClientGrant,
-    oauth::OAuthConfig,
     model::{
-        AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole, ProjectRow,
-        PromptLogging, Route,
-        RouterRow, VirtualKey,
+        AdminUserRow, AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, OidcSettingsRow, PersonRole,
+        ProjectRow, PromptLogging, Route, RouterRow, VirtualKey,
     },
+    oauth::OAuthConfig,
+    prices,
 };
 
 /// Postgres error codes the admin API turns into 409 responses.
@@ -37,11 +37,8 @@ pub fn is_unique_violation(e: &sqlx::Error) -> bool {
 }
 
 pub async fn connect(url: &str, max_connections: u32) -> Result<PgPool, sqlx::Error> {
-    let pool = PgPoolOptions::new()
-        .max_connections(max_connections)
-        .acquire_timeout(std::time::Duration::from_secs(10))
-        .connect(url)
-        .await?;
+    let pool =
+        PgPoolOptions::new().max_connections(max_connections).acquire_timeout(std::time::Duration::from_secs(10)).connect(url).await?;
     // sqlx takes a Postgres advisory lock, so concurrent replicas migrate safely.
     MIGRATOR.run(&pool).await?;
     Ok(pool)
@@ -188,6 +185,35 @@ pub async fn upsert_deployment(db: impl PgExecutor<'_>, d: &DeploymentRow) -> sq
     Ok(())
 }
 
+/// Give a deployment the catalog's prices and, where it has none, the entry as its base model.
+/// Only while it is unchanged since `seen` (its `updated_at`), so an edit saved meanwhile wins;
+/// false when it was changed or deleted.
+pub async fn accept_catalog_prices(pool: &PgPool, id: Uuid, seen: DateTime<Utc>, key: &str, p: &prices::Prices) -> sqlx::Result<bool> {
+    let done = sqlx::query!(
+        "UPDATE deployments SET input_cost_per_mtok = $3, output_cost_per_mtok = $4, cache_read_cost_per_mtok = $5,
+             cache_write_cost_per_mtok = $6, long_context_threshold = $7, long_input_cost_per_mtok = $8,
+             long_output_cost_per_mtok = $9, long_cache_read_cost_per_mtok = $10, long_cache_write_cost_per_mtok = $11,
+             cost_per_k_searches = $12, base_model = COALESCE(base_model, $13), updated_at = now()
+         WHERE id = $1 AND updated_at = $2",
+        id,
+        seen,
+        p.input_cost_per_mtok,
+        p.output_cost_per_mtok,
+        p.cache_read_cost_per_mtok,
+        p.cache_write_cost_per_mtok,
+        p.long_context_threshold,
+        p.long_input_cost_per_mtok,
+        p.long_output_cost_per_mtok,
+        p.long_cache_read_cost_per_mtok,
+        p.long_cache_write_cost_per_mtok,
+        p.cost_per_k_searches,
+        key,
+    )
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
 pub async fn get_oidc_settings(pool: &PgPool) -> sqlx::Result<Option<OidcSettingsRow>> {
     sqlx::query_as!(
         OidcSettingsRow,
@@ -328,9 +354,7 @@ pub async fn delete_admin_user(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
 
 /// The projects a user works in.
 pub async fn user_projects(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Uuid>> {
-    sqlx::query_scalar!("SELECT project_id FROM project_members WHERE user_id = $1 ORDER BY project_id", user_id)
-        .fetch_all(pool)
-        .await
+    sqlx::query_scalar!("SELECT project_id FROM project_members WHERE user_id = $1 ORDER BY project_id", user_id).fetch_all(pool).await
 }
 
 /// Every membership, as (user, project).
@@ -343,13 +367,9 @@ pub async fn list_project_members(pool: &PgPool) -> sqlx::Result<Vec<(Uuid, Uuid
 pub async fn set_user_projects(pool: &PgPool, user_id: Uuid, projects: &[Uuid]) -> sqlx::Result<()> {
     let mut tx = pool.begin().await?;
     sqlx::query!("DELETE FROM project_members WHERE user_id = $1", user_id).execute(&mut *tx).await?;
-    sqlx::query!(
-        "INSERT INTO project_members (project_id, user_id) SELECT p, $2 FROM unnest($1::uuid[]) AS t(p)",
-        projects,
-        user_id
-    )
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query!("INSERT INTO project_members (project_id, user_id) SELECT p, $2 FROM unnest($1::uuid[]) AS t(p)", projects, user_id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await
 }
 
@@ -394,11 +414,10 @@ pub async fn price_facets(pool: &PgPool) -> sqlx::Result<(Vec<String>, Vec<Strin
     )
     .fetch_all(pool)
     .await?;
-    let modes = sqlx::query_scalar!(
-        r#"SELECT DISTINCT data->>'mode' AS "m!" FROM model_prices WHERE data->>'mode' IS NOT NULL ORDER BY 1"#
-    )
-    .fetch_all(pool)
-    .await?;
+    let modes =
+        sqlx::query_scalar!(r#"SELECT DISTINCT data->>'mode' AS "m!" FROM model_prices WHERE data->>'mode' IS NOT NULL ORDER BY 1"#)
+            .fetch_all(pool)
+            .await?;
     Ok((providers, modes))
 }
 
@@ -645,9 +664,7 @@ pub async fn get_credential(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Cred
 
 /// Number of deployments referencing each credential.
 pub async fn credential_usage(pool: &PgPool) -> sqlx::Result<HashMap<Uuid, i64>> {
-    let rows = sqlx::query!(r#"SELECT credential_id, count(*) AS "n!" FROM deployments GROUP BY credential_id"#)
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query!(r#"SELECT credential_id, count(*) AS "n!" FROM deployments GROUP BY credential_id"#).fetch_all(pool).await?;
     Ok(rows.into_iter().map(|r| (r.credential_id, r.n)).collect())
 }
 
@@ -703,9 +720,7 @@ pub async fn guardrail_holders(pool: &PgPool) -> sqlx::Result<Vec<(Uuid, String,
 
 /// Number of guardrails calling with each credential.
 pub async fn credential_guardrail_usage(pool: &PgPool) -> sqlx::Result<HashMap<Uuid, i64>> {
-    let rows = sqlx::query!(r#"SELECT credential_id, count(*) AS "n!" FROM guardrails GROUP BY credential_id"#)
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query!(r#"SELECT credential_id, count(*) AS "n!" FROM guardrails GROUP BY credential_id"#).fetch_all(pool).await?;
     Ok(rows.into_iter().map(|r| (r.credential_id, r.n)).collect())
 }
 
@@ -872,9 +887,8 @@ pub async fn delete_mcp_server(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
 }
 
 pub async fn sealed_mcp_secrets(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(Uuid, String, Vec<u8>)>> {
-    let rows = sqlx::query!(r#"SELECT id, name, secret AS "secret!" FROM mcp_servers WHERE secret IS NOT NULL FOR UPDATE"#)
-        .fetch_all(db)
-        .await?;
+    let rows =
+        sqlx::query!(r#"SELECT id, name, secret AS "secret!" FROM mcp_servers WHERE secret IS NOT NULL FOR UPDATE"#).fetch_all(db).await?;
     Ok(rows.into_iter().map(|r| (r.id, r.name, r.secret)).collect())
 }
 
@@ -1006,9 +1020,10 @@ pub async fn client_grant_by_access(pool: &PgPool, access_hash: &[u8]) -> sqlx::
 /// Revokes the grant whose replaced refresh token is presented again: its own client has the new
 /// one, so whoever presents the old one got it elsewhere (RFC 6819 5.2.2.3).
 pub async fn revoke_replayed_client_grant(pool: &PgPool, client_id: &str, refresh_hash: &[u8]) -> sqlx::Result<Option<Uuid>> {
-    let r = sqlx::query!("DELETE FROM client_grants WHERE previous_refresh_hash = $1 AND client_id = $2 RETURNING id", refresh_hash, client_id)
-        .fetch_optional(pool)
-        .await?;
+    let r =
+        sqlx::query!("DELETE FROM client_grants WHERE previous_refresh_hash = $1 AND client_id = $2 RETURNING id", refresh_hash, client_id)
+            .fetch_optional(pool)
+            .await?;
     Ok(r.map(|r| r.id))
 }
 
@@ -1200,7 +1215,13 @@ pub async fn lock_oauth_token(db: impl PgExecutor<'_>, s: SignInRef<'_>) -> sqlx
     .await
 }
 
-pub async fn update_oauth_token(db: impl PgExecutor<'_>, s: SignInRef<'_>, access: &[u8], refresh: Option<&[u8]>, expires_at: Option<DateTime<Utc>>) -> sqlx::Result<()> {
+pub async fn update_oauth_token(
+    db: impl PgExecutor<'_>,
+    s: SignInRef<'_>,
+    access: &[u8],
+    refresh: Option<&[u8]>,
+    expires_at: Option<DateTime<Utc>>,
+) -> sqlx::Result<()> {
     sqlx::query!(
         "UPDATE oauth_tokens SET access_token = $5, refresh_token = $6, expires_at = $7, updated_at = now(), last_used_at = now()
          WHERE upstream_kind = $1 AND upstream_id = $2 AND key_id = $3 AND labels = $4",
@@ -1277,7 +1298,10 @@ pub async fn delete_oauth_token(db: impl PgExecutor<'_>, s: SignInRef<'_>) -> sq
 
 /// Every sign-in to an upstream, of every key: when it starts telling sign-ins apart differently.
 pub async fn delete_upstream_oauth_tokens(db: impl PgExecutor<'_>, kind: &str, upstream: Uuid) -> sqlx::Result<u64> {
-    Ok(sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2", kind, upstream).execute(db).await?.rows_affected())
+    Ok(sqlx::query!("DELETE FROM oauth_tokens WHERE upstream_kind = $1 AND upstream_id = $2", kind, upstream)
+        .execute(db)
+        .await?
+        .rows_affected())
 }
 
 /// A key's sign-in to an upstream, for the console.
@@ -1314,7 +1338,15 @@ pub async fn key_connections(pool: &PgPool, key: Uuid) -> sqlx::Result<(Vec<KeyS
 
 /// A key's sign-ins to an upstream by labels, newest first: those with every `key=value` pair in
 /// `having`, and how many there are in all.
-pub async fn sign_ins(pool: &PgPool, kind: &str, upstream: Uuid, key: Uuid, having: &[String], limit: i64, offset: i64) -> sqlx::Result<(Vec<KeySignIn>, i64)> {
+pub async fn sign_ins(
+    pool: &PgPool,
+    kind: &str,
+    upstream: Uuid,
+    key: Uuid,
+    having: &[String],
+    limit: i64,
+    offset: i64,
+) -> sqlx::Result<(Vec<KeySignIn>, i64)> {
     let rows = sqlx::query_as!(
         KeySignIn,
         r#"SELECT upstream_kind, upstream_id, labels, created_at, expires_at, refresh_token IS NOT NULL AS "refreshable!", scope, connected_by, last_used_at
@@ -1387,14 +1419,17 @@ pub async fn prune_sign_ins(pool: &PgPool, default_days: i32) -> sqlx::Result<u6
     .execute(pool)
     .await?
     .rows_affected();
-    let dead = sqlx::query!("DELETE FROM oauth_tokens WHERE refresh_token IS NULL AND expires_at < now()").execute(pool).await?.rows_affected();
+    let dead =
+        sqlx::query!("DELETE FROM oauth_tokens WHERE refresh_token IS NULL AND expires_at < now()").execute(pool).await?.rows_affected();
     Ok(unused + dead)
 }
 
 /// Every sealed token, for `rotate-key`: (kind, upstream, key, labels, access, refresh).
 #[allow(clippy::type_complexity)]
 pub async fn sealed_oauth_tokens(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(String, Uuid, Uuid, String, Vec<u8>, Option<Vec<u8>>)>> {
-    let rows = sqlx::query!("SELECT upstream_kind, upstream_id, key_id, labels, access_token, refresh_token FROM oauth_tokens FOR UPDATE").fetch_all(db).await?;
+    let rows = sqlx::query!("SELECT upstream_kind, upstream_id, key_id, labels, access_token, refresh_token FROM oauth_tokens FOR UPDATE")
+        .fetch_all(db)
+        .await?;
     Ok(rows.into_iter().map(|r| (r.upstream_kind, r.upstream_id, r.key_id, r.labels, r.access_token, r.refresh_token)).collect())
 }
 
@@ -1414,9 +1449,8 @@ pub async fn set_oauth_token_secrets(db: impl PgExecutor<'_>, s: SignInRef<'_>, 
 }
 
 pub async fn sealed_a2a_secrets(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(Uuid, String, Vec<u8>)>> {
-    let rows = sqlx::query!(r#"SELECT id, name, secret AS "secret!" FROM a2a_agents WHERE secret IS NOT NULL FOR UPDATE"#)
-        .fetch_all(db)
-        .await?;
+    let rows =
+        sqlx::query!(r#"SELECT id, name, secret AS "secret!" FROM a2a_agents WHERE secret IS NOT NULL FOR UPDATE"#).fetch_all(db).await?;
     Ok(rows.into_iter().map(|r| (r.id, r.name, r.secret)).collect())
 }
 
@@ -1567,7 +1601,8 @@ pub async fn delete_project(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Vec<
     if sqlx::query!("SELECT id FROM projects WHERE id = $1 FOR UPDATE", id).fetch_optional(&mut *tx).await?.is_none() {
         return Ok(None);
     }
-    let keys = sqlx::query!("DELETE FROM virtual_keys WHERE project_id = $1 RETURNING id, name, key_prefix", id).fetch_all(&mut *tx).await?;
+    let keys =
+        sqlx::query!("DELETE FROM virtual_keys WHERE project_id = $1 RETURNING id, name, key_prefix", id).fetch_all(&mut *tx).await?;
     sqlx::query!("DELETE FROM projects WHERE id = $1", id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(keys.into_iter().map(|k| (k.id, k.name, k.key_prefix)).collect()))
@@ -1760,14 +1795,10 @@ pub async fn reset_key_spend(pool: &PgPool, id: Uuid) -> sqlx::Result<()> {
 
 /// Replace a key's secret. Everything else (limits, spend, logs) stays with the key's id.
 pub async fn rotate_key(pool: &PgPool, id: Uuid, key_hash: &[u8], key_prefix: &str) -> sqlx::Result<bool> {
-    let r = sqlx::query!(
-        "UPDATE virtual_keys SET key_hash = $2, key_prefix = $3, updated_at = now() WHERE id = $1",
-        id,
-        key_hash,
-        key_prefix
-    )
-    .execute(pool)
-    .await?;
+    let r =
+        sqlx::query!("UPDATE virtual_keys SET key_hash = $2, key_prefix = $3, updated_at = now() WHERE id = $1", id, key_hash, key_prefix)
+            .execute(pool)
+            .await?;
     Ok(r.rows_affected() > 0)
 }
 
@@ -1919,7 +1950,8 @@ pub async fn write_body_batch(pool: &PgPool, rows: Vec<(Uuid, DateTime<Utc>, Opt
     }
     let n = rows.len();
     let (mut ids, mut ts, mut keys) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
-    let (mut requests, mut screened, mut guardrails, mut responses) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut requests, mut screened, mut guardrails, mut responses) =
+        (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
     let (mut request_bytes, mut response_bytes) = (Vec::with_capacity(n), Vec::with_capacity(n));
     let (mut tools, mut texts) = (Vec::with_capacity(n), Vec::with_capacity(n));
     let (mut response_ids, mut previous_ids, mut conversations) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
@@ -2253,7 +2285,9 @@ pub enum BodiesOf {
 
 pub async fn count_bodies(pool: &PgPool, of: BodiesOf) -> sqlx::Result<i64> {
     match of {
-        BodiesOf::Key(id) => sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM request_bodies WHERE key_id = $1"#, id).fetch_one(pool).await,
+        BodiesOf::Key(id) => {
+            sqlx::query_scalar!(r#"SELECT count(*) AS "n!" FROM request_bodies WHERE key_id = $1"#, id).fetch_one(pool).await
+        }
         BodiesOf::Project(id) => {
             sqlx::query_scalar!(
                 r#"SELECT count(*) AS "n!" FROM request_bodies b JOIN request_logs l ON l.id = b.id WHERE l.project_id = $1"#,
@@ -2650,30 +2684,24 @@ pub async fn key_usage_since(pool: &PgPool, since: DateTime<Utc>, projects: Opti
 pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32, body_days: u32) -> sqlx::Result<(u64, u64, u64)> {
     const LOCK_ID: i64 = 0x6777_6c6f_6773; // "gwlogs"
     let mut conn = pool.acquire().await?;
-    let locked = sqlx::query_scalar!(r#"SELECT pg_try_advisory_lock($1) AS "locked!""#, LOCK_ID)
-        .fetch_one(&mut *conn)
-        .await?;
+    let locked = sqlx::query_scalar!(r#"SELECT pg_try_advisory_lock($1) AS "locked!""#, LOCK_ID).fetch_one(&mut *conn).await?;
     if !locked {
         return Ok((0, 0, 0));
     }
     let result = async {
         let requests = match request_days {
             0 => 0,
-            days => {
-                sqlx::query!("DELETE FROM request_logs WHERE ts < now() - make_interval(days => $1)", days as i32)
-                    .execute(&mut *conn)
-                    .await?
-                    .rows_affected()
-            }
+            days => sqlx::query!("DELETE FROM request_logs WHERE ts < now() - make_interval(days => $1)", days as i32)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected(),
         };
         let audit = match audit_days {
             0 => 0,
-            days => {
-                sqlx::query!("DELETE FROM audit_log WHERE ts < now() - make_interval(days => $1)", days as i32)
-                    .execute(&mut *conn)
-                    .await?
-                    .rows_affected()
-            }
+            days => sqlx::query!("DELETE FROM audit_log WHERE ts < now() - make_interval(days => $1)", days as i32)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected(),
         };
         // In chunks: bodies are large, and a long delete would hold locks and write a burst of WAL.
         let mut bodies = 0;
@@ -2703,9 +2731,7 @@ pub async fn prune_logs(pool: &PgPool, request_days: u32, audit_days: u32, body_
 /// even when `f` is cancelled (an admin request whose client went away) or panics.
 pub async fn with_lock<T>(pool: &PgPool, id: i64, f: impl Future<Output = T>) -> sqlx::Result<Option<T>> {
     let mut conn = pool.acquire().await?.detach();
-    let locked = sqlx::query_scalar!(r#"SELECT pg_try_advisory_lock($1) AS "locked!""#, id)
-        .fetch_one(&mut conn)
-        .await?;
+    let locked = sqlx::query_scalar!(r#"SELECT pg_try_advisory_lock($1) AS "locked!""#, id).fetch_one(&mut conn).await?;
     if !locked {
         return Ok(None);
     }

@@ -111,7 +111,6 @@ pub fn labels_for(by: &[String], labels: &Labels) -> Result<String, String> {
     Ok(pairs.join(","))
 }
 
-
 /// Which kind of upstream a token is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -165,9 +164,16 @@ pub enum UpstreamAuth {
 pub enum AuthError {
     /// The caller has not signed in to the upstream (or its sign-in expired): the key, or the key
     /// with `labels` where the upstream tells sign-ins apart by labels. `link` signs them in.
-    NotConnected { name: String, labels: String, link: Option<String> },
+    NotConnected {
+        name: String,
+        labels: String,
+        link: Option<String>,
+    },
     /// The upstream tells sign-ins apart by a label the request does not have.
-    MissingLabel { name: String, label: String },
+    MissingLabel {
+        name: String,
+        label: String,
+    },
     Failed(String),
 }
 
@@ -199,9 +205,10 @@ impl AuthError {
         match self {
             AuthError::NotConnected { .. } => GatewayError { code: Some("sign_in_required"), ..GatewayError::forbidden(self.message()) },
             AuthError::MissingLabel { .. } => GatewayError::invalid(self.message()),
-            AuthError::Failed(e) => {
-                GatewayError { upstream: true, ..GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, format!("the upstream's sign-in failed: {e}")) }
-            }
+            AuthError::Failed(e) => GatewayError {
+                upstream: true,
+                ..GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, format!("the upstream's sign-in failed: {e}"))
+            },
         }
     }
 }
@@ -213,7 +220,9 @@ fn sensitive(v: &str) -> Option<HeaderValue> {
 }
 
 fn bearer(token: &str) -> Result<(HeaderName, HeaderValue), AuthError> {
-    sensitive(&format!("Bearer {token}")).map(|v| (header::AUTHORIZATION, v)).ok_or_else(|| AuthError::Failed("the token is not a valid header value".into()))
+    sensitive(&format!("Bearer {token}"))
+        .map(|v| (header::AUTHORIZATION, v))
+        .ok_or_else(|| AuthError::Failed("the token is not a valid header value".into()))
 }
 
 impl UpstreamAuth {
@@ -244,7 +253,9 @@ impl UpstreamAuth {
                 let secret = secret.ok_or("its secret is missing")?;
                 let invalid = || "the secret is not a valid header value".to_string();
                 match auth {
-                    McpAuth::Bearer => UpstreamAuth::Static(header::AUTHORIZATION, sensitive(&format!("Bearer {secret}")).ok_or_else(invalid)?),
+                    McpAuth::Bearer => {
+                        UpstreamAuth::Static(header::AUTHORIZATION, sensitive(&format!("Bearer {secret}")).ok_or_else(invalid)?)
+                    }
                     _ => {
                         let name = header.and_then(|h| HeaderName::try_from(h).ok()).ok_or("invalid auth header")?;
                         UpstreamAuth::Static(name, sensitive(&secret).ok_or_else(invalid)?)
@@ -321,7 +332,8 @@ impl Client {
     /// Where `who`'s sign-in is kept; refused when the request lacks a label the upstream tells
     /// sign-ins apart by.
     pub fn slot(&self, who: Who) -> Result<Slot, AuthError> {
-        let labels = labels_for(&self.config.sign_in_by, who.labels).map_err(|label| AuthError::MissingLabel { name: self.name.clone(), label })?;
+        let labels =
+            labels_for(&self.config.sign_in_by, who.labels).map_err(|label| AuthError::MissingLabel { name: self.name.clone(), label })?;
         Ok(Slot { key: who.key, labels })
     }
 
@@ -332,7 +344,8 @@ impl Client {
 
     /// No sign-in for `slot`: with a link to sign in where the upstream tells sign-ins apart by labels.
     fn not_connected(&self, state: &AppState, slot: &Slot) -> AuthError {
-        let link = (!slot.labels.is_empty()).then(|| self.link_origin().map(|o| Ticket::new(self, slot).url(&o, &state.cfg.secret_box))).flatten();
+        let link =
+            (!slot.labels.is_empty()).then(|| self.link_origin().map(|o| Ticket::new(self, slot).url(&o, &state.cfg.secret_box))).flatten();
         AuthError::NotConnected { name: self.name.clone(), labels: slot.labels.clone(), link }
     }
 
@@ -632,7 +645,15 @@ impl Client {
     }
 
     /// Exchanges an authorization code, and stores the sign-in's tokens.
-    pub async fn complete(&self, state: &AppState, slot: &Slot, code: &str, verifier: &str, redirect_uri: &str, by: &str) -> Result<(), String> {
+    pub async fn complete(
+        &self,
+        state: &AppState,
+        slot: &Slot,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+        by: &str,
+    ) -> Result<(), String> {
         let form = vec![
             ("grant_type", "authorization_code".to_string()),
             ("code", code.to_string()),
@@ -643,9 +664,17 @@ impl Client {
         let sb = &state.cfg.secret_box;
         let expires_at = expiry(t.expires_in);
         let refresh = t.refresh_token.as_deref().map(|r| sb.seal(r.as_bytes()));
-        db::save_oauth_token(&state.db, self.sign_in(slot), &sb.seal(t.access_token.as_bytes()), refresh.as_deref(), expires_at, t.scope.as_deref(), by)
-            .await
-            .map_err(|e| e.to_string())?;
+        db::save_oauth_token(
+            &state.db,
+            self.sign_in(slot),
+            &sb.seal(t.access_token.as_bytes()),
+            refresh.as_deref(),
+            expires_at,
+            t.scope.as_deref(),
+            by,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
         state.oauth.user.lock().expect("tokens lock").remove(&(self.kind, self.upstream, slot.clone()));
         Ok(())
     }
@@ -756,7 +785,12 @@ async fn server_metadata(state: &AppState, issuer: &str, found: &mut Discovered)
         match get_json(state, &url).await {
             Ok(m) => {
                 let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
-                let list = |k: &str| m.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+                let list = |k: &str| {
+                    m.get(k)
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                        .unwrap_or_default()
+                };
                 found.token_url = found.token_url.take().or(s("token_endpoint"));
                 found.authorization_url = found.authorization_url.take().or(s("authorization_endpoint"));
                 found.registration_url = s("registration_endpoint");
@@ -798,10 +832,18 @@ pub async fn discover(
                     break;
                 }
             }
-            let m = metadata.ok_or("the server publishes no protected resource metadata (RFC 9728); enter its token and authorization URLs")?;
+            let m =
+                metadata.ok_or("the server publishes no protected resource metadata (RFC 9728); enter its token and authorization URLs")?;
             found.resource = m.get("resource").and_then(Value::as_str).map(str::to_string).or_else(|| Some(url.to_string()));
-            found.scopes = m.get("scopes_supported").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-            m.pointer("/authorization_servers/0").and_then(Value::as_str).map(str::to_string).ok_or("the metadata names no authorization server")?
+            found.scopes = m
+                .get("scopes_supported")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+            m.pointer("/authorization_servers/0")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or("the metadata names no authorization server")?
         }
         Kind::A2a => {
             let card = get_json(state, url).await?;
@@ -809,7 +851,11 @@ pub async fn discover(
             // 1.0: `{"oauth2SecurityScheme": {...}}`; 0.3: `{"type": "oauth2", ...}`.
             let scheme = schemes
                 .values()
-                .find_map(|s| s.get("oauth2SecurityScheme").cloned().or_else(|| (s.get("type").and_then(Value::as_str) == Some("oauth2")).then(|| s.clone())))
+                .find_map(|s| {
+                    s.get("oauth2SecurityScheme")
+                        .cloned()
+                        .or_else(|| (s.get("type").and_then(Value::as_str) == Some("oauth2")).then(|| s.clone()))
+                })
                 .ok_or("the agent card names no OAuth 2 scheme")?;
             let flows = scheme.get("flows").cloned().unwrap_or(Value::Null);
             let flow = |k: &str| flows.get(k).cloned().unwrap_or(Value::Null);
@@ -856,11 +902,22 @@ pub async fn discover(
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",
         });
-        let resp = state.http.post(&reg).json(&body).timeout(Duration::from_secs(10)).send().await.map_err(|e| format!("registration: {}", GatewayError::from_reqwest(&e).message))?;
+        let resp = state
+            .http
+            .post(&reg)
+            .json(&body)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| format!("registration: {}", GatewayError::from_reqwest(&e).message))?;
         let status = resp.status();
         let v = json_body(resp).await;
         if !status.is_success() {
-            return Err(format!("registration was refused (HTTP {}): {}", status.as_u16(), v.get("error_description").or(v.get("error")).and_then(Value::as_str).unwrap_or("no details")));
+            return Err(format!(
+                "registration was refused (HTTP {}): {}",
+                status.as_u16(),
+                v.get("error_description").or(v.get("error")).and_then(Value::as_str).unwrap_or("no details")
+            ));
         }
         found.client_id = v.get("client_id").and_then(Value::as_str).map(str::to_string);
         found.client_secret = v.get("client_secret").and_then(Value::as_str).map(str::to_string);
@@ -895,7 +952,13 @@ mod tests {
         assert_eq!(labels_for(&by(&["tenant"]), &labels).unwrap(), "tenant=t1");
         assert_eq!(labels_for(&by(&["user", "tenant"]), &labels).unwrap(), "tenant=t1,user=u1");
         assert_eq!(labels_for(&by(&["tenant", "user"]), &Labels::parse("tenant=t1").unwrap()).unwrap_err(), "user");
-        let c = Client { kind: Kind::Mcp, upstream: Uuid::nil(), name: "x".into(), config: OAuthConfig { sign_in_by: by(&["tenant"]), ..Default::default() }, secret: None };
+        let c = Client {
+            kind: Kind::Mcp,
+            upstream: Uuid::nil(),
+            name: "x".into(),
+            config: OAuthConfig { sign_in_by: by(&["tenant"]), ..Default::default() },
+            secret: None,
+        };
         let err = c.slot(Who { key: Uuid::nil(), labels: &Labels::default() }).unwrap_err();
         assert!(matches!(&err, AuthError::MissingLabel { label, .. } if label == "tenant"));
         assert!(err.not_signed_in());
@@ -905,7 +968,11 @@ mod tests {
     #[test]
     fn sign_in_links_are_sealed_and_expire() {
         let sb = SecretBox::from_base64(&base64::engine::general_purpose::STANDARD.encode([7u8; 32])).unwrap();
-        let config = OAuthConfig { sign_in_by: by(&["tenant"]), redirect_uri: Some("https://gw.example.com/admin/auth/oauth/callback".into()), ..Default::default() };
+        let config = OAuthConfig {
+            sign_in_by: by(&["tenant"]),
+            redirect_uri: Some("https://gw.example.com/admin/auth/oauth/callback".into()),
+            ..Default::default()
+        };
         let c = Client { kind: Kind::A2a, upstream: Uuid::now_v7(), name: "x".into(), config, secret: None };
         let slot = Slot { key: Uuid::now_v7(), labels: "tenant=t1".into() };
         let url = Ticket::new(&c, &slot).url(&c.link_origin().unwrap(), &sb);
@@ -943,10 +1010,14 @@ mod tests {
         let app = axum::Router::new().route(
             "/token",
             post(|headers: axum::http::HeaderMap, body: String| async move {
-                let f: HashMap<String, String> = reqwest::Url::parse(&format!("http://x/?{body}")).unwrap().query_pairs().into_owned().collect();
+                let f: HashMap<String, String> =
+                    reqwest::Url::parse(&format!("http://x/?{body}")).unwrap().query_pairs().into_owned().collect();
                 // "gw:s3cret" in Basic auth, form-encoded first.
                 assert_eq!(headers.get(header::AUTHORIZATION).unwrap(), "Basic Z3c6czNjcmV0");
-                assert_eq!((f["grant_type"].as_str(), f["resource"].as_str(), f["scope"].as_str()), ("client_credentials", "https://mcp.example/mcp", "a b"));
+                assert_eq!(
+                    (f["grant_type"].as_str(), f["resource"].as_str(), f["scope"].as_str()),
+                    ("client_credentials", "https://mcp.example/mcp", "a b")
+                );
                 let n = ISSUED.fetch_add(1, Ordering::SeqCst);
                 Json(json!({ "access_token": format!("token-{n}"), "expires_in": 3600 }))
             }),
@@ -960,14 +1031,26 @@ mod tests {
             resource: Some("https://mcp.example/mcp".into()),
             ..Default::default()
         };
-        let auth = UpstreamAuth::Client(Arc::new(Client { kind: Kind::Mcp, upstream: Uuid::now_v7(), name: "x".into(), config, secret: Some("s3cret".into()) }));
+        let auth = UpstreamAuth::Client(Arc::new(Client {
+            kind: Kind::Mcp,
+            upstream: Uuid::now_v7(),
+            name: "x".into(),
+            config,
+            secret: Some("s3cret".into()),
+        }));
         let header = |h: Option<(HeaderName, HeaderValue)>| h.unwrap().1.to_str().unwrap().to_string();
         assert_eq!(header(auth.header(&state, None).await.unwrap()), "Bearer token-0");
         assert_eq!(header(auth.header(&state, None).await.unwrap()), "Bearer token-0");
         auth.renew(&state, None).await;
         assert_eq!(header(auth.header(&state, None).await.unwrap()), "Bearer token-1");
         // Keys that sign in on their own need a key.
-        let per_key = UpstreamAuth::PerKey(Arc::new(Client { kind: Kind::Mcp, upstream: Uuid::nil(), name: "y".into(), config: OAuthConfig::default(), secret: None }));
+        let per_key = UpstreamAuth::PerKey(Arc::new(Client {
+            kind: Kind::Mcp,
+            upstream: Uuid::nil(),
+            name: "y".into(),
+            config: OAuthConfig::default(),
+            secret: None,
+        }));
         assert!(matches!(per_key.header(&state, None).await, Err(AuthError::NotConnected { .. })));
     }
 
@@ -984,9 +1067,15 @@ mod tests {
     fn well_known_addresses_put_the_path_after_the_name() {
         assert_eq!(
             well_known("https://auth.example.com/tenant/x", "oauth-authorization-server"),
-            ["https://auth.example.com/.well-known/oauth-authorization-server/tenant/x", "https://auth.example.com/.well-known/oauth-authorization-server"]
+            [
+                "https://auth.example.com/.well-known/oauth-authorization-server/tenant/x",
+                "https://auth.example.com/.well-known/oauth-authorization-server"
+            ]
         );
-        assert_eq!(well_known("https://auth.example.com/", "openid-configuration"), ["https://auth.example.com/.well-known/openid-configuration"]);
+        assert_eq!(
+            well_known("https://auth.example.com/", "openid-configuration"),
+            ["https://auth.example.com/.well-known/openid-configuration"]
+        );
     }
 
     #[test]

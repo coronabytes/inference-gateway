@@ -28,8 +28,8 @@ use aws_sigv4::{
     http_request::{SignableBody, SignableRequest, SigningSettings, sign},
     sign::v4,
 };
-use aws_smithy_runtime_api::client::identity::Identity;
 use aws_smithy_http_client::tls;
+use aws_smithy_runtime_api::client::identity::Identity;
 use aws_smithy_runtime_api::client::{http::SharedHttpClient, result::SdkError};
 use aws_smithy_types::error::metadata::ProvideErrorMetadata;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
@@ -133,7 +133,12 @@ impl Aws {
     /// SDK configuration for Bedrock calls with a credential: its region and credentials, the
     /// guarded HTTP client, no retries and no stalled-stream cutoff (a model may think quietly for a
     /// while; the deployment's timeout applies instead).
-    pub async fn service_config(&self, state: &AppState, settings: &CredentialSettings, secrets: &Secrets) -> Result<SdkConfig, GatewayError> {
+    pub async fn service_config(
+        &self,
+        state: &AppState,
+        settings: &CredentialSettings,
+        secrets: &Secrets,
+    ) -> Result<SdkConfig, GatewayError> {
         let mut config = self.sdk_config(settings, secrets).await?.to_builder();
         config.set_http_client(Some(self.http(state)));
         config.set_retry_config(Some(aws_smithy_types::retry::RetryConfig::disabled()));
@@ -227,11 +232,8 @@ impl Aws {
         {
             return Ok(c.clone());
         }
-        let provider = self
-            .sdk()
-            .await
-            .credentials_provider()
-            .ok_or_else(|| GatewayError::internal("no AWS credentials provider is available"))?;
+        let provider =
+            self.sdk().await.credentials_provider().ok_or_else(|| GatewayError::internal("no AWS credentials provider is available"))?;
         let creds = provider.provide_credentials().await.map_err(|e| {
             tracing::error!(error = %e, "failed to resolve AWS credentials");
             GatewayError::internal("bedrock deployment has no usable AWS credentials (see gateway logs)")
@@ -279,7 +281,10 @@ where
         SdkError::TimeoutError(_) => GatewayError { upstream: true, ..GatewayError::timeout("upstream timed out") },
         _ => {
             tracing::warn!(error = %aws_smithy_types::error::display::DisplayErrorContext(&e), "Bedrock request failed");
-            GatewayError { upstream: true, ..GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "could not reach Bedrock (see gateway logs)") }
+            GatewayError {
+                upstream: true,
+                ..GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "could not reach Bedrock (see gateway logs)")
+            }
         }
     }
 }
@@ -332,12 +337,8 @@ fn sign_with(
         .build()
         .map_err(|e| fail(&e))?
         .into();
-    let pairs: Vec<(&str, &str)> = headers
-        .iter()
-        .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str(), v)))
-        .collect();
-    let signable =
-        SignableRequest::new("POST", url, pairs.into_iter(), SignableBody::Bytes(body)).map_err(|e| fail(&e))?;
+    let pairs: Vec<(&str, &str)> = headers.iter().filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str(), v))).collect();
+    let signable = SignableRequest::new("POST", url, pairs.into_iter(), SignableBody::Bytes(body)).map_err(|e| fail(&e))?;
     let (instructions, _signature) = sign(signable, &params).map_err(|e| fail(&e))?.into_parts();
     let mut out = Vec::new();
     for (name, value) in instructions.headers() {
@@ -367,8 +368,7 @@ mod tests {
     #[test]
     fn signs_bedrock_request() {
         let identity: Identity =
-            Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", Some("token".into()), None, "test")
-                .into();
+            Credentials::new("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", Some("token".into()), None, "test").into();
         let mut headers = HeaderMap::new();
         headers.insert("content-type", HeaderValue::from_static("application/json"));
         let url = "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-v2%3A0/converse-stream";

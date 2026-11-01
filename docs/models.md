@@ -23,7 +23,7 @@ Attempts, cooldown, adaptive and sticky routing are [settings](configuration.md#
 
 Each deployment has input, output, cache read and cache write prices per million tokens, and optionally higher prices above a long-context threshold; rerank deployments are priced per 1,000 searches, and chat deployments per 1,000 web searches the model runs. Prices drive cost reporting and budgets.
 
-The **Pricing** tab imports a public price list (and the gateway refreshes it every 6 hours, see the `price_import` settings in [configuration](configuration.md#settings)), and the deployment form fills in prices from it when it recognises the model; you can always type your own. Billing uses the prices saved on the deployment.
+The **Pricing** tab imports a public price list (and the gateway refreshes it every 6 hours, see the `price_import` settings in [configuration](configuration.md#settings)), and the deployment form fills in prices from it when it recognises the model; you can always type your own. Billing uses the prices saved on the deployment. To have deployments follow the catalog's price changes on their own, turn on `price_auto_accept`.
 
 ## Model hub
 

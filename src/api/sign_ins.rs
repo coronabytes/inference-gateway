@@ -60,11 +60,9 @@ fn upstreams(state: &AppState, key: &VirtualKey) -> Vec<(Kind, Arc<Client>)> {
 /// The upstream `kind`/`name`, if the key may use it and it keeps a sign-in per tenant or user.
 fn upstream(state: &AppState, key: &VirtualKey, kind: &str, name: &str) -> Result<Arc<Client>, GatewayError> {
     let kind = Kind::parse(kind).ok_or_else(|| GatewayError::invalid("kind is mcp or a2a"))?;
-    upstreams(state, key)
-        .into_iter()
-        .find(|(k, c)| *k == kind && c.name == name)
-        .map(|(_, c)| c)
-        .ok_or_else(|| GatewayError::not_found(format!("no {} '{name}' that this key may use and that keeps a sign-in per tenant or user", kind.as_str())))
+    upstreams(state, key).into_iter().find(|(k, c)| *k == kind && c.name == name).map(|(_, c)| c).ok_or_else(|| {
+        GatewayError::not_found(format!("no {} '{name}' that this key may use and that keeps a sign-in per tenant or user", kind.as_str()))
+    })
 }
 
 fn refuse(e: GatewayError) -> Response {
@@ -136,7 +134,12 @@ pub async fn link(
 }
 
 /// `DELETE /v1/oauth/sign-ins/{kind}/{name}`: signs the request's tenant or user out of the upstream.
-pub async fn sign_out(State(state): State<AppState>, ClientKey(key): ClientKey, ClientLabels(labels): ClientLabels, Path((kind, name)): Path<(String, String)>) -> Response {
+pub async fn sign_out(
+    State(state): State<AppState>,
+    ClientKey(key): ClientKey,
+    ClientLabels(labels): ClientLabels,
+    Path((kind, name)): Path<(String, String)>,
+) -> Response {
     let c = match upstream(&state, &key, &kind, &name) {
         Ok(c) => c,
         Err(e) => return refuse(e),

@@ -32,9 +32,7 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Value {
         for p in &m.content {
             match (m.role, p) {
                 (Role::User, Part::Text { text, .. }) => content.push(json!({ "type": "input_text", "text": text })),
-                (Role::User, Part::Image { source, .. }) => {
-                    content.push(json!({ "type": "input_image", "image_url": source.to_url() }))
-                }
+                (Role::User, Part::Image { source, .. }) => content.push(json!({ "type": "input_image", "image_url": source.to_url() })),
                 (Role::User, Part::File { media_type, data, filename, .. }) => content.push(json!({
                     "type": "input_file",
                     "filename": crate::ir::file_name(filename, media_type),
@@ -198,12 +196,7 @@ impl SseHandler for ResponsesHandler {
                 let item = &v["item"];
                 if item.get("type").and_then(Value::as_str) == Some("function_call") {
                     self.saw_tool = true;
-                    let id = item
-                        .get("call_id")
-                        .or_else(|| item.get("id"))
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
+                    let id = item.get("call_id").or_else(|| item.get("id")).and_then(Value::as_str).unwrap_or_default().to_string();
                     let name = item.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
                     let i = self.blocks.start(&mut evs, BlockKind::ToolCall { id, name });
                     self.items.insert(oi, i);
@@ -278,11 +271,7 @@ impl SseHandler for ResponsesHandler {
                 return;
             }
             "error" => {
-                let msg = v
-                    .get("message")
-                    .or_else(|| v.pointer("/error/message"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("stream error");
+                let msg = v.get("message").or_else(|| v.pointer("/error/message")).and_then(Value::as_str).unwrap_or("stream error");
                 let kind = match v.get("code").and_then(Value::as_str) {
                     Some("rate_limit_exceeded") => ErrorKind::RateLimit,
                     Some("server_error") | None => ErrorKind::Upstream,

@@ -1029,6 +1029,8 @@ export interface GatewaySettings {
   api_docs: boolean;
   price_import: boolean;
   price_import_hours: number;
+  /** After every import, deployments whose prices no longer match the catalog take its prices. */
+  price_auto_accept: boolean;
   /** Prompt logging for keys outside projects; projects set their own. Never `force`. */
   prompt_logging: Exclude<PromptLogging, "force">;
 }
@@ -1052,6 +1054,11 @@ export interface PriceImport {
   added: number;
   updated: number;
   removed: number;
+}
+
+/** What a manual import changed: with `price_auto_accept` on, also the deployments that took the new prices. */
+export interface ImportSummary extends PriceImport {
+  accepted?: number;
 }
 
 export interface PriceSearch {
@@ -1123,8 +1130,6 @@ export interface HubModel extends HubLimits {
   metadata: ModelMetadata;
   /** Who makes it: the metadata's vendor, or without one the vendor its names suggest. */
   vendor?: string;
-  /** Set when `vendor` is suggested from its names rather than saved. */
-  vendor_suggested?: boolean;
   tags: string[];
   /** Set for a model alias: the model name it serves. */
   target?: string;

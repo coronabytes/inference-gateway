@@ -35,3 +35,10 @@ export function VendorLogo({ vendor, fallback }: { vendor: string; fallback: str
   // Our own files, checked in: no scripts, only shapes.
   return <span className="vendor-mark logo" aria-hidden="true" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
+
+/** A vendor's logo at text size, for a list option; without one, its first letter, and nothing without a vendor. */
+export function VendorIcon({ vendor }: { vendor: string }) {
+  const svg = FILES[`../assets/vendors/${LOGO[vendor]}.svg`];
+  if (!svg) return <span className="vendor-icon letter">{vendor.charAt(0).toUpperCase()}</span>;
+  return <span className="vendor-icon" dangerouslySetInnerHTML={{ __html: svg }} />;
+}

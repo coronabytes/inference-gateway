@@ -25,9 +25,8 @@ use crate::{
     error::AdminError,
     ir::{Aggregator, ChatRequest, Message, Part, Role},
     model::{
-        AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, Mode, ProjectRow, PromptLogging, ProviderKind, Route, RouterRow,
-        Secrets,
-        VirtualKey, normalize_tags,
+        AliasRow, CredentialRow, CredentialSettings, DeploymentConfig, DeploymentRow, KeyScope, Mode, ProjectRow, PromptLogging,
+        ProviderKind, Route, RouterRow, Secrets, VirtualKey, normalize_tags,
     },
     registry,
     settings::Settings,
@@ -40,8 +39,8 @@ pub(crate) mod connect;
 pub(crate) mod guardrails;
 pub(crate) mod hub;
 pub(crate) mod mcp;
-pub(crate) mod tool_routers;
 pub(crate) mod oauth;
+pub(crate) mod tool_routers;
 pub(crate) mod transfer;
 
 type R<T> = Result<T, AdminError>;
@@ -132,7 +131,9 @@ fn csv(s: Option<&str>) -> Option<Vec<&str>> {
 
 /// A comma-separated list of ids; `None` when empty.
 fn csv_ids(s: Option<&str>, what: &str) -> R<Option<Vec<Uuid>>> {
-    csv(s).map(|items| items.into_iter().map(|v| v.parse().map_err(|_| AdminError::bad_request(format!("{what} must be ids")))).collect()).transpose()
+    csv(s)
+        .map(|items| items.into_iter().map(|v| v.parse().map_err(|_| AdminError::bad_request(format!("{what} must be ids")))).collect())
+        .transpose()
 }
 
 /// A comma-separated list filter on tags or projects, where `-` stands for none (no tags, no project).
@@ -234,7 +235,9 @@ fn clean_settings(state: &AppState, provider: ProviderKind, s: CredentialSetting
     // The environment's identity: at most a client ID, for a user-assigned managed identity or a
     // workload identity app. The tenant comes from the environment.
     if environment && s.tenant_id.is_some() {
-        return Err(AdminError::bad_request("with the environment's identity, the tenant comes from the environment; leave tenant_id empty"));
+        return Err(AdminError::bad_request(
+            "with the environment's identity, the tenant comes from the environment; leave tenant_id empty",
+        ));
     }
     if !environment && s.tenant_id.is_some() != s.client_id.is_some() {
         return Err(AdminError::bad_request("Entra ID needs both tenant_id and client_id"));
@@ -252,7 +255,10 @@ fn clean_settings(state: &AppState, provider: ProviderKind, s: CredentialSetting
         if provider != ProviderKind::Openai {
             return Err(AdminError::bad_request("auth_header only applies to OpenAI-compatible credentials"));
         }
-        if axum::http::HeaderName::try_from(h.as_str()).is_err() || crate::model::reserved_header(h) || h.eq_ignore_ascii_case("content-type") {
+        if axum::http::HeaderName::try_from(h.as_str()).is_err()
+            || crate::model::reserved_header(h)
+            || h.eq_ignore_ascii_case("content-type")
+        {
             return Err(AdminError::bad_request(format!("auth_header '{h}' is not a header the key can be sent in")));
         }
     }
@@ -355,19 +361,13 @@ fn validate_credential(provider: ProviderKind, name: &str, s: &Secrets, settings
     // Secrets are only ever stored, encrypted, from what is entered here. Reject `env:` values
     // explicitly: older versions treated them as environment references.
     if s.values().any(|v| v.starts_with("env:")) {
-        return Err(AdminError::bad_request(
-            "enter the secret value itself; env: references to environment variables are not supported",
-        ));
+        return Err(AdminError::bad_request("enter the secret value itself; env: references to environment variables are not supported"));
     }
     Ok(())
 }
 
 fn conflict_on_duplicate_name(e: sqlx::Error) -> AdminError {
-    if db::is_unique_violation(&e) {
-        AdminError::conflict("a credential with this name already exists")
-    } else {
-        e.into()
-    }
+    if db::is_unique_violation(&e) { AdminError::conflict("a credential with this name already exists") } else { e.into() }
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
@@ -400,11 +400,9 @@ async fn create_credential(
     Extension(actor): Extension<Actor>,
     Json(i): Json<CredentialInput>,
 ) -> R<(StatusCode, Json<CredentialView>)> {
-    let provider = i
-        .provider
-        .as_deref()
-        .and_then(ProviderKind::parse)
-        .ok_or_else(|| AdminError::bad_request("provider must be one of openai, azure, bedrock, anthropic, typesafe, mistral, vertex, gemini"))?;
+    let provider = i.provider.as_deref().and_then(ProviderKind::parse).ok_or_else(|| {
+        AdminError::bad_request("provider must be one of openai, azure, bedrock, anthropic, typesafe, mistral, vertex, gemini")
+    })?;
     let mut secrets = Secrets::default();
     secrets.merge(i.secrets);
     let settings = clean_settings(&state, provider, i.settings)?;
@@ -482,7 +480,9 @@ async fn delete_credential(State(state): State<AppState>, Extension(actor): Exte
         }
         Ok(false) => Err(AdminError::not_found()),
         // A deployment or guardrail started using it after the checks above.
-        Err(e) if db::is_foreign_key_violation(&e) => Err(AdminError::conflict("credential is in use; reassign or delete what uses it first")),
+        Err(e) if db::is_foreign_key_violation(&e) => {
+            Err(AdminError::conflict("credential is in use; reassign or delete what uses it first"))
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -780,9 +780,7 @@ fn check_deployment(i: &DeploymentInput) -> R<ProviderKind> {
     match i.long_context_threshold {
         Some(t) if t < 1 => return Err(AdminError::bad_request("long_context_threshold must be a positive token count")),
         Some(_) if i.long_input_cost_per_mtok.is_none() || i.long_output_cost_per_mtok.is_none() => {
-            return Err(AdminError::bad_request(
-                "long-context pricing needs long_input_cost_per_mtok and long_output_cost_per_mtok",
-            ));
+            return Err(AdminError::bad_request("long-context pricing needs long_input_cost_per_mtok and long_output_cost_per_mtok"));
         }
         _ => {}
     }
@@ -801,10 +799,7 @@ fn check_deployment_fits(
     aliases: &[AliasRow],
 ) -> R<()> {
     if cred.provider != provider.as_str() {
-        return Err(AdminError::bad_request(format!(
-            "credential '{}' is for {}, not {}",
-            cred.name, cred.provider, i.provider
-        )));
+        return Err(AdminError::bad_request(format!("credential '{}' is for {}, not {}", cred.name, cred.provider, i.provider)));
     }
     if routers.iter().any(|r| r.model_name == i.model_name) {
         return Err(AdminError::bad_request(format!("'{}' is an auto router's model name", i.model_name)));
@@ -894,7 +889,8 @@ async fn list_deployments(State(state): State<AppState>, Query(q): Query<Deploym
     let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
     let (cds, mut health) = tokio::join!(state.cache.cooldown_ttls(&ids), deployment_health(&state, &rows));
     let snap = state.registry.snapshot();
-    let efforts: HashMap<Uuid, Vec<crate::model::ReasoningEffort>> = snap.deployments.values().flatten().map(|d| (d.id, d.efforts())).collect();
+    let efforts: HashMap<Uuid, Vec<crate::model::ReasoningEffort>> =
+        snap.deployments.values().flatten().map(|d| (d.id, d.efforts())).collect();
     Ok(Json(
         rows.into_iter()
             .map(|r| {
@@ -1125,7 +1121,13 @@ async fn validate_router(state: &AppState, id: Option<Uuid>, i: &mut RouterInput
 
 /// Tidies a router's input and checks it against `deployments`, `routers` (which may include
 /// the router itself, as `id`) and `aliases`. Routes name deployments' models, not aliases.
-fn check_router(i: &mut RouterInput, id: Option<Uuid>, deployments: &[DeploymentRow], routers: &[RouterRow], aliases: &[AliasRow]) -> R<()> {
+fn check_router(
+    i: &mut RouterInput,
+    id: Option<Uuid>,
+    deployments: &[DeploymentRow],
+    routers: &[RouterRow],
+    aliases: &[AliasRow],
+) -> R<()> {
     i.model_name = i.model_name.trim().to_string();
     i.instructions = i.instructions.take().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     i.fallback_route = i.fallback_route.take().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
@@ -1164,7 +1166,10 @@ fn check_router(i: &mut RouterInput, id: Option<Uuid>, deployments: &[Deployment
             return Err(AdminError::bad_request(format!("route '{}' is listed twice", r.name)));
         }
         if r.description.is_empty() || r.description.len() > 1000 {
-            return Err(AdminError::bad_request(format!("route '{}' needs a description of when to use it (at most 1000 characters)", r.name)));
+            return Err(AdminError::bad_request(format!(
+                "route '{}' needs a description of when to use it (at most 1000 characters)",
+                r.name
+            )));
         }
         if r.models.is_empty() || r.models.len() > MAX_ROUTE_MODELS {
             return Err(AdminError::bad_request(format!("route '{}' needs 1 to {MAX_ROUTE_MODELS} models", r.name)));
@@ -1226,13 +1231,15 @@ pub(crate) struct RouterListItem {
 async fn list_routers(State(state): State<AppState>, Query(q): Query<RouterQuery>) -> R<Json<Vec<RouterListItem>>> {
     let search = search_text(q.q.as_deref());
     let tags = tag_filter(q.tags.as_deref())?;
-    let (routers, deployments) = tokio::try_join!(db::search_routers(&state.db, search.as_deref(), &tags), db::list_deployments(&state.db))?;
+    let (routers, deployments) =
+        tokio::try_join!(db::search_routers(&state.db, search.as_deref(), &tags), db::list_deployments(&state.db))?;
     let serves = |name: &str, mode: Mode| deployments.iter().any(|d| d.model_name == name && d.mode == mode.as_str());
     Ok(Json(
         routers
             .into_iter()
             .map(|r| {
-                let mut missing: BTreeSet<String> = r.routes.0.iter().flat_map(|route| &route.models).map(|m| m.model.clone()).filter(|m| !serves(m, Mode::Chat)).collect();
+                let mut missing: BTreeSet<String> =
+                    r.routes.0.iter().flat_map(|route| &route.models).map(|m| m.model.clone()).filter(|m| !serves(m, Mode::Chat)).collect();
                 if !serves(&r.decision_model, Mode::Decision) {
                     missing.insert(r.decision_model.clone());
                 }
@@ -1320,7 +1327,11 @@ fn alias_view(a: AliasRow, deployments: &[DeploymentRow], routers: &[RouterRow])
 
 /// The model name of the deployment or router `id`.
 fn target_name<'a>(id: Uuid, deployments: &'a [DeploymentRow], routers: &'a [RouterRow]) -> Option<&'a str> {
-    deployments.iter().find(|d| d.id == id).map(|d| d.model_name.as_str()).or_else(|| routers.iter().find(|r| r.id == id).map(|r| r.model_name.as_str()))
+    deployments
+        .iter()
+        .find(|d| d.id == id)
+        .map(|d| d.model_name.as_str())
+        .or_else(|| routers.iter().find(|r| r.id == id).map(|r| r.model_name.as_str()))
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1704,7 +1715,9 @@ async fn key_tags(state: &AppState, wanted: Vec<String>, held: &[String]) -> R<V
     let tags = normalize_tags(wanted).map_err(AdminError::bad_request)?;
     let known = known_tags(state).await?;
     if let Some(t) = tags.iter().find(|t| !known.contains_key(*t) && !held.contains(t)) {
-        return Err(AdminError::bad_request(format!("no deployment, router, MCP server or A2A agent has the tag '{t}'; add tags on the Models or Tools page")));
+        return Err(AdminError::bad_request(format!(
+            "no deployment, router, MCP server or A2A agent has the tag '{t}'; add tags on the Models or Tools page"
+        )));
     }
     Ok(tags)
 }
@@ -1746,7 +1759,11 @@ pub(crate) struct KeyQuery {
     logging: Option<bool>,
 }
 
-async fn list_keys(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<KeyQuery>) -> R<Json<Vec<KeyView>>> {
+async fn list_keys(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<KeyQuery>,
+) -> R<Json<Vec<KeyView>>> {
     let search = search_text(q.q.as_deref());
     let (tags, projects) = (tag_filter(q.tags.as_deref())?, project_filter(q.projects.as_deref())?);
     let settings = state.settings.get();
@@ -1770,7 +1787,11 @@ pub(crate) struct KeyOptionsQuery {
 }
 
 /// `GET /keys/options`: the keys a picker offers, by name, without their settings or budgets.
-async fn key_options(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<KeyOptionsQuery>) -> R<Json<Vec<db::NamedItem>>> {
+async fn key_options(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<KeyOptionsQuery>,
+) -> R<Json<Vec<db::NamedItem>>> {
     let usable = q.usable.unwrap_or(false);
     let mut keys = db::key_names(&state.db, access.projects(), usable).await?;
     // Whether a project is active and what a key may call, the registry knows.
@@ -2023,7 +2044,11 @@ pub(crate) struct ProjectQuery {
     q: Option<String>,
 }
 
-async fn list_projects(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<ProjectQuery>) -> R<Json<Vec<ProjectView>>> {
+async fn list_projects(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<ProjectQuery>,
+) -> R<Json<Vec<ProjectView>>> {
     let search = search_text(q.q.as_deref());
     let projects = db::list_projects(&state.db, search.as_deref(), access.projects()).await?;
     Ok(Json(futures::future::join_all(projects.into_iter().map(|(project, keys)| ProjectView::new(&state, project, keys))).await))
@@ -2133,12 +2158,18 @@ async fn delete_project(State(state): State<AppState>, Extension(actor): Extensi
     let servers: Vec<String> =
         db::list_mcp_servers(&state.db).await?.into_iter().filter(|s| s.project_ids.contains(&id)).map(|s| s.name).collect();
     if !servers.is_empty() {
-        return Err(AdminError::conflict(format!("MCP servers {} are limited to this project; remove it from them first", servers.join(", "))));
+        return Err(AdminError::conflict(format!(
+            "MCP servers {} are limited to this project; remove it from them first",
+            servers.join(", ")
+        )));
     }
     let agents: Vec<String> =
         db::list_a2a_agents(&state.db).await?.into_iter().filter(|a| a.project_ids.contains(&id)).map(|a| a.name).collect();
     if !agents.is_empty() {
-        return Err(AdminError::conflict(format!("A2A agents {} are limited to this project; remove it from them first", agents.join(", "))));
+        return Err(AdminError::conflict(format!(
+            "A2A agents {} are limited to this project; remove it from them first",
+            agents.join(", ")
+        )));
     }
     let keys = db::delete_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     // Replicas reload their keys so the deleted ones stop working there too.
@@ -2523,7 +2554,11 @@ async fn project_bodies(State(state): State<AppState>, Path(id): Path<Uuid>) -> 
 
 /// `DELETE /projects/{id}/bodies`: deletes the stored prompts and responses of every request made
 /// in the project, also by keys that have left it since.
-async fn delete_project_bodies(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<Json<DeletedBodies>> {
+async fn delete_project_bodies(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+) -> R<Json<DeletedBodies>> {
     let p = db::get_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     let deleted = remove_bodies(&state, db::BodiesOf::Project(id)).await?;
     audit::Event::new("project", "delete_bodies").on(id, &p.name).details(json!({ "deleted": deleted })).record(&state, &actor).await;
@@ -2631,7 +2666,11 @@ fn log_window(range: Option<&str>, from: Option<chrono::NaiveDate>, to: Option<c
     })
 }
 
-async fn key_usage(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<RangeQuery>) -> R<Json<Vec<db::KeyUsageRow>>> {
+async fn key_usage(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<RangeQuery>,
+) -> R<Json<Vec<db::KeyUsageRow>>> {
     let since = Utc::now()
         - match q.range.as_deref() {
             Some("1h") => chrono::Duration::hours(1),
@@ -2690,7 +2729,11 @@ async fn get_settings(State(state): State<AppState>) -> R<Json<SettingsView>> {
 
 /// Save the settings (all of them; missing fields take their defaults) and apply them on every
 /// replica.
-async fn put_settings(State(state): State<AppState>, Extension(actor): Extension<Actor>, Json(settings): Json<Settings>) -> R<Json<SettingsView>> {
+async fn put_settings(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Json(settings): Json<Settings>,
+) -> R<Json<SettingsView>> {
     settings.check().map_err(AdminError::bad_request)?;
     let before = settings_view(&state).await?.settings;
     db::save_gateway_settings(&state.db, &serde_json::to_value(&settings).expect("settings serialize")).await?;
@@ -2751,7 +2794,11 @@ pub(crate) struct PlaygroundGuardrail {
 }
 
 /// `GET /admin/api/playground/options?key_id=…`.
-async fn playground_options(State(state): State<AppState>, Extension(access): Extension<Access>, Query(q): Query<PlaygroundQuery>) -> R<Json<PlaygroundOptions>> {
+async fn playground_options(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<PlaygroundQuery>,
+) -> R<Json<PlaygroundOptions>> {
     let snap = state.registry.snapshot();
     // As in `playground`: a user sees only the inference keys of their projects.
     let key = snap.keys.values().find(|k| k.id == q.key_id && sees_key(&access, k)).ok_or_else(AdminError::not_found)?;
@@ -2759,41 +2806,39 @@ async fn playground_options(State(state): State<AppState>, Extension(access): Ex
         .into_iter()
         .map(|name| {
             let router = snap.routers.contains_key(snap.resolve(name));
-            let mode = if router { Mode::Chat } else { crate::api::models::deployments(&snap, Some(key), name).first().map_or(Mode::Chat, |d| d.mode) };
+            let mode = if router {
+                Mode::Chat
+            } else {
+                crate::api::models::deployments(&snap, Some(key), name).first().map_or(Mode::Chat, |d| d.mode)
+            };
             let web_search = mode == Mode::Chat && crate::api::models::web_search(&snap, key, name);
             PlaygroundModel { name: name.clone(), mode, router, web_search }
         })
         .collect();
     let project = key.project_id.and_then(|p| snap.projects.get(&p));
     let enforced = |id: Uuid| key.guardrail_ids.contains(&id) || project.is_some_and(|p| p.guardrail_ids.contains(&id));
-    let guardrails = snap.guardrails.values().map(|g| PlaygroundGuardrail { name: g.row.name.clone(), enforced: enforced(g.row.id) }).collect();
+    let guardrails =
+        snap.guardrails.values().map(|g| PlaygroundGuardrail { name: g.row.name.clone(), enforced: enforced(g.row.id) }).collect();
     let (signed_in, _) = db::key_connections(&state.db, key.id).await?;
     // Only the key's own sign-in is asked for here; one per tenant or user is asked for by the call
     // that needs it, with a link.
     let upstream = |kind: crate::oauth::Kind, id: Uuid, name: &str, auth: &crate::oauth::UpstreamAuth| PlaygroundUpstream {
         name: name.to_string(),
-        needs_sign_in: auth.per_key() && auth.sign_in_by().is_empty() && !signed_in.iter().any(|r| r.upstream_kind == kind.as_str() && r.upstream_id == id),
+        needs_sign_in: auth.per_key()
+            && auth.sign_in_by().is_empty()
+            && !signed_in.iter().any(|r| r.upstream_kind == kind.as_str() && r.upstream_id == id),
         router: false,
     };
-    let mut mcp_servers: Vec<PlaygroundUpstream> = snap
-        .mcp_servers
-        .values()
-        .filter(|s| s.allows(key))
-        .map(|s| upstream(crate::oauth::Kind::Mcp, s.id, &s.name, &s.auth))
-        .collect();
-    let mut a2a_agents: Vec<PlaygroundUpstream> = snap
-        .a2a_agents
-        .values()
-        .filter(|a| a.allows(key))
-        .map(|a| upstream(crate::oauth::Kind::A2a, a.id, &a.name, &a.auth))
-        .collect();
+    let mut mcp_servers: Vec<PlaygroundUpstream> =
+        snap.mcp_servers.values().filter(|s| s.allows(key)).map(|s| upstream(crate::oauth::Kind::Mcp, s.id, &s.name, &s.auth)).collect();
+    let mut a2a_agents: Vec<PlaygroundUpstream> =
+        snap.a2a_agents.values().filter(|a| a.allows(key)).map(|a| upstream(crate::oauth::Kind::A2a, a.id, &a.name, &a.auth)).collect();
     // Tool routers with a route the key may use.
-    mcp_servers.extend(
-        snap.tool_routers
-            .values()
-            .filter(|r| !r.usable(&snap, key).is_empty())
-            .map(|r| PlaygroundUpstream { name: r.name.clone(), needs_sign_in: false, router: true }),
-    );
+    mcp_servers.extend(snap.tool_routers.values().filter(|r| !r.usable(&snap, key).is_empty()).map(|r| PlaygroundUpstream {
+        name: r.name.clone(),
+        needs_sign_in: false,
+        router: true,
+    }));
     mcp_servers.sort_by(|a, b| a.name.cmp(&b.name));
     a2a_agents.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(PlaygroundOptions { models, guardrails, mcp_servers, a2a_agents }))
@@ -2906,7 +2951,9 @@ mod tests {
     async fn environment_identity_credentials() {
         use crate::model::Identity;
         let state = crate::state::test_state();
-        let env = |provider, s: CredentialSettings| clean_settings(&state, provider, CredentialSettings { identity: Some(Identity::Environment), ..s });
+        let env = |provider, s: CredentialSettings| {
+            clean_settings(&state, provider, CredentialSettings { identity: Some(Identity::Environment), ..s })
+        };
         let azure = CredentialSettings { base_url: Some("https://r.openai.azure.com".into()), ..Default::default() };
         // Azure: nothing stored; an optional client ID for a user-assigned identity, but no tenant.
         let s = env(ProviderKind::Azure, azure.clone()).unwrap();

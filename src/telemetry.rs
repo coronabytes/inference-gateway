@@ -47,8 +47,7 @@ use opentelemetry::{
     trace::{SpanKind, Status, TraceContextExt, Tracer},
 };
 use opentelemetry_sdk::{
-    Resource, logs::SdkLoggerProvider, metrics::SdkMeterProvider, propagation::TraceContextPropagator,
-    trace::SdkTracerProvider,
+    Resource, logs::SdkLoggerProvider, metrics::SdkMeterProvider, propagation::TraceContextPropagator, trace::SdkTracerProvider,
 };
 
 use crate::{
@@ -88,8 +87,7 @@ pub fn init() -> Result<Option<SdkLoggerProvider>, String> {
     let resource = resource();
     let mut p = PROVIDERS.lock().expect("telemetry lock");
     if traces {
-        let exporter =
-            opentelemetry_otlp::SpanExporter::builder().with_http().build().map_err(|e| format!("OTLP trace exporter: {e}"))?;
+        let exporter = opentelemetry_otlp::SpanExporter::builder().with_http().build().map_err(|e| format!("OTLP trace exporter: {e}"))?;
         let provider = SdkTracerProvider::builder().with_batch_exporter(exporter).with_resource(resource.clone()).build();
         global::set_tracer_provider(provider.clone());
         p.traces = Some(provider);
@@ -104,8 +102,7 @@ pub fn init() -> Result<Option<SdkLoggerProvider>, String> {
         METRICS.store(true, Ordering::Relaxed);
     }
     if logs {
-        let exporter =
-            opentelemetry_otlp::LogExporter::builder().with_http().build().map_err(|e| format!("OTLP log exporter: {e}"))?;
+        let exporter = opentelemetry_otlp::LogExporter::builder().with_http().build().map_err(|e| format!("OTLP log exporter: {e}"))?;
         p.logs = Some(SdkLoggerProvider::builder().with_batch_exporter(exporter).with_resource(resource).build());
     }
     Ok(p.logs.clone())
@@ -134,13 +131,7 @@ pub async fn shutdown() {
     };
     // The exporters' HTTP client blocks.
     let _ = tokio::task::spawn_blocking(move || {
-        for result in [
-            p.traces.map(|t| t.shutdown()),
-            p.metrics.map(|m| m.shutdown()),
-            p.logs.map(|l| l.shutdown()),
-        ]
-        .into_iter()
-        .flatten()
+        for result in [p.traces.map(|t| t.shutdown()), p.metrics.map(|m| m.shutdown()), p.logs.map(|l| l.shutdown())].into_iter().flatten()
         {
             if let Err(e) = result {
                 eprintln!("telemetry shutdown: {e}");
@@ -152,8 +143,8 @@ pub async fn shutdown() {
 
 /// A signal is exported when an endpoint is set for it and its exporter is not `none`.
 fn wanted(signal: &str) -> bool {
-    let endpoint = nonempty("OTEL_EXPORTER_OTLP_ENDPOINT").is_some()
-        || nonempty(&format!("OTEL_EXPORTER_OTLP_{signal}_ENDPOINT")).is_some();
+    let endpoint =
+        nonempty("OTEL_EXPORTER_OTLP_ENDPOINT").is_some() || nonempty(&format!("OTEL_EXPORTER_OTLP_{signal}_ENDPOINT")).is_some();
     let exporter = nonempty(&format!("OTEL_{signal}_EXPORTER"));
     endpoint && !exporter.is_some_and(|e| e.trim().eq_ignore_ascii_case("none"))
 }
@@ -212,10 +203,7 @@ pub async fn http_span(req: Request, next: Next) -> Response {
     let span = TRACER
         .span_builder(format!("{method} {route}"))
         .with_kind(SpanKind::Server)
-        .with_attributes([
-            KeyValue::new("http.request.method", method.clone()),
-            KeyValue::new("http.route", route.clone()),
-        ])
+        .with_attributes([KeyValue::new("http.request.method", method.clone()), KeyValue::new("http.route", route.clone())])
         .start_with_context(&*TRACER, &parent);
     let cx = parent.with_span(span);
     let resp = next.run(req).with_context(cx.clone()).await;
@@ -318,10 +306,8 @@ pub fn start_call(api: &str, model: &str, parent: Option<&Context>) -> Context {
         return Context::new();
     }
     let parent = parent.cloned().unwrap_or_else(Context::current);
-    let span = TRACER
-        .span_builder(format!("{} {model}", operation(api)))
-        .with_kind(SpanKind::Internal)
-        .start_with_context(&*TRACER, &parent);
+    let span =
+        TRACER.span_builder(format!("{} {model}", operation(api))).with_kind(SpanKind::Internal).start_with_context(&*TRACER, &parent);
     parent.with_span(span)
 }
 

@@ -44,12 +44,8 @@ pub fn factors(priorities: &[i32], health: &[Health]) -> Vec<f64> {
         .iter()
         .zip(health)
         .map(|(priority, h)| {
-            let mut ttfts: Vec<f64> = priorities
-                .iter()
-                .zip(health)
-                .filter(|(p, h)| *p == priority && h.ok >= MIN_CALLS)
-                .filter_map(|(_, h)| h.ttft_ms)
-                .collect();
+            let mut ttfts: Vec<f64> =
+                priorities.iter().zip(health).filter(|(p, h)| *p == priority && h.ok >= MIN_CALLS).filter_map(|(_, h)| h.ttft_ms).collect();
             ttfts.sort_by(f64::total_cmp);
             // A median of one is the deployment itself: nothing to compare with.
             let median = (ttfts.len() >= 2).then(|| ttfts[ttfts.len() / 2]);
@@ -114,10 +110,7 @@ pub async fn pick(
             }
         }
     }
-    Err(GatewayError::rate_limited(
-        "all deployments for this model are at capacity",
-        if min_retry == u64::MAX { 1 } else { min_retry },
-    ))
+    Err(GatewayError::rate_limited("all deployments for this model are at capacity", if min_retry == u64::MAX { 1 } else { min_retry }))
 }
 
 /// The priority tiers to try, best first. A tier keeps the share of requests its health allows

@@ -100,10 +100,7 @@ pub fn decode_stream<D: Decoder>(body: ByteStream, decoder: D) -> EventStream {
                     st.eof = true;
                     st.dec.finish(&mut out);
                     if !out.iter().any(|e| matches!(e, Ok(StreamEvent::Finish { .. }) | Err(_))) {
-                        out.push(Err(GatewayError::upstream_stream(
-                            crate::error::ErrorKind::Upstream,
-                            "stream ended before completion",
-                        )));
+                        out.push(Err(GatewayError::upstream_stream(crate::error::ErrorKind::Upstream, "stream ended before completion")));
                     }
                 }
             }
@@ -395,19 +392,13 @@ pub async fn post(
     {
         let scope = entra::scope_for(d.connection.base_url.as_deref());
         let token = state.entra.access_token(&source, scope).await?;
-        let mut v = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| GatewayError::internal("invalid Entra ID access token"))?;
+        let mut v =
+            HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| GatewayError::internal("invalid Entra ID access token"))?;
         v.set_sensitive(true);
         headers.insert("authorization", v);
     }
-    let resp = state
-        .http
-        .post(url)
-        .headers(headers)
-        .timeout(d.timeout)
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| GatewayError::from_reqwest(&e))?;
+    let resp =
+        state.http.post(url).headers(headers).timeout(d.timeout).body(body).send().await.map_err(|e| GatewayError::from_reqwest(&e))?;
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
@@ -430,12 +421,9 @@ pub async fn stream_chat(state: &AppState, d: &Deployment, req: &ChatRequest) ->
         ApiStyle::Anthropic if d.bedrock_invoke() => bedrock::send_invoke(state, d, req).await,
         ApiStyle::Anthropic => anthropic::send(state, d, req).await,
         ApiStyle::Converse => bedrock::send(state, d, req).await,
-        ApiStyle::Systemone | ApiStyle::Embeddings | ApiStyle::Rerank => Err(GatewayError::invalid(format!(
-            "'{}' is a {} model; call {}",
-            d.model_name,
-            d.mode.as_str(),
-            d.mode.endpoints()
-        ))),
+        ApiStyle::Systemone | ApiStyle::Embeddings | ApiStyle::Rerank => {
+            Err(GatewayError::invalid(format!("'{}' is a {} model; call {}", d.model_name, d.mode.as_str(), d.mode.endpoints())))
+        }
     }
 }
 
@@ -525,7 +513,9 @@ pub(crate) mod tests {
     #[test]
     fn efforts_come_from_the_catalog() {
         use crate::ir::Effort::*;
-        let with = |style, catalog: Option<serde_json::Value>| Deployment { catalog: catalog.map(std::sync::Arc::new), ..deployment(ProviderKind::Azure, style, "m") }.efforts();
+        let with = |style, catalog: Option<serde_json::Value>| {
+            Deployment { catalog: catalog.map(std::sync::Arc::new), ..deployment(ProviderKind::Azure, style, "m") }.efforts()
+        };
         let luna = serde_json::json!({ "supports_reasoning": true, "supports_minimal_reasoning_effort": false, "supports_none_reasoning_effort": true,
             "supports_xhigh_reasoning_effort": true, "supports_max_reasoning_effort": true });
         assert_eq!(with(ApiStyle::Responses, Some(luna)), [None, Low, Medium, High, Xhigh, Max]);
@@ -547,7 +537,10 @@ pub(crate) mod tests {
     #[test]
     fn translated_efforts_fit_the_model() {
         use crate::ir::{ChatRequest, Effort, Reasoning};
-        let at = |style, catalog: Option<serde_json::Value>| Deployment { catalog: catalog.map(std::sync::Arc::new), ..deployment(ProviderKind::Azure, style, "m") };
+        let at = |style, catalog: Option<serde_json::Value>| Deployment {
+            catalog: catalog.map(std::sync::Arc::new),
+            ..deployment(ProviderKind::Azure, style, "m")
+        };
         let asking = |e| ChatRequest { reasoning: Some(Reasoning::Effort(e)), ..ChatRequest::default() };
         let luna = serde_json::json!({ "supports_reasoning": true, "supports_minimal_reasoning_effort": false, "supports_none_reasoning_effort": true });
         let responses = |e| openai_responses::build_body(&asking(e), &at(ApiStyle::Responses, Some(luna.clone())));
@@ -668,15 +661,29 @@ pub(crate) mod tests {
                 crate::ir::Part::File { media_type, data, filename: Some(f), .. } if media_type == "application/pdf" && data == "JVBERi0=" && f == "Q3 report.pdf"));
 
             let chat = openai_chat::build_body(&req, &deployment(ProviderKind::Openai, ApiStyle::Chat, "m"));
-            assert_eq!(chat.pointer("/messages/0/content/0"), Some(&json!({ "type": "file", "file": { "filename": "Q3 report.pdf", "file_data": url } })));
+            assert_eq!(
+                chat.pointer("/messages/0/content/0"),
+                Some(&json!({ "type": "file", "file": { "filename": "Q3 report.pdf", "file_data": url } }))
+            );
             let responses = openai_responses::build_body(&req, &deployment(ProviderKind::Openai, ApiStyle::Responses, "m"));
-            assert_eq!(responses.pointer("/input/0/content/0"), Some(&json!({ "type": "input_file", "filename": "Q3 report.pdf", "file_data": url })));
+            assert_eq!(
+                responses.pointer("/input/0/content/0"),
+                Some(&json!({ "type": "input_file", "filename": "Q3 report.pdf", "file_data": url }))
+            );
             let claude = anthropic::build_body(&req, &deployment(ProviderKind::Anthropic, ApiStyle::Anthropic, "m"));
             assert_eq!(claude.pointer("/messages/0/content/0/source/data"), Some(&json!("JVBERi0=")));
             assert_eq!(claude.pointer("/messages/0/content/0/type"), Some(&json!("document")));
             let converse = bedrock::build_body(&req, &deployment(ProviderKind::Bedrock, ApiStyle::Converse, "m")).unwrap();
-            assert_eq!(converse.pointer("/messages/0/content/0/document"), Some(&json!({ "format": "pdf", "name": "Q3 report", "source": { "bytes": "JVBERi0=" } })));
+            assert_eq!(
+                converse.pointer("/messages/0/content/0/document"),
+                Some(&json!({ "format": "pdf", "name": "Q3 report", "source": { "bytes": "JVBERi0=" } }))
+            );
         }
-        assert!(crate::api::chat::parse_request(&json!({ "messages": [{ "role": "user", "content": [{ "type": "file", "file": { "file_id": "file-1" } }] }] })).is_err());
+        assert!(
+            crate::api::chat::parse_request(
+                &json!({ "messages": [{ "role": "user", "content": [{ "type": "file", "file": { "file_id": "file-1" } }] }] })
+            )
+            .is_err()
+        );
     }
 }

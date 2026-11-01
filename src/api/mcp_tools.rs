@@ -99,7 +99,10 @@ pub fn take(raw: &mut Value, inbound: Inbound) -> Result<Vec<Wanted>, GatewayErr
                     rest.push(t);
                     continue;
                 }
-                let server = t.get("server_label").and_then(Value::as_str).ok_or_else(|| invalid("an mcp tool needs its server_label: a gateway MCP server's name"))?;
+                let server = t
+                    .get("server_label")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("an mcp tool needs its server_label: a gateway MCP server's name"))?;
                 check_url(t.get("server_url"), server)?;
                 if t.get("authorization").is_some() || t.get("headers").is_some() {
                     return Err(invalid("the gateway signs in to its MCP servers itself: leave authorization and headers out"));
@@ -135,7 +138,10 @@ pub fn take(raw: &mut Value, inbound: Inbound) -> Result<Vec<Wanted>, GatewayErr
             }
             let Some(servers) = raw.as_object_mut().and_then(|o| o.remove("mcp_servers")) else { return Ok(wanted) };
             for s in servers.as_array().into_iter().flatten() {
-                let server = s.get("name").and_then(Value::as_str).ok_or_else(|| invalid("an MCP server needs its name: a gateway MCP server's name"))?;
+                let server = s
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("an MCP server needs its name: a gateway MCP server's name"))?;
                 check_url(s.get("url"), server)?;
                 if s.get("authorization_token").is_some() {
                     return Err(invalid("the gateway signs in to its MCP servers itself: leave authorization_token out"));
@@ -154,7 +160,10 @@ pub fn take(raw: &mut Value, inbound: Inbound) -> Result<Vec<Wanted>, GatewayErr
 
 /// A function name every provider takes: letters, digits, `_` and `-`, at most 64 characters.
 fn function_name(server: &str, tool: &str) -> String {
-    let name: String = format!("{server}{SEPARATOR}{tool}").chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
+    let name: String = format!("{server}{SEPARATOR}{tool}")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
     if name.len() <= 64 {
         return name;
     }
@@ -185,7 +194,14 @@ impl Routed {
 
 /// Replaces the tool routers a request names by the servers and tools of the routes their
 /// decision models pick for it. A failed decision offers every route the key may use.
-pub async fn route(state: &AppState, key: &Arc<VirtualKey>, labels: &Labels, raw: &Value, inbound: Inbound, wanted: Vec<Wanted>) -> (Vec<Wanted>, Vec<Routed>) {
+pub async fn route(
+    state: &AppState,
+    key: &Arc<VirtualKey>,
+    labels: &Labels,
+    raw: &Value,
+    inbound: Inbound,
+    wanted: Vec<Wanted>,
+) -> (Vec<Wanted>, Vec<Routed>) {
     let snap = state.registry.snapshot();
     if !wanted.iter().any(|w| snap.tool_routers.contains_key(&w.server)) {
         return (wanted, Vec::new());
@@ -206,7 +222,9 @@ pub async fn route(state: &AppState, key: &Arc<VirtualKey>, labels: &Labels, raw
         let routes: Vec<&ToolRoute> = usable.iter().map(|(r, _)| *r).collect();
         let decided = match &transcript {
             _ if routes.is_empty() => Ok(Vec::new()),
-            Ok(t) => crate::api::decisions::choose_tools(state, key, labels, router, &routes, t.clone()).await.map(|sure| router.pick(&routes, &sure)),
+            Ok(t) => crate::api::decisions::choose_tools(state, key, labels, router, &routes, t.clone())
+                .await
+                .map(|sure| router.pick(&routes, &sure)),
             Err(e) => Err(e.clone()),
         };
         let (picked, how) = match decided {
@@ -263,7 +281,11 @@ pub async fn toolset(state: &AppState, key: &VirtualKey, labels: &Labels, wanted
                 ToolsError::Auth(e) => e.into_gateway(),
                 ToolsError::Failed(e) => GatewayError {
                     upstream: true,
-                    ..GatewayError::new(ErrorKind::Upstream, axum::http::StatusCode::BAD_GATEWAY, format!("MCP server '{}': {e}", server.name))
+                    ..GatewayError::new(
+                        ErrorKind::Upstream,
+                        axum::http::StatusCode::BAD_GATEWAY,
+                        format!("MCP server '{}': {e}", server.name),
+                    )
                 },
             })?;
             Ok((server, listed))
@@ -314,10 +336,18 @@ fn result_parts(result: &Value) -> (Vec<Part>, bool) {
     let mut parts = Vec::new();
     for c in result.get("content").and_then(Value::as_array).into_iter().flatten() {
         match c.get("type").and_then(Value::as_str) {
-            Some("text") => parts.push(Part::Text { text: c.get("text").and_then(Value::as_str).unwrap_or_default().to_string(), cache: false }),
+            Some("text") => {
+                parts.push(Part::Text { text: c.get("text").and_then(Value::as_str).unwrap_or_default().to_string(), cache: false })
+            }
             Some("image") => {
-                let (Some(data), Some(media_type)) = (c.get("data").and_then(Value::as_str), c.get("mimeType").and_then(Value::as_str)) else { continue };
-                parts.push(Part::Image { source: ImageSource::Base64 { media_type: media_type.to_string(), data: data.to_string() }, cache: false });
+                let (Some(data), Some(media_type)) = (c.get("data").and_then(Value::as_str), c.get("mimeType").and_then(Value::as_str))
+                else {
+                    continue;
+                };
+                parts.push(Part::Image {
+                    source: ImageSource::Base64 { media_type: media_type.to_string(), data: data.to_string() },
+                    cache: false,
+                });
             }
             // Resources, links and audio as their JSON: the model can read what they say.
             _ => parts.push(Part::Text { text: c.to_string(), cache: false }),
@@ -343,7 +373,13 @@ pub struct Caller {
 /// task, as the client reads the answer. The events are one response: the servers' tools first,
 /// blocks renumbered, the gateway's tool calls as [`McpItem`]s once they ran, one `Finish` with
 /// every round's usage.
-pub async fn start(state: &AppState, d: &Arc<Deployment>, ir: ChatRequest, set: Arc<Toolset>, caller: Caller) -> Result<(StreamEvent, EventStream), GatewayError> {
+pub async fn start(
+    state: &AppState,
+    d: &Arc<Deployment>,
+    ir: ChatRequest,
+    set: Arc<Toolset>,
+    caller: Caller,
+) -> Result<(StreamEvent, EventStream), GatewayError> {
     let mut events = providers::stream_chat(state, d, &ir).await?;
     let first = match events.next().await {
         Some(Ok(first)) => first,
@@ -359,7 +395,15 @@ pub async fn start(state: &AppState, d: &Arc<Deployment>, ir: ChatRequest, set: 
     Ok((first, Box::pin(rest)))
 }
 
-async fn rounds(state: AppState, d: Arc<Deployment>, mut ir: ChatRequest, set: Arc<Toolset>, caller: Caller, mut events: EventStream, tx: mpsc::Sender<EventResult>) {
+async fn rounds(
+    state: AppState,
+    d: Arc<Deployment>,
+    mut ir: ChatRequest,
+    set: Arc<Toolset>,
+    caller: Caller,
+    mut events: EventStream,
+    tx: mpsc::Sender<EventResult>,
+) {
     // `false` once the client stopped reading: the rounds stop too.
     let send = async |ev: EventResult| tx.send(ev).await.is_ok();
     let mut next_index = 0;
@@ -395,9 +439,15 @@ async fn rounds(state: AppState, d: Arc<Deployment>, mut ir: ChatRequest, set: A
                     index.insert(i, to);
                     to.map(|index| StreamEvent::BlockStart { index, kind })
                 }
-                StreamEvent::TextDelta { index: i, text } => index.get(&i).copied().flatten().map(|index| StreamEvent::TextDelta { index, text }),
-                StreamEvent::ToolArgsDelta { index: i, json } => index.get(&i).copied().flatten().map(|index| StreamEvent::ToolArgsDelta { index, json }),
-                StreamEvent::ReasoningDelta { index: i, text } => index.get(&i).copied().flatten().map(|index| StreamEvent::ReasoningDelta { index, text }),
+                StreamEvent::TextDelta { index: i, text } => {
+                    index.get(&i).copied().flatten().map(|index| StreamEvent::TextDelta { index, text })
+                }
+                StreamEvent::ToolArgsDelta { index: i, json } => {
+                    index.get(&i).copied().flatten().map(|index| StreamEvent::ToolArgsDelta { index, json })
+                }
+                StreamEvent::ReasoningDelta { index: i, text } => {
+                    index.get(&i).copied().flatten().map(|index| StreamEvent::ReasoningDelta { index, text })
+                }
                 StreamEvent::SignatureDelta { index: i, signature } => {
                     index.get(&i).copied().flatten().map(|index| StreamEvent::SignatureDelta { index, signature })
                 }
@@ -429,9 +479,19 @@ async fn rounds(state: AppState, d: Arc<Deployment>, mut ir: ChatRequest, set: A
         // out of rounds. Calls of the gateway's tools in a last round are not run.
         if calls.is_empty() || client_calls || round + 1 >= MAX_ROUNDS {
             if !calls.is_empty() {
-                tracing::warn!(rounds = round + 1, calls = calls.len(), "MCP tool calls left unrun: the model also called client tools, or ran out of rounds");
+                tracing::warn!(
+                    rounds = round + 1,
+                    calls = calls.len(),
+                    "MCP tool calls left unrun: the model also called client tools, or ran out of rounds"
+                );
             }
-            let stop_reason = if client_calls { StopReason::ToolUse } else if stop == StopReason::ToolUse { StopReason::EndTurn } else { stop };
+            let stop_reason = if client_calls {
+                StopReason::ToolUse
+            } else if stop == StopReason::ToolUse {
+                StopReason::EndTurn
+            } else {
+                stop
+            };
             send(Ok(StreamEvent::Finish { stop_reason, usage })).await;
             return;
         }
@@ -495,14 +555,20 @@ mod tests {
             { "type": "mcp", "server_label": "docs", "server_url": "https://gw.example.com/mcp/docs", "allowed_tools": { "tool_names": ["read"] } },
         ] });
         let wanted = take(&mut raw, Inbound::Responses).unwrap();
-        assert_eq!(wanted, [
-            Wanted { server: "github".into(), allowed: Some(vec!["search".into()]), optional: false },
-            Wanted { server: "docs".into(), allowed: Some(vec!["read".into()]), optional: false },
-        ]);
+        assert_eq!(
+            wanted,
+            [
+                Wanted { server: "github".into(), allowed: Some(vec!["search".into()]), optional: false },
+                Wanted { server: "docs".into(), allowed: Some(vec!["read".into()]), optional: false },
+            ]
+        );
         assert_eq!(raw["tools"], json!([{ "type": "function", "name": "f" }]));
 
         let refused = |t: Value| take(&mut json!({ "tools": [t] }), Inbound::Chat).unwrap_err().message;
-        assert!(refused(json!({ "type": "mcp", "server_label": "x", "server_url": "https://mcp.other.com/sse" })).contains("only the gateway's"));
+        assert!(
+            refused(json!({ "type": "mcp", "server_label": "x", "server_url": "https://mcp.other.com/sse" }))
+                .contains("only the gateway's")
+        );
         assert!(refused(json!({ "type": "mcp", "server_label": "x", "require_approval": "always" })).contains("never"));
         assert!(refused(json!({ "type": "mcp", "server_label": "x", "authorization": "t" })).contains("signs in"));
 
@@ -527,7 +593,9 @@ mod tests {
 
     #[test]
     fn tool_results_become_the_models_content() {
-        let (parts, is_error) = result_parts(&json!({ "content": [{ "type": "text", "text": "hi" }, { "type": "image", "data": "AAA", "mimeType": "image/png" }], "isError": true }));
+        let (parts, is_error) = result_parts(
+            &json!({ "content": [{ "type": "text", "text": "hi" }, { "type": "image", "data": "AAA", "mimeType": "image/png" }], "isError": true }),
+        );
         assert!(is_error);
         assert!(matches!(&parts[0], Part::Text { text, .. } if text == "hi"));
         assert!(matches!(&parts[1], Part::Image { source: ImageSource::Base64 { media_type, .. }, .. } if media_type == "image/png"));

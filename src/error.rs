@@ -142,8 +142,7 @@ impl GatewayError {
     /// Whether another deployment might succeed where this one failed. Upstream failures of
     /// these kinds also put the failing deployment into cooldown.
     pub fn is_retryable(&self) -> bool {
-        self.upstream
-            && matches!(self.kind, ErrorKind::RateLimit | ErrorKind::Overloaded | ErrorKind::Upstream | ErrorKind::Timeout)
+        self.upstream && matches!(self.kind, ErrorKind::RateLimit | ErrorKind::Overloaded | ErrorKind::Upstream | ErrorKind::Timeout)
     }
 
     pub fn anthropic_type(&self) -> &'static str {
@@ -249,10 +248,14 @@ mod tests {
     #[test]
     fn upstream_error_messages() {
         assert_eq!(extract_message(r#"{"error":{"message":"bad"}}"#).as_deref(), Some("bad"));
-        assert_eq!(extract_message(r#"[{"error":{"code":400,"message":"Please pass a valid API key"}}]"#).as_deref(), Some("Please pass a valid API key"));
+        assert_eq!(
+            extract_message(r#"[{"error":{"code":400,"message":"Please pass a valid API key"}}]"#).as_deref(),
+            Some("Please pass a valid API key")
+        );
         assert_eq!(extract_message(r#"{"detail":"Invalid API Key"}"#).as_deref(), Some("Invalid API Key"));
         assert_eq!(
-            extract_message(r#"{"detail":[{"type":"extra_forbidden","loc":["body","user"],"msg":"Extra inputs are not permitted"}]}"#).as_deref(),
+            extract_message(r#"{"detail":[{"type":"extra_forbidden","loc":["body","user"],"msg":"Extra inputs are not permitted"}]}"#)
+                .as_deref(),
             Some("user: Extra inputs are not permitted")
         );
         assert_eq!(extract_message("<html>"), None);

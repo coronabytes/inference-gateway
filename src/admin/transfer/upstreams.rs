@@ -146,7 +146,13 @@ pub(super) struct Imported {
     pub needs_secrets: Vec<String>,
 }
 
-pub(super) fn import_mcp_servers(state: &AppState, docs: Vec<McpServerDoc>, servers: &mut Vec<McpServerRow>, projects: &[ProjectRow], now: DateTime<Utc>) -> R<Imported> {
+pub(super) fn import_mcp_servers(
+    state: &AppState,
+    docs: Vec<McpServerDoc>,
+    servers: &mut Vec<McpServerRow>,
+    projects: &[ProjectRow],
+    now: DateTime<Utc>,
+) -> R<Imported> {
     let mut out = Imported::default();
     let mut claimed = HashSet::new();
     let file_ids: HashSet<Uuid> = docs.iter().filter_map(|d| d.id).collect();
@@ -157,15 +163,17 @@ pub(super) fn import_mcp_servers(state: &AppState, docs: Vec<McpServerDoc>, serv
             return Err(bad(format!("{what}: the name cannot contain {SEPARATOR}")));
         }
         let url = check_url(state, &d.url).map_err(about(&what))?;
-        let (auth_header, oauth) = checked_auth(state, d.auth, d.auth_header.as_deref(), d.oauth.clone(), &MCP_RESERVED).map_err(about(&what))?;
+        let (auth_header, oauth) =
+            checked_auth(state, d.auth, d.auth_header.as_deref(), d.oauth.clone(), &MCP_RESERVED).map_err(about(&what))?;
         let tags = normalize_tags(d.tags.clone()).map_err(|e| bad(format!("{what}: {e}")))?;
         if !(1..=3600).contains(&d.timeout_secs) {
             return Err(bad(format!("{what}: the timeout is 1 to 3600 seconds")));
         }
-        let (allowed_tools, denied_tools) = check_tools(d.allowed_tools.clone(), d.denied_tools.clone(), d.price_per_call, &d.tool_prices).map_err(about(&what))?;
-        let found = d.id.and_then(|id| servers.iter().position(|x| x.id == id)).or_else(|| {
-            servers.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id))
-        });
+        let (allowed_tools, denied_tools) =
+            check_tools(d.allowed_tools.clone(), d.denied_tools.clone(), d.price_per_call, &d.tool_prices).map_err(about(&what))?;
+        let found =
+            d.id.and_then(|id| servers.iter().position(|x| x.id == id))
+                .or_else(|| servers.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id)));
         let row = |id: Uuid, secret: Option<Vec<u8>>, created_at: DateTime<Utc>| -> R<McpServerRow> {
             Ok(McpServerRow {
                 id,
@@ -271,7 +279,13 @@ pub(super) fn a2a_agent_doc(a: &A2aAgentRow, projects: &[ProjectRow]) -> A2aAgen
     }
 }
 
-pub(super) fn import_a2a_agents(state: &AppState, docs: Vec<A2aAgentDoc>, agents: &mut Vec<A2aAgentRow>, projects: &[ProjectRow], now: DateTime<Utc>) -> R<Imported> {
+pub(super) fn import_a2a_agents(
+    state: &AppState,
+    docs: Vec<A2aAgentDoc>,
+    agents: &mut Vec<A2aAgentRow>,
+    projects: &[ProjectRow],
+    now: DateTime<Utc>,
+) -> R<Imported> {
     let mut out = Imported::default();
     let mut claimed = HashSet::new();
     let file_ids: HashSet<Uuid> = docs.iter().filter_map(|d| d.id).collect();
@@ -279,7 +293,8 @@ pub(super) fn import_a2a_agents(state: &AppState, docs: Vec<A2aAgentDoc>, agents
         let what = format!("A2A agent '{}'", d.name.trim());
         let name = check_name(&d.name, "agent").map_err(about(&what))?;
         let card_url = crate::admin::a2a::check_card_url(state, &d.card_url).map_err(about(&what))?;
-        let (auth_header, oauth) = checked_auth(state, d.auth, d.auth_header.as_deref(), d.oauth.clone(), &A2A_RESERVED).map_err(about(&what))?;
+        let (auth_header, oauth) =
+            checked_auth(state, d.auth, d.auth_header.as_deref(), d.oauth.clone(), &A2A_RESERVED).map_err(about(&what))?;
         let tags = normalize_tags(d.tags.clone()).map_err(|e| bad(format!("{what}: {e}")))?;
         if !(1..=3600).contains(&d.timeout_secs) {
             return Err(bad(format!("{what}: the timeout is 1 to 3600 seconds")));
@@ -287,9 +302,9 @@ pub(super) fn import_a2a_agents(state: &AppState, docs: Vec<A2aAgentDoc>, agents
         if !(d.price_per_message.is_finite() && d.price_per_message >= 0.0) {
             return Err(bad(format!("{what}: the price is zero or more USD")));
         }
-        let found = d.id.and_then(|id| agents.iter().position(|x| x.id == id)).or_else(|| {
-            agents.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id))
-        });
+        let found =
+            d.id.and_then(|id| agents.iter().position(|x| x.id == id))
+                .or_else(|| agents.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id)));
         let row = |id: Uuid, secret: Option<Vec<u8>>, created_at: DateTime<Utc>| -> R<A2aAgentRow> {
             Ok(A2aAgentRow {
                 id,
@@ -400,7 +415,12 @@ pub(super) fn tool_router_doc(r: &ToolRouterRow, servers: &[McpServerRow]) -> To
 }
 
 /// Tool routers, checked against the MCP servers and decision models as they will be.
-pub(super) fn import_tool_routers(docs: Vec<ToolRouterDoc>, routers: &mut Vec<ToolRouterRow>, servers: &[McpServerRow], deployments: &[DeploymentRow]) -> R<Imported> {
+pub(super) fn import_tool_routers(
+    docs: Vec<ToolRouterDoc>,
+    routers: &mut Vec<ToolRouterRow>,
+    servers: &[McpServerRow],
+    deployments: &[DeploymentRow],
+) -> R<Imported> {
     let mut out = Imported::default();
     let mut claimed = HashSet::new();
     let file_ids: HashSet<Uuid> = docs.iter().filter_map(|d| d.id).collect();
@@ -411,9 +431,9 @@ pub(super) fn import_tool_routers(docs: Vec<ToolRouterDoc>, routers: &mut Vec<To
         let what = format!("tool router '{}'", d.name.trim());
         let mut routes = Vec::new();
         for r in &d.routes {
-            let server = by_name
-                .get(r.server.trim())
-                .ok_or_else(|| bad(format!("{what}: route {} uses MCP server '{}', which is neither in the file nor on this gateway", r.name, r.server)))?;
+            let server = by_name.get(r.server.trim()).ok_or_else(|| {
+                bad(format!("{what}: route {} uses MCP server '{}', which is neither in the file nor on this gateway", r.name, r.server))
+            })?;
             routes.push(json!({ "name": r.name, "description": r.description, "server_id": server, "tools": r.tools }));
         }
         let input = json!({
@@ -422,9 +442,9 @@ pub(super) fn import_tool_routers(docs: Vec<ToolRouterDoc>, routers: &mut Vec<To
         });
         let input: ToolRouterInput = serde_json::from_value(input).map_err(|e| bad(format!("{what}: {e}")))?;
         let name = d.name.trim().to_string();
-        let found = d.id.and_then(|id| routers.iter().position(|x| x.id == id)).or_else(|| {
-            routers.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id))
-        });
+        let found =
+            d.id.and_then(|id| routers.iter().position(|x| x.id == id))
+                .or_else(|| routers.iter().position(|x| x.name == name && !claimed.contains(&x.id) && !file_ids.contains(&x.id)));
         match found {
             Some(ix) => {
                 claim(&mut claimed, routers[ix].id, &what)?;
@@ -433,7 +453,11 @@ pub(super) fn import_tool_routers(docs: Vec<ToolRouterDoc>, routers: &mut Vec<To
                 if tool_router_doc(x, servers) == tool_router_doc(&new, servers) {
                     out.changes.unchanged += 1;
                 } else {
-                    out.changes.updated.push(if x.name == new.name { new.name.clone() } else { format!("{}, renamed from {}", new.name, x.name) });
+                    out.changes.updated.push(if x.name == new.name {
+                        new.name.clone()
+                    } else {
+                        format!("{}, renamed from {}", new.name, x.name)
+                    });
                     out.updated.insert(new.id);
                     routers[ix] = new;
                 }

@@ -93,6 +93,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
         valid: (n: number) => n >= 1 && n <= 720,
         rule: "1 to 720",
       },
+      {
+        key: "price_auto_accept",
+        caption: "Accept price changes",
+        hint: "After every import, scheduled or run on the Pricing page, deployments whose prices no longer match their catalog entry take the catalog's prices, as Accept after Check prices on the Deployments tab does. Each change is in the audit log. Off, prices change only when someone accepts them.",
+        toggle: true,
+      },
     ],
   },
   {

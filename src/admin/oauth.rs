@@ -54,7 +54,12 @@ pub(crate) struct DiscoverInput {
 
 /// Finds the authorization server of an MCP server or A2A agent, and gets the gateway a client
 /// there when asked. Its redirect URI is the gateway's address as the console reaches it.
-pub(crate) async fn discover(State(state): State<AppState>, headers: HeaderMap, uri: Uri, Json(i): Json<DiscoverInput>) -> R<Json<Discovered>> {
+pub(crate) async fn discover(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(i): Json<DiscoverInput>,
+) -> R<Json<Discovered>> {
     let kind = Kind::parse(&i.kind).ok_or_else(|| AdminError::bad_request("kind is mcp or a2a"))?;
     let url = super::mcp::check_url(&state, &i.url)?;
     let origin = crate::a2a::origin(&headers, &uri);
@@ -145,17 +150,30 @@ fn slot_for(client: &oauth::Client, key: Uuid, labels: Option<&str>) -> R<Slot> 
 }
 
 /// The MCP servers and A2A agents this key signs in to on its own, and its sign-ins.
-pub(crate) async fn list_connections(State(state): State<AppState>, Extension(access): Extension<Access>, Path(id): Path<Uuid>) -> R<Json<Vec<Connection>>> {
+pub(crate) async fn list_connections(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Path(id): Path<Uuid>,
+) -> R<Json<Vec<Connection>>> {
     let key = visible_key(&state, &access, id).await?;
     let (own, counts) = db::key_connections(&state.db, id).await?;
     let snap = state.registry.snapshot();
-    let mcp = snap.mcp_servers.values().filter(|s| s.auth.per_key() && s.allows(&key)).map(|s| (Kind::Mcp, s.id, s.name.clone(), s.auth.sign_in_by().to_vec()));
-    let a2a = snap.a2a_agents.values().filter(|a| a.auth.per_key() && a.allows(&key)).map(|a| (Kind::A2a, a.id, a.name.clone(), a.auth.sign_in_by().to_vec()));
+    let mcp = snap
+        .mcp_servers
+        .values()
+        .filter(|s| s.auth.per_key() && s.allows(&key))
+        .map(|s| (Kind::Mcp, s.id, s.name.clone(), s.auth.sign_in_by().to_vec()));
+    let a2a = snap
+        .a2a_agents
+        .values()
+        .filter(|a| a.auth.per_key() && a.allows(&key))
+        .map(|a| (Kind::A2a, a.id, a.name.clone(), a.auth.sign_in_by().to_vec()));
     let mut out: Vec<Connection> = mcp
         .chain(a2a)
         .map(|(kind, upstream_id, name, sign_in_by)| {
             let row = own.iter().find(|r| r.upstream_kind == kind.as_str() && r.upstream_id == upstream_id);
-            let sign_ins = (!sign_in_by.is_empty()).then(|| counts.iter().find(|c| c.0 == kind.as_str() && c.1 == upstream_id).map_or(0, |c| c.2));
+            let sign_ins =
+                (!sign_in_by.is_empty()).then(|| counts.iter().find(|c| c.0 == kind.as_str() && c.1 == upstream_id).map_or(0, |c| c.2));
             Connection {
                 kind: kind.as_str(),
                 upstream_id,
@@ -205,7 +223,15 @@ pub(crate) struct SignIn {
 
 impl From<db::KeySignIn> for SignIn {
     fn from(r: db::KeySignIn) -> Self {
-        SignIn { labels: r.labels, signed_in_at: r.created_at, last_used_at: r.last_used_at, expires_at: r.expires_at, refreshable: r.refreshable, scope: r.scope, connected_by: r.connected_by }
+        SignIn {
+            labels: r.labels,
+            signed_in_at: r.created_at,
+            last_used_at: r.last_used_at,
+            expires_at: r.expires_at,
+            refreshable: r.refreshable,
+            scope: r.scope,
+            connected_by: r.connected_by,
+        }
     }
 }
 
@@ -225,9 +251,14 @@ pub(crate) async fn list_sign_ins(
 ) -> R<Json<SignIns>> {
     visible_key(&state, &access, id).await?;
     let kind = Kind::parse(&kind).ok_or_else(AdminError::not_found)?;
-    let having: Vec<String> =
-        Labels::parse(q.labels.as_deref().unwrap_or_default()).map_err(AdminError::bad_request)?.iter().map(|(k, v)| format!("{k}={v}")).collect();
-    let (rows, total) = db::sign_ins(&state.db, kind.as_str(), upstream, id, &having, q.limit.unwrap_or(50).clamp(1, 500), q.offset.unwrap_or(0).max(0)).await?;
+    let having: Vec<String> = Labels::parse(q.labels.as_deref().unwrap_or_default())
+        .map_err(AdminError::bad_request)?
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    let (rows, total) =
+        db::sign_ins(&state.db, kind.as_str(), upstream, id, &having, q.limit.unwrap_or(50).clamp(1, 500), q.offset.unwrap_or(0).max(0))
+            .await?;
     Ok(Json(SignIns { sign_ins: rows.into_iter().map(SignIn::from).collect(), total }))
 }
 
@@ -304,7 +335,15 @@ pub(crate) async fn connect(
 }
 
 /// The upstream's sign-in URL for `slot`, and the sign-in to keep until it comes back.
-fn start(client: &oauth::Client, slot: &Slot, headers: &HeaderMap, uri: &Uri, actor: &Actor, back: Back, link: bool) -> R<(String, Pending)> {
+fn start(
+    client: &oauth::Client,
+    slot: &Slot,
+    headers: &HeaderMap,
+    uri: &Uri,
+    actor: &Actor,
+    back: Back,
+    link: bool,
+) -> R<(String, Pending)> {
     let redirect_uri = client.config.redirect_uri.clone().unwrap_or_else(|| format!("{}{CALLBACK_PATH}", crate::a2a::origin(headers, uri)));
     let (st, verifier) = (oauth::random_token(), oauth::random_token());
     let authorization_url = client.authorization_url(&redirect_uri, &st, &verifier).map_err(AdminError::bad_request)?;
@@ -360,7 +399,13 @@ pub(crate) async fn disconnect(
 /// `GET /admin/auth/oauth/sign-in/{ticket}`: a sign-in link an application handed one of its
 /// tenants or users (see `oauth::Ticket`). Sends the browser to the upstream's sign-in, which comes
 /// back to `callback` in this browser.
-pub(crate) async fn sign_in_link(State(state): State<AppState>, session: Session, headers: HeaderMap, uri: Uri, Path(ticket): Path<String>) -> Response {
+pub(crate) async fn sign_in_link(
+    State(state): State<AppState>,
+    session: Session,
+    headers: HeaderMap,
+    uri: Uri,
+    Path(ticket): Path<String>,
+) -> Response {
     let Some(t) = oauth::Ticket::open(&ticket, &state.cfg.secret_box) else {
         return page(StatusCode::GONE, "This sign-in link has expired", "Ask for a new link where you got this one.");
     };
@@ -368,7 +413,10 @@ pub(crate) async fn sign_in_link(State(state): State<AppState>, session: Session
     let Ok(Some(key)) = db::get_key(&state.db, t.slot.key).await else { return gone() };
     let Some(client) = client(&state, &key, t.kind, t.upstream) else { return gone() };
     // The upstream may tell sign-ins apart differently since the link was made.
-    let same = Labels::parse(&t.slot.labels).ok().and_then(|l| oauth::labels_for(&client.config.sign_in_by, &l).ok()).is_some_and(|l| l == t.slot.labels);
+    let same = Labels::parse(&t.slot.labels)
+        .ok()
+        .and_then(|l| oauth::labels_for(&client.config.sign_in_by, &l).ok())
+        .is_some_and(|l| l == t.slot.labels);
     if t.slot.labels.is_empty() || !same {
         return gone();
     }
@@ -434,7 +482,9 @@ pub(crate) async fn callback(State(state): State<AppState>, session: Session, Qu
     let pending = take_pending(&session, q.state.as_deref()).await;
     let (back, key, link) = pending.as_ref().map_or((Back::Access, None, false), |p| (p.back, Some(p.key), p.link));
     let done = |ok: bool, message: &str| match (link, ok) {
-        (true, true) => page(StatusCode::OK, &format!("You are signed in to {message}"), "You can close this tab and go back to where you came from."),
+        (true, true) => {
+            page(StatusCode::OK, &format!("You are signed in to {message}"), "You can close this tab and go back to where you came from.")
+        }
         (true, false) => page(StatusCode::BAD_REQUEST, "The sign-in did not work", message),
         (false, ok) => back_to(back, key, if ok { "connected" } else { "connect_error" }, message),
     };
@@ -485,7 +535,9 @@ pub(crate) async fn drop_stale_sign_ins(
     before: (&str, Option<&oauth::OAuthConfig>),
     after: (&str, Option<&oauth::OAuthConfig>),
 ) -> R<u64> {
-    let by = |(auth, oauth): (&str, Option<&oauth::OAuthConfig>)| (auth == "oauth_user").then(|| oauth.map(|o| o.sign_in_by.clone()).unwrap_or_default());
+    let by = |(auth, oauth): (&str, Option<&oauth::OAuthConfig>)| {
+        (auth == "oauth_user").then(|| oauth.map(|o| o.sign_in_by.clone()).unwrap_or_default())
+    };
     let (Some(was), Some(is)) = (by(before), by(after)) else { return Ok(0) };
     if was == is {
         return Ok(0);

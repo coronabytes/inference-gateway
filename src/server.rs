@@ -38,11 +38,7 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 pub async fn serve(listener: TcpListener, app: Router, mut settings: watch::Receiver<Arc<Settings>>, shutdown: impl Future<Output = ()>) {
     let mut builder = Builder::new(TokioExecutor::new());
     builder.http1().timer(TokioTimer::new()).keep_alive(true);
-    builder
-        .http2()
-        .timer(TokioTimer::new())
-        .keep_alive_interval(Some(Duration::from_secs(30)))
-        .keep_alive_timeout(Duration::from_secs(20));
+    builder.http2().timer(TokioTimer::new()).keep_alive_interval(Some(Duration::from_secs(30))).keep_alive_timeout(Duration::from_secs(20));
     let mut limit = settings.borrow_and_update().max_connections as usize;
     let permits = Arc::new(Semaphore::new(limit));
     let graceful = GracefulShutdown::new();

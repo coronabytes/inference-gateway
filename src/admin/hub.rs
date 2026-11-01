@@ -106,9 +106,9 @@ const VENDOR_HINTS: &[(&str, &[Hint])] = {
 fn suggest_vendor(names: &str) -> Option<&'static str> {
     let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     let found = |part: &str, start: bool, end: bool| {
-        names.match_indices(part).any(|(i, _)| {
-            (!start || !word(names[..i].chars().next_back())) && (!end || !word(names[i + part.len()..].chars().next()))
-        })
+        names
+            .match_indices(part)
+            .any(|(i, _)| (!start || !word(names[..i].chars().next_back())) && (!end || !word(names[i + part.len()..].chars().next())))
     };
     VENDOR_HINTS.iter().find_map(|(vendor, hints)| {
         hints
@@ -193,9 +193,6 @@ pub(crate) struct HubModel {
     /// Who makes it: the metadata's `vendor`, or without one the vendor its names suggest.
     #[serde(skip_serializing_if = "Option::is_none")]
     vendor: Option<String>,
-    /// Whether `vendor` is suggested from its names rather than saved.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    vendor_suggested: bool,
     tags: Vec<String>,
     /// A model alias's target: the model name it serves.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -232,12 +229,7 @@ pub(crate) struct HubStats {
 const STATS_HOURS: i64 = 24;
 
 /// The last 24 hours' stats of `models`, by model name; models without requests have none.
-async fn stats(
-    state: &AppState,
-    models: &[String],
-    key_id: Option<Uuid>,
-    projects: Option<&[Uuid]>,
-) -> R<HashMap<String, HubStats>> {
+async fn stats(state: &AppState, models: &[String], key_id: Option<Uuid>, projects: Option<&[Uuid]>) -> R<HashMap<String, HubStats>> {
     let now = Utc::now().timestamp();
     let first = now - now.rem_euclid(3600) - (STATS_HOURS - 1) * 3600;
     let since = chrono::DateTime::from_timestamp(first, 0).unwrap_or_default();
@@ -345,7 +337,9 @@ fn hub_deployments(ds: &[&Deployment]) -> Vec<HubDeployment> {
             prices: prices(d),
         })
         .collect();
-    out.sort_by(|a, b| a.priority.cmp(&b.priority).then_with(|| a.model.cmp(&b.model)).then_with(|| a.upstream_model.cmp(&b.upstream_model)));
+    out.sort_by(|a, b| {
+        a.priority.cmp(&b.priority).then_with(|| a.model.cmp(&b.model)).then_with(|| a.upstream_model.cmp(&b.upstream_model))
+    });
     out
 }
 
@@ -411,16 +405,15 @@ pub(crate) async fn hub(
             let metadata = metadata.get(name.as_str()).cloned().unwrap_or_else(|| Value::Object(Map::new()));
             let saved = metadata.get("vendor").and_then(Value::as_str).map(str::to_string);
             let suggested = || {
-                let names = std::iter::once(name.as_str()).chain(ds.iter().map(|d| d.upstream_model.as_str())).collect::<Vec<_>>().join(" ");
+                let names =
+                    std::iter::once(name.as_str()).chain(ds.iter().map(|d| d.upstream_model.as_str())).collect::<Vec<_>>().join(" ");
                 suggest_vendor(&names.to_lowercase()).map(str::to_string)
             };
-            let vendor_suggested = saved.is_none();
             let vendor = saved.or_else(suggested);
             HubModel {
                 name: name.clone(),
                 kind,
                 mode,
-                vendor_suggested: vendor_suggested && vendor.is_some(),
                 vendor,
                 metadata,
                 tags,
@@ -618,7 +611,10 @@ mod tests {
         // Two deployments: only what both take.
         snap.deployments.insert(
             "mixed".into(),
-            vec![with("mixed", ApiStyle::Chat, json!({ "supports_minimal_reasoning_effort": true })), with("mixed", ApiStyle::Chat, json!({}))],
+            vec![
+                with("mixed", ApiStyle::Chat, json!({ "supports_minimal_reasoning_effort": true })),
+                with("mixed", ApiStyle::Chat, json!({})),
+            ],
         );
         snap.aliases.insert("gpt-4".into(), Arc::new(ModelAlias { model_name: "gpt-4".into(), target: "luna".into() }));
         snap.aliases.insert("smart".into(), Arc::new(ModelAlias { model_name: "smart".into(), target: "auto".into() }));
@@ -632,7 +628,8 @@ mod tests {
     #[test]
     fn metadata_text_is_trimmed_and_checked() {
         let m = |v: Value| v.as_object().unwrap().clone();
-        let out = check_metadata(m(json!({ "display_name": "  Opus  ", "vendor": " Anthropic ", "description": " ", "family": "claude" }))).unwrap();
+        let out = check_metadata(m(json!({ "display_name": "  Opus  ", "vendor": " Anthropic ", "description": " ", "family": "claude" })))
+            .unwrap();
         assert_eq!(Value::Object(out), json!({ "display_name": "Opus", "vendor": "Anthropic", "family": "claude" }));
         assert!(check_metadata(m(json!({ "vendor": ["Anthropic"] }))).is_err());
         assert!(check_metadata(m(json!({ "display_name": 3 }))).is_err());
@@ -647,7 +644,6 @@ mod tests {
             kind,
             mode,
             vendor: metadata.get("vendor").and_then(Value::as_str).map(str::to_string),
-            vendor_suggested: false,
             metadata,
             tags: Vec::new(),
             target: None,
@@ -669,7 +665,8 @@ mod tests {
         assert!(!matches(&opus, &[], &[], &[], "gpt"));
 
         let mut seeing = model("seeing", "model", Mode::Chat, json!({}));
-        seeing.described.capabilities = Some([("image_input", Some(true)), ("pdf_input", None), ("thinking.supported", Some(false))].into());
+        seeing.described.capabilities =
+            Some([("image_input", Some(true)), ("pdf_input", None), ("thinking.supported", Some(false))].into());
         assert!(matches(&seeing, &[], &[], &["image_input"], ""));
         assert!(!matches(&seeing, &[], &[], &["image_input", "thinking.supported"], ""), "all of them");
         assert!(!matches(&seeing, &[], &[], &["pdf_input"], ""), "unknown is not supported");

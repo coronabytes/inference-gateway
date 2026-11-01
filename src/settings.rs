@@ -60,6 +60,9 @@ pub struct Settings {
     pub price_import: bool,
     /// Hours between scheduled imports of the price catalog.
     pub price_import_hours: u32,
+    /// After every import, deployments whose prices no longer match their catalog entry take the
+    /// catalog's prices, as the console's Accept button does (see `prices::accept_changes`).
+    pub price_auto_accept: bool,
     /// Prompt logging for keys outside projects: `deny`, or `allow` for those that opt in. Never
     /// `force`, which would log every admin key. Projects set their own.
     pub prompt_logging: PromptLogging,
@@ -86,6 +89,7 @@ impl Default for Settings {
             api_docs: true,
             price_import: true,
             price_import_hours: 6,
+            price_auto_accept: false,
             prompt_logging: PromptLogging::Deny,
         }
     }
@@ -247,7 +251,10 @@ mod tests {
     #[test]
     fn retention_is_forever_or_7_to_1080_days() {
         for days in [0, 7, 90, 1080] {
-            assert!(Settings { request_log_retention_days: days, audit_log_retention_days: days, ..Settings::default() }.check().is_ok(), "{days}");
+            assert!(
+                Settings { request_log_retention_days: days, audit_log_retention_days: days, ..Settings::default() }.check().is_ok(),
+                "{days}"
+            );
         }
         for days in [1, 6, 1081, 3650] {
             let s = Settings { audit_log_retention_days: days, ..Settings::default() };

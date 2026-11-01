@@ -529,11 +529,7 @@ impl Drop for Rollup {
 
 /// Drains records into Valkey (limit counters) and Postgres (the request log, which also feeds
 /// the Metrics page, and spend).
-pub async fn run_writer(
-    state: AppState,
-    mut rx: mpsc::Receiver<RequestRecord>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) {
+pub async fn run_writer(state: AppState, mut rx: mpsc::Receiver<RequestRecord>, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     let mut batch: Vec<RequestRecord> = Vec::with_capacity(512);
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
     loop {
@@ -600,10 +596,7 @@ async fn flush(state: &AppState, batch: &mut Vec<RequestRecord>) {
     if !captured.is_empty() {
         let max_bytes = state.settings.get().prompt_log_max_kb as usize * 1024;
         let finished = tokio::task::spawn_blocking(move || {
-            captured
-                .into_iter()
-                .map(|(id, ts, key, c)| (id, ts, key, (!c.is_dropped()).then(|| c.finish(max_bytes))))
-                .collect::<Vec<_>>()
+            captured.into_iter().map(|(id, ts, key, c)| (id, ts, key, (!c.is_dropped()).then(|| c.finish(max_bytes)))).collect::<Vec<_>>()
         })
         .await
         .unwrap_or_else(|e| {

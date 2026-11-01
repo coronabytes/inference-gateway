@@ -96,7 +96,9 @@ fn prompt_texts(inbound: Inbound, raw: &Value) -> Vec<String> {
                                     content(&mut out, c, format!("/input/{i}/content"), &["input_text", "text"]);
                                 }
                             }
-                            "function_call_output" if it.get("output").is_some_and(Value::is_string) => out.push(format!("/input/{i}/output")),
+                            "function_call_output" if it.get("output").is_some_and(Value::is_string) => {
+                                out.push(format!("/input/{i}/output"))
+                            }
                             _ => {}
                         }
                     }
@@ -137,7 +139,8 @@ pub(crate) async fn screen_prompt(
     };
     for g in guards {
         applied.push(g.row.name.clone());
-        let step = |action: &str| json!({ "guardrail": g.row.name, "guardrail_id": g.row.id, "provider": g.row.provider, "action": action });
+        let step =
+            |action: &str| json!({ "guardrail": g.row.name, "guardrail_id": g.row.id, "provider": g.row.provider, "action": action });
         if texts.iter().all(|t| t.trim().is_empty()) {
             steps.push(step("skipped"));
             continue;
@@ -187,7 +190,12 @@ pub(crate) async fn screen_prompt(
             }
             Action::Masked if v.outputs.len() == texts.len() => texts = v.outputs,
             Action::Masked => {
-                let e = GatewayError::unavailable(format!("guardrail '{}' answered with {} texts for {}", g.row.name, v.outputs.len(), texts.len()));
+                let e = GatewayError::unavailable(format!(
+                    "guardrail '{}' answered with {} texts for {}",
+                    g.row.name,
+                    v.outputs.len(),
+                    texts.len()
+                ));
                 return Err((charge(&applied, action, &findings, cost, steps), e));
             }
             Action::Passed | Action::Flagged => {}

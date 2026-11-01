@@ -20,8 +20,8 @@ use crate::{
     db,
     error::AdminError,
     mcp::McpAuth,
-    oauth::OAuthConfig,
     model::normalize_tags,
+    oauth::OAuthConfig,
     state::AppState,
     sync::broadcast_reload,
 };
@@ -129,7 +129,15 @@ async fn row(state: &AppState, i: A2aAgentInput, existing: Option<&A2aAgentRow>)
     let name = check_name(&i.name, "agent")?;
     let description = i.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     let card_url = check_card_url(state, &i.card_url)?;
-    let auth = check_auth(state, i.auth, i.auth_header.as_deref(), i.secret.as_deref(), i.oauth, existing.and_then(|e| e.secret.as_deref()), &A2A_RESERVED)?;
+    let auth = check_auth(
+        state,
+        i.auth,
+        i.auth_header.as_deref(),
+        i.secret.as_deref(),
+        i.oauth,
+        existing.and_then(|e| e.secret.as_deref()),
+        &A2A_RESERVED,
+    )?;
     let tags = normalize_tags(i.tags).map_err(AdminError::bad_request)?;
     let project_ids = check_projects(state, i.project_ids).await?;
     let timeout_secs = i.timeout_secs.unwrap_or(existing.map_or(600, |e| e.timeout_secs));
@@ -192,7 +200,14 @@ pub(crate) async fn update_a2a_agent(
     let before = view(existing.clone());
     let row = row(&state, i, Some(&existing)).await?;
     db::update_a2a_agent(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
-    let dropped = super::oauth::drop_stale_sign_ins(&state, crate::oauth::Kind::A2a, id, (&existing.auth, existing.oauth.as_deref()), (&row.auth, row.oauth.as_deref())).await?;
+    let dropped = super::oauth::drop_stale_sign_ins(
+        &state,
+        crate::oauth::Kind::A2a,
+        id,
+        (&existing.auth, existing.oauth.as_deref()),
+        (&row.auth, row.oauth.as_deref()),
+    )
+    .await?;
     broadcast_reload(&state, "A2A agent updated").await;
     tracing::info!(a2a_agent = %id, "A2A agent updated");
     let v = view(row);
@@ -209,7 +224,11 @@ pub(crate) async fn update_a2a_agent(
     Ok(Json(v))
 }
 
-pub(crate) async fn delete_a2a_agent(State(state): State<AppState>, Extension(actor): Extension<Actor>, Path(id): Path<Uuid>) -> R<StatusCode> {
+pub(crate) async fn delete_a2a_agent(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<Uuid>,
+) -> R<StatusCode> {
     let name = db::get_a2a_agent(&state.db, id).await?.ok_or_else(AdminError::not_found)?.name;
     if !db::delete_a2a_agent(&state.db, id).await? {
         return Err(AdminError::not_found());

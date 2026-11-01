@@ -118,7 +118,12 @@ impl Entra {
     fn key(source: &Source<'_>) -> String {
         match source {
             Source::Secret { tenant_id, client_id, secret } => {
-                format!("secret:{}:{}:{}", tenant_id.to_ascii_lowercase(), client_id.to_ascii_lowercase(), hex::encode(Sha256::digest(secret.as_bytes())))
+                format!(
+                    "secret:{}:{}:{}",
+                    tenant_id.to_ascii_lowercase(),
+                    client_id.to_ascii_lowercase(),
+                    hex::encode(Sha256::digest(secret.as_bytes()))
+                )
             }
             Source::Environment { client_id } => format!("environment:{}", client_id.unwrap_or_default().to_ascii_lowercase()),
         }
@@ -135,7 +140,11 @@ impl Entra {
             Source::Environment { client_id } => environment(*client_id),
         };
         let built = built.map_err(|e| {
-            GatewayError::unavailable(format!("no Entra ID credential for {}: {}", source.describe(), e.to_string().lines().next().unwrap_or_default()))
+            GatewayError::unavailable(format!(
+                "no Entra ID credential for {}: {}",
+                source.describe(),
+                e.to_string().lines().next().unwrap_or_default()
+            ))
         })?;
         self.credentials.lock().expect("entra credentials").insert(key.to_string(), built.clone());
         Ok(built)
@@ -162,7 +171,9 @@ fn environment(client_id: Option<&str>) -> azure_core::Result<Arc<dyn TokenCrede
         let options = WorkloadIdentityCredentialOptions { client_id, ..Default::default() };
         return WorkloadIdentityCredential::new(Some(options)).map(|c| c as _);
     }
-    if let (Some(tenant), Some(client), Some(secret)) = (env("AZURE_TENANT_ID"), client_id.clone().or_else(|| env("AZURE_CLIENT_ID")), env("AZURE_CLIENT_SECRET")) {
+    if let (Some(tenant), Some(client), Some(secret)) =
+        (env("AZURE_TENANT_ID"), client_id.clone().or_else(|| env("AZURE_CLIENT_ID")), env("AZURE_CLIENT_SECRET"))
+    {
         return ClientSecretCredential::new(&tenant, client, Secret::new(secret), None).map(|c| c as _);
     }
     let options = ManagedIdentityCredentialOptions {
@@ -260,8 +271,7 @@ pub async fn list_deployments(state: &AppState, source: &Source<'_>, base_url: &
     }
     let url = format!("{ARM_HOST}{resource}/deployments?api-version={ACCOUNTS_API}");
     let zone = location.as_deref().and_then(data_zone);
-    let mut deployments: Vec<FoundryDeployment> =
-        arm_list(state, &token, &url).await?.iter().filter_map(|v| deployment(v, zone)).collect();
+    let mut deployments: Vec<FoundryDeployment> = arm_list(state, &token, &url).await?.iter().filter_map(|v| deployment(v, zone)).collect();
     deployments.sort_by_key(|d| d.name.to_lowercase());
     Ok(FoundryDeployments { resource, location, deployments })
 }
@@ -290,17 +300,8 @@ fn data_zone(location: &str) -> Option<&'static str> {
         "swedencentral",
         "westeurope",
     ];
-    const US: &[&str] = &[
-        "centralus",
-        "eastus",
-        "eastus2",
-        "northcentralus",
-        "southcentralus",
-        "westcentralus",
-        "westus",
-        "westus2",
-        "westus3",
-    ];
+    const US: &[&str] =
+        &["centralus", "eastus", "eastus2", "northcentralus", "southcentralus", "westcentralus", "westus", "westus2", "westus3"];
     if EU.contains(&location) {
         Some("eu")
     } else if US.contains(&location) {
@@ -427,32 +428,39 @@ mod tests {
 
     #[test]
     fn reads_deployments() {
-        let d = deployment(&json!({
-            "name": "prod-4o",
-            "sku": { "name": "GlobalStandard", "capacity": 450 },
-            "properties": {
-                "model": { "format": "OpenAI", "name": "gpt-4o", "version": "2024-11-20" },
-                "capabilities": { "chatCompletion": "true" },
-                "rateLimits": [
-                    { "key": "request", "renewalPeriod": 10, "count": 450 },
-                    { "key": "token", "renewalPeriod": 60, "count": 450000 }
-                ],
-                "provisioningState": "Succeeded"
-            }
-        }), Some("eu"))
+        let d = deployment(
+            &json!({
+                "name": "prod-4o",
+                "sku": { "name": "GlobalStandard", "capacity": 450 },
+                "properties": {
+                    "model": { "format": "OpenAI", "name": "gpt-4o", "version": "2024-11-20" },
+                    "capabilities": { "chatCompletion": "true" },
+                    "rateLimits": [
+                        { "key": "request", "renewalPeriod": 10, "count": 450 },
+                        { "key": "token", "renewalPeriod": 60, "count": 450000 }
+                    ],
+                    "provisioningState": "Succeeded"
+                }
+            }),
+            Some("eu"),
+        )
         .unwrap();
         assert_eq!((d.name.as_str(), d.model.as_str()), ("prod-4o", "gpt-4o"));
         assert_eq!(d.data_zone, None, "a global deployment");
         assert_eq!((d.rpm, d.tpm), (Some(2700), Some(450000)));
         assert_eq!((d.mode, d.api_style), (Mode::Chat, Some(ApiStyle::Chat)));
 
-        let claude = deployment(&json!({ "name": "claude", "properties": { "model": { "format": "Anthropic", "name": "claude-opus-4-5" } } }), None).unwrap();
+        let claude =
+            deployment(&json!({ "name": "claude", "properties": { "model": { "format": "Anthropic", "name": "claude-opus-4-5" } } }), None)
+                .unwrap();
         assert_eq!(claude.api_style, Some(ApiStyle::Anthropic));
         assert_eq!((claude.rpm, claude.tpm), (None, None));
 
         let embed = deployment(&json!({ "name": "e", "properties": { "model": { "name": "text-embedding-3-large" }, "capabilities": { "embeddings": "true" } } }), None).unwrap();
         assert_eq!((embed.mode, embed.api_style), (Mode::Embedding, None));
-        let rerank = deployment(&json!({ "name": "r", "properties": { "model": { "format": "Cohere", "name": "Cohere-rerank-v4.0-pro" } } }), None).unwrap();
+        let rerank =
+            deployment(&json!({ "name": "r", "properties": { "model": { "format": "Cohere", "name": "Cohere-rerank-v4.0-pro" } } }), None)
+                .unwrap();
         assert_eq!(rerank.mode, Mode::Rerank);
 
         let zoned = json!({ "name": "z", "sku": { "name": "DataZoneStandard" }, "properties": { "model": { "name": "gpt-4o" } } });

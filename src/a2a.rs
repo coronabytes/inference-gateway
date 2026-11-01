@@ -80,7 +80,9 @@ impl A2aAgent {
     pub fn build(row: A2aAgentRow, sb: &SecretBox) -> Result<Self, String> {
         let ctx = |e: String| format!("A2A agent {} ({}): {e}", row.id, row.name);
         let oauth = row.oauth.as_ref().map(|o| &o.0);
-        let auth = UpstreamAuth::build(Kind::A2a, row.id, &row.name, &row.auth, row.auth_header.as_deref(), row.secret.as_deref(), oauth, sb).map_err(ctx)?;
+        let auth =
+            UpstreamAuth::build(Kind::A2a, row.id, &row.name, &row.auth, row.auth_header.as_deref(), row.secret.as_deref(), oauth, sb)
+                .map_err(ctx)?;
         Ok(Self {
             id: row.id,
             name: row.name,
@@ -157,8 +159,14 @@ impl Card {
         let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
         if !legacy {
             for i in raw["supportedInterfaces"].as_array().into_iter().flatten() {
-                let (Some(url), Some(binding)) = (s(i, "url"), i.get("protocolBinding").and_then(Value::as_str).and_then(Binding::parse)) else { continue };
-                found.push((binding, Interface { url, version: s(i, "protocolVersion").unwrap_or_else(|| "1.0".into()), tenant: s(i, "tenant") }));
+                let (Some(url), Some(binding)) = (s(i, "url"), i.get("protocolBinding").and_then(Value::as_str).and_then(Binding::parse))
+                else {
+                    continue;
+                };
+                found.push((
+                    binding,
+                    Interface { url, version: s(i, "protocolVersion").unwrap_or_else(|| "1.0".into()), tenant: s(i, "tenant") },
+                ));
             }
         } else {
             let version = s(&raw, "protocolVersion").unwrap_or_else(|| "0.3.0".into());
@@ -169,7 +177,9 @@ impl Card {
                 }
             }
             for i in raw["additionalInterfaces"].as_array().into_iter().flatten() {
-                let (Some(url), Some(binding)) = (s(i, "url"), i.get("transport").and_then(Value::as_str).and_then(Binding::parse)) else { continue };
+                let (Some(url), Some(binding)) = (s(i, "url"), i.get("transport").and_then(Value::as_str).and_then(Binding::parse)) else {
+                    continue;
+                };
                 found.push((binding, Interface { url, version: version.clone(), tenant: None }));
             }
         }
@@ -197,7 +207,8 @@ impl Card {
             Binding::JsonRpc => base.to_string(),
             Binding::Rest => format!("{base}/rest"),
         };
-        let ours: Vec<(Binding, &Interface)> = [Binding::JsonRpc, Binding::Rest].into_iter().filter_map(|b| Some((b, self.interface(b)?))).collect();
+        let ours: Vec<(Binding, &Interface)> =
+            [Binding::JsonRpc, Binding::Rest].into_iter().filter_map(|b| Some((b, self.interface(b)?))).collect();
         let o = v.as_object_mut().expect("checked when parsed");
         o.remove("signatures");
         let description = "A virtual key of the inference gateway.";
@@ -206,7 +217,10 @@ impl Card {
             o.insert("url".into(), json!(gateway(b)));
             o.insert("preferredTransport".into(), json!(b.name()));
             o.insert("protocolVersion".into(), json!(i.version));
-            o.insert("additionalInterfaces".into(), ours.iter().map(|(b, _)| json!({ "url": gateway(*b), "transport": b.name() })).collect());
+            o.insert(
+                "additionalInterfaces".into(),
+                ours.iter().map(|(b, _)| json!({ "url": gateway(*b), "transport": b.name() })).collect(),
+            );
             o.insert("securitySchemes".into(), json!({ "gateway": { "type": "http", "scheme": "bearer", "description": description } }));
             o.insert("security".into(), json!([{ "gateway": [] }]));
             o.insert("supportsAuthenticatedExtendedCard".into(), json!(false));
@@ -222,7 +236,10 @@ impl Card {
                 })
                 .collect();
             o.insert("supportedInterfaces".into(), interfaces.into());
-            o.insert("securitySchemes".into(), json!({ "gateway": { "httpAuthSecurityScheme": { "scheme": "Bearer", "description": description } } }));
+            o.insert(
+                "securitySchemes".into(),
+                json!({ "gateway": { "httpAuthSecurityScheme": { "scheme": "Bearer", "description": description } } }),
+            );
             o.insert("securityRequirements".into(), json!([{ "schemes": { "gateway": { "list": [] } } }]));
             if let Some(c) = o.get_mut("capabilities").and_then(Value::as_object_mut) {
                 c.insert("extendedAgentCard".into(), json!(false));
@@ -316,7 +333,9 @@ impl Card {
             version: s("version"),
             interfaces: [Binding::JsonRpc, Binding::Rest]
                 .into_iter()
-                .filter_map(|b| self.interface(b).map(|i| CardInterface { binding: b.name(), version: i.version.clone(), url: i.url.clone() }))
+                .filter_map(|b| {
+                    self.interface(b).map(|i| CardInterface { binding: b.name(), version: i.version.clone(), url: i.url.clone() })
+                })
                 .collect(),
             skills: self.raw["skills"]
                 .as_array()
@@ -324,7 +343,10 @@ impl Card {
                 .flatten()
                 .filter_map(|k| {
                     let name = k.get("name").or_else(|| k.get("id")).and_then(Value::as_str)?.to_string();
-                    Some(CardSkill { name, description: k.get("description").and_then(Value::as_str).map(|d| crate::util::truncate(d, 300)) })
+                    Some(CardSkill {
+                        name,
+                        description: k.get("description").and_then(Value::as_str).map(|d| crate::util::truncate(d, 300)),
+                    })
                 })
                 .collect(),
         }
@@ -429,7 +451,8 @@ fn owner_key(agent: Uuid, kind: char, id: &str) -> String {
 
 /// Records that the tasks and contexts in an answer belong to `key`.
 fn claim(state: &AppState, agent: Uuid, key: Uuid, seen: &Seen) {
-    let ids: Vec<String> = seen.tasks.iter().map(|t| owner_key(agent, 't', t)).chain(seen.context.iter().map(|c| owner_key(agent, 'c', c))).collect();
+    let ids: Vec<String> =
+        seen.tasks.iter().map(|t| owner_key(agent, 't', t)).chain(seen.context.iter().map(|c| owner_key(agent, 'c', c))).collect();
     if ids.is_empty() {
         return;
     }
@@ -599,14 +622,23 @@ fn card_error(e: String) -> GatewayError {
 /// is in front of it.
 pub(crate) fn origin(headers: &HeaderMap, uri: &Uri) -> String {
     let h = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).map(|v| v.split(',').next().unwrap_or(v).trim().to_string());
-    let host = h("x-forwarded-host").or_else(|| h("host")).or_else(|| uri.authority().map(|a| a.to_string())).unwrap_or_else(|| "localhost".into());
+    let host = h("x-forwarded-host")
+        .or_else(|| h("host"))
+        .or_else(|| uri.authority().map(|a| a.to_string()))
+        .unwrap_or_else(|| "localhost".into());
     let local = host.starts_with("localhost") || host.starts_with("127.") || host.starts_with("[::1]");
     let scheme = h("x-forwarded-proto").unwrap_or_else(|| if local { "http".into() } else { "https".into() });
     format!("{scheme}://{host}")
 }
 
 /// `GET /a2a/{agent}/.well-known/agent-card.json`: the agent's card, with the gateway's addresses.
-pub async fn card(State(state): State<AppState>, ClientKey(key): ClientKey, Path(name): Path<String>, uri: Uri, headers: HeaderMap) -> Response {
+pub async fn card(
+    State(state): State<AppState>,
+    ClientKey(key): ClientKey,
+    Path(name): Path<String>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
     card_for(&state, &key, &name, &uri, &headers).await
 }
 
@@ -623,7 +655,13 @@ pub async fn card_for(state: &AppState, key: &Arc<VirtualKey>, name: &str, uri: 
 }
 
 /// `POST /a2a/{agent}`: the agent's JSON-RPC interface.
-pub async fn jsonrpc(State(state): State<AppState>, ClientKey(key): ClientKey, Path(name): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
+pub async fn jsonrpc(
+    State(state): State<AppState>,
+    ClientKey(key): ClientKey,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     jsonrpc_for(&state, &key, &name, &headers, body).await
 }
 
@@ -647,7 +685,8 @@ pub async fn rest(
     body: Bytes,
 ) -> Response {
     let Some(path) = rest_path(&path) else {
-        return GatewayError::invalid("the path must stay under the agent's interface: no . or .. segments, and no ? or #").into_response_for(Dialect::OpenAi);
+        return GatewayError::invalid("the path must stay under the agent's interface: no . or .. segments, and no ? or #")
+            .into_response_for(Dialect::OpenAi);
     };
     let ask = ask_rest(&path, &body);
     forward(&state, &key, &name, Binding::Rest, method, &path, uri.query(), &headers, body, ask, None)
@@ -659,9 +698,13 @@ pub async fn rest(
 /// HTTP status for HTTP+JSON.
 fn refuse(rpc_id: Option<Value>, binding: Binding, code: i64, status: StatusCode, message: &str) -> Response {
     match binding {
-        Binding::JsonRpc => axum::Json(json!({ "jsonrpc": "2.0", "id": rpc_id, "error": { "code": code, "message": message } })).into_response(),
-        Binding::Rest => GatewayError::new(if status == StatusCode::NOT_FOUND { ErrorKind::NotFound } else { ErrorKind::Permission }, status, message)
-            .into_response_for(Dialect::OpenAi),
+        Binding::JsonRpc => {
+            axum::Json(json!({ "jsonrpc": "2.0", "id": rpc_id, "error": { "code": code, "message": message } })).into_response()
+        }
+        Binding::Rest => {
+            GatewayError::new(if status == StatusCode::NOT_FOUND { ErrorKind::NotFound } else { ErrorKind::Permission }, status, message)
+                .into_response_for(Dialect::OpenAi)
+        }
     }
 }
 
@@ -692,9 +735,8 @@ async fn forward(
         _ => None,
     };
     let card = state.a2a.get(state, &agent, Some(Who { key: key.id, labels: &labels })).await.map_err(card_error)?;
-    let interface = card
-        .interface(binding)
-        .ok_or_else(|| GatewayError::not_found(format!("the agent offers no {} interface", binding.name())))?;
+    let interface =
+        card.interface(binding).ok_or_else(|| GatewayError::not_found(format!("the agent offers no {} interface", binding.name())))?;
     let mut exchange = match stream {
         Some(stream) => {
             let mut tracker = Tracker::new(state, Some(key), &labels, &agent.name, "a2a", stream);
@@ -705,7 +747,16 @@ async fn forward(
                 tracker.fail(&e);
                 return Err(e);
             }
-            Some(Exchange { state: state.clone(), agent: agent.id, key: key.id, tracker, price: agent.price_per_message, seen: Seen::default(), ended: false, events: Vec::new() })
+            Some(Exchange {
+                state: state.clone(),
+                agent: agent.id,
+                key: key.id,
+                tracker,
+                price: agent.price_per_message,
+                seen: Seen::default(),
+                ended: false,
+                events: Vec::new(),
+            })
         }
         None => None,
     };
@@ -759,7 +810,8 @@ async fn forward(
         }
         req.send().await.map_err(|e| GatewayError::from_reqwest(&e))
     };
-    let header = async || agent.auth.header(state, Some(Who { key: key.id, labels: &labels })).await.map_err(crate::oauth::AuthError::into_gateway);
+    let header =
+        async || agent.auth.header(state, Some(Who { key: key.id, labels: &labels })).await.map_err(crate::oauth::AuthError::into_gateway);
     let mut resp = match header().await {
         Ok(auth) => send(auth).await,
         Err(e) => Err(e),
@@ -784,7 +836,11 @@ async fn forward(
         tracing::warn!(agent = %agent.name, status = status.as_u16(), "A2A agent refused the gateway's credentials");
         let e = GatewayError {
             upstream: true,
-            ..GatewayError::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, format!("the agent refused the gateway's credentials (HTTP {})", status.as_u16()))
+            ..GatewayError::new(
+                ErrorKind::Upstream,
+                StatusCode::BAD_GATEWAY,
+                format!("the agent refused the gateway's credentials (HTTP {})", status.as_u16()),
+            )
         };
         fail(&mut exchange, &e);
         return Err(e);
@@ -830,7 +886,13 @@ async fn forward(
                 x.read(&v);
             }
             let owner = key.id.to_string();
-            let ids: Vec<String> = x.seen.tasks.iter().map(|t| owner_key(agent.id, 't', t)).chain(x.seen.context.iter().map(|c| owner_key(agent.id, 'c', c))).collect();
+            let ids: Vec<String> = x
+                .seen
+                .tasks
+                .iter()
+                .map(|t| owner_key(agent.id, 't', t))
+                .chain(x.seen.context.iter().map(|c| owner_key(agent.id, 'c', c)))
+                .collect();
             futures::future::join_all(ids.iter().map(|id| state.cache.set_a2a_owner(id, &owner, OWNERSHIP))).await;
             Body::from(bytes)
         }
@@ -908,7 +970,9 @@ mod tests {
         assert_eq!(m("GetExtendedAgentCard", json!({})), Ask::Refused(NO_EXTENDED_CARD));
         assert_eq!(m("Something", json!({})), Ask::Other);
 
-        assert!(matches!(ask_rest("message:send", br#"{"message":{"taskId":"t9"}}"#), Ask::Send { stream: false, task: Some(t), .. } if t == "t9"));
+        assert!(
+            matches!(ask_rest("message:send", br#"{"message":{"taskId":"t9"}}"#), Ask::Send { stream: false, task: Some(t), .. } if t == "t9")
+        );
         assert!(matches!(ask_rest("v1/message:stream", b"{}"), Ask::Send { stream: true, .. }));
         assert_eq!(ask_rest("tasks/t1", b""), Ask::Task("t1".into()));
         assert_eq!(ask_rest("tenant-a/tasks/t1:cancel", b""), Ask::Task("t1".into()));
@@ -1002,7 +1066,12 @@ mod tests {
         });
         let authorized = |h: &HeaderMap| h.get(header::AUTHORIZATION).map(|v| v.as_bytes()) == Some(b"Bearer agent-secret");
         let app = axum::Router::new()
-            .route("/.well-known/agent-card.json", get(move |h: HeaderMap| async move { if authorized(&h) { Json(card).into_response() } else { StatusCode::UNAUTHORIZED.into_response() } }))
+            .route(
+                "/.well-known/agent-card.json",
+                get(move |h: HeaderMap| async move {
+                    if authorized(&h) { Json(card).into_response() } else { StatusCode::UNAUTHORIZED.into_response() }
+                }),
+            )
             .route(
                 "/rpc",
                 post(move |h: HeaderMap, Json(m): Json<Value>| async move {
@@ -1045,7 +1114,10 @@ mod tests {
         let send = |req: axum::http::request::Builder, body: Value| {
             let app = app.clone();
             async move {
-                let req = req.header("authorization", "Bearer sk-gw-a").header("host", "gw.example.com").header("content-type", "application/json");
+                let req = req
+                    .header("authorization", "Bearer sk-gw-a")
+                    .header("host", "gw.example.com")
+                    .header("content-type", "application/json");
                 let resp = app.oneshot(req.body(Body::from(body.to_string())).unwrap()).await.unwrap();
                 let status = resp.status();
                 let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -1071,19 +1143,29 @@ mod tests {
 
         // Without Valkey no task is known to belong to anyone: asking about one is answered as for
         // an unknown task, and nothing is logged.
-        let (_, reply) = send(axum::http::Request::post("/a2a/echo"), json!({ "jsonrpc": "2.0", "id": 2, "method": "GetTask", "params": { "id": "task-1" } })).await;
+        let (_, reply) = send(
+            axum::http::Request::post("/a2a/echo"),
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "GetTask", "params": { "id": "task-1" } }),
+        )
+        .await;
         assert_eq!(reply["error"]["code"], -32001);
-        let (_, reply) = send(axum::http::Request::post("/a2a/echo"), json!({ "jsonrpc": "2.0", "id": 3, "method": "ListTasks", "params": {} })).await;
+        let (_, reply) =
+            send(axum::http::Request::post("/a2a/echo"), json!({ "jsonrpc": "2.0", "id": 3, "method": "ListTasks", "params": {} })).await;
         assert_eq!(reply["error"]["code"], -32004);
         assert!(records.try_recv().is_err());
     }
 
     #[test]
     fn the_card_names_the_gateway_as_clients_reach_it() {
-        let h = |pairs: &[(&'static str, &'static str)]| pairs.iter().map(|(k, v)| (HeaderName::from_static(k), HeaderValue::from_static(v))).collect::<HeaderMap>();
+        let h = |pairs: &[(&'static str, &'static str)]| {
+            pairs.iter().map(|(k, v)| (HeaderName::from_static(k), HeaderValue::from_static(v))).collect::<HeaderMap>()
+        };
         let uri = Uri::from_static("/a2a/x");
         assert_eq!(origin(&h(&[("host", "gw.example.com")]), &uri), "https://gw.example.com");
         assert_eq!(origin(&h(&[("host", "localhost:8080")]), &uri), "http://localhost:8080");
-        assert_eq!(origin(&h(&[("host", "10.0.0.5"), ("x-forwarded-host", "ai.example.com"), ("x-forwarded-proto", "https")]), &uri), "https://ai.example.com");
+        assert_eq!(
+            origin(&h(&[("host", "10.0.0.5"), ("x-forwarded-host", "ai.example.com"), ("x-forwarded-proto", "https")]), &uri),
+            "https://ai.example.com"
+        );
     }
 }

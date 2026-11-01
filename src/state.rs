@@ -87,10 +87,7 @@ fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Send
     };
     let settings = Live::default();
     settings.set(Settings { max_attempts: 1, cooldown_secs: 1, ..Settings::default() });
-    let db = sqlx::postgres::PgPoolOptions::new()
-        .acquire_timeout(Duration::from_millis(200))
-        .connect_lazy(&cfg.database_url)
-        .unwrap();
+    let db = sqlx::postgres::PgPoolOptions::new().acquire_timeout(Duration::from_millis(200)).connect_lazy(&cfg.database_url).unwrap();
     let cache = Cache::new(&cfg.valkey_url, cfg.valkey_cluster).unwrap();
     AppState::new(Inner {
         cfg,

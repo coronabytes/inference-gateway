@@ -15,7 +15,10 @@ use axum::{
 };
 use rmcp::{
     ErrorData, ServerHandler,
-    model::{CallToolRequestParams, CallToolResponse, CallToolResult, Implementation, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool},
+    model::{
+        CallToolRequestParams, CallToolResponse, CallToolResult, Implementation, ListToolsResult, PaginatedRequestParams,
+        ServerCapabilities, ServerConfig, Tool,
+    },
     service::{RequestContext, RoleServer},
     transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager},
 };
@@ -25,9 +28,9 @@ use tower::ServiceExt;
 use super::{Calls, McpServer, ToolsError};
 use crate::{
     auth,
-    mcp_auth::McpKey,
     error::{Dialect, GatewayError},
     labels::Labels,
+    mcp_auth::McpKey,
     model::VirtualKey,
     oauth::Who,
     state::AppState,
@@ -100,16 +103,20 @@ impl ServerHandler for Hub {
     fn get_info(&self) -> ServerConfig {
         let mut config = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         config.server_info = Implementation::new("inference-gateway", crate::VERSION);
-        config.instructions = Some(format!(
-            "The tools of the MCP servers behind the inference gateway, named after their server: server{SEPARATOR}tool."
-        ));
+        config.instructions =
+            Some(format!("The tools of the MCP servers behind the inference gateway, named after their server: server{SEPARATOR}tool."));
         config
     }
 
-    async fn list_tools(&self, _request: Option<PaginatedRequestParams>, ctx: RequestContext<RoleServer>) -> Result<ListToolsResult, ErrorData> {
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
         let Caller { state, key, labels } = caller(&ctx)?;
         let servers = servers(&state, &key);
-        let lists = futures::future::join_all(servers.iter().map(|s| state.mcp.tools(&state, s, Who { key: key.id, labels: &labels }))).await;
+        let lists =
+            futures::future::join_all(servers.iter().map(|s| state.mcp.tools(&state, s, Who { key: key.id, labels: &labels }))).await;
         let mut tools = Vec::new();
         for (server, listed) in servers.iter().zip(lists) {
             // A server that cannot be reached leaves its tools out, rather than failing the others',
@@ -132,7 +139,9 @@ impl ServerHandler for Hub {
                 t["name"] = json!(format!("{}{SEPARATOR}{name}", server.name));
                 match serde_json::from_value::<Tool>(t) {
                     Ok(t) => tools.push(t),
-                    Err(e) => tracing::warn!(server = %server.name, tool = name, error = %e, "MCP tool left out of /mcp: its description is not valid"),
+                    Err(e) => {
+                        tracing::warn!(server = %server.name, tool = name, error = %e, "MCP tool left out of /mcp: its description is not valid")
+                    }
                 }
             }
         }

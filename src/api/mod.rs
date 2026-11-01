@@ -4,13 +4,13 @@ pub mod anthropic;
 pub mod chat;
 pub mod decisions;
 pub mod embeddings;
-pub mod mcp_tools;
 mod guard;
+pub mod mcp_tools;
 pub mod models;
 pub mod rerank;
-pub mod sign_ins;
 pub mod responses;
 pub mod routing;
+pub mod sign_ins;
 
 use std::{collections::HashSet, convert::Infallible, sync::Arc};
 
@@ -30,12 +30,12 @@ use uuid::Uuid;
 use crate::{
     accounting::{Rollup, Tracker},
     affinity::Affinity,
-    capture::{Body as Logged, ChatStream, MessagesStream, Reassembler, ResponsesStream},
     auth::ClientKey,
-    labels::{ClientLabels, Labels},
+    capture::{Body as Logged, ChatStream, MessagesStream, Reassembler, ResponsesStream},
     conversations::{self, History, Previous, Turn},
     error::{Dialect, ErrorKind, GatewayError},
     ir::{Aggregator, ChatRequest, ChatResponse, Message, Part, Role, StreamEvent, Usage},
+    labels::{ClientLabels, Labels},
     model::{ApiStyle, AutoRouter, Deployment, Mode, PromptLogging, ProviderKind, VirtualKey},
     providers::{self, ByteStream, EventStream, Op},
     registry::Snapshot,
@@ -296,9 +296,7 @@ pub(crate) async fn run_model(
         }
     };
 
-    if parent.is_none()
-        && tracker.logging()
-    {
+    if parent.is_none() && tracker.logging() {
         let conversation = Affinity::fingerprint(state, &raw, inbound);
         tracker.log().expect("logging").conversation(conversation);
     }
@@ -550,7 +548,12 @@ pub(crate) fn deployments_for(state: &AppState, model: &str, mode: Mode) -> Resu
 /// The deployments of `model` serving `mode` that `key` may use (see
 /// `VirtualKey::allows_deployment`). A model none of whose deployments the key may use is
 /// forbidden, like one outside its `allowed_models`.
-pub(crate) fn usable_deployments(state: &AppState, key: &VirtualKey, model: &str, mode: Mode) -> Result<Vec<Arc<Deployment>>, GatewayError> {
+pub(crate) fn usable_deployments(
+    state: &AppState,
+    key: &VirtualKey,
+    model: &str,
+    mode: Mode,
+) -> Result<Vec<Arc<Deployment>>, GatewayError> {
     let mut candidates = deployments_for(state, model, mode)?;
     let any = !candidates.is_empty();
     candidates.retain(|d| key.allows_deployment(d));
@@ -599,9 +602,10 @@ pub(crate) fn prompt_logged(snap: &Snapshot, settings: &crate::settings::Setting
 /// Read from the body as sent, since passthrough forwards it unparsed.
 fn asks_web_search(raw: &Value) -> bool {
     raw.get("web_search_options").is_some_and(|w| !w.is_null())
-        || raw.get("tools").and_then(Value::as_array).is_some_and(|ts| {
-            ts.iter().any(|t| t.get("type").and_then(Value::as_str).is_some_and(|ty| ty.starts_with("web_search")))
-        })
+        || raw
+            .get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(|ts| ts.iter().any(|t| t.get("type").and_then(Value::as_str).is_some_and(|ty| ty.starts_with("web_search"))))
 }
 
 fn for_mode(mut candidates: Vec<Arc<Deployment>>, model: &str, mode: Mode) -> Result<Vec<Arc<Deployment>>, GatewayError> {
@@ -816,7 +820,10 @@ fn encode_stream(
                 if ev.is_content() {
                     st.tracker.first_token();
                 }
-                if let StreamEvent::TextDelta { text, .. } | StreamEvent::ReasoningDelta { text, .. } | StreamEvent::ToolArgsDelta { json: text, .. } = &ev {
+                if let StreamEvent::TextDelta { text, .. }
+                | StreamEvent::ReasoningDelta { text, .. }
+                | StreamEvent::ToolArgsDelta { json: text, .. } = &ev
+                {
                     st.tracker.streamed(text.len());
                     if st.render.is_some()
                         && let Some(c) = st.tracker.log()
@@ -906,7 +913,8 @@ async fn passthrough(
         return Ok(match providers::bedrock::passthrough(state, d, &body, stream).await? {
             providers::bedrock::Passthrough::Stream(s) => Outcome::PassStream(s),
             providers::bedrock::Passthrough::Full(bytes) => {
-                let usage = serde_json::from_slice::<Value>(&bytes).ok().map(|v| providers::anthropic::usage(&v["usage"])).unwrap_or_default();
+                let usage =
+                    serde_json::from_slice::<Value>(&bytes).ok().map(|v| providers::anthropic::usage(&v["usage"])).unwrap_or_default();
                 Outcome::PassFull(bytes, usage)
             }
         });
@@ -933,9 +941,7 @@ fn passthrough_usage(inbound: Inbound, v: &Value) -> Usage {
     let Some(u) = v.get("usage") else { return Usage::default() };
     match inbound {
         Inbound::Messages => providers::anthropic::usage(u),
-        Inbound::Responses => {
-            Usage { search_units: providers::openai_responses::web_searches(v), ..providers::openai_chat::usage(u) }
-        }
+        Inbound::Responses => Usage { search_units: providers::openai_responses::web_searches(v), ..providers::openai_chat::usage(u) },
         Inbound::Chat => Usage {
             search_units: v.pointer("/choices/0/message").map_or(0, providers::openai_chat::web_searches),
             ..providers::openai_chat::usage(u)
@@ -1039,15 +1045,17 @@ fn sniff_stream(
                 st.tracker.fail(&err);
                 let bytes = match st.inbound {
                     Inbound::Messages => sse_event("error", &err.body(Dialect::Anthropic)),
-                    Inbound::Chat => Bytes::from(format!("data: {}
+                    Inbound::Chat => Bytes::from(format!(
+                        "data: {}
 
 data: [DONE]
 
-", err.body(Dialect::OpenAi))),
-                    Inbound::Responses => sse_event(
-                        "error",
-                        &json!({ "type": "error", "code": err.openai_type(), "message": err.message, "param": null }),
-                    ),
+",
+                        err.body(Dialect::OpenAi)
+                    )),
+                    Inbound::Responses => {
+                        sse_event("error", &json!({ "type": "error", "code": err.openai_type(), "message": err.message, "param": null }))
+                    }
                 };
                 Some((Ok(bytes), st))
             }
@@ -1383,7 +1391,8 @@ mod tests {
             arguments: json!({ "path": "a" }),
             result: Ok(json!({ "content": [{ "type": "text", "text": "A" }] })),
         };
-        let failed = McpItem::Call { server: "docs".into(), tool: "read".into(), arguments: json!({}), result: Err("budget reached".into()) };
+        let failed =
+            McpItem::Call { server: "docs".into(), tool: "read".into(), arguments: json!({}), result: Err("budget reached".into()) };
         // Tools, a call and a failed call, then the answer's text in block 3.
         let events = [
             StreamEvent::Mcp { index: 0, item: tools },
@@ -1419,7 +1428,11 @@ mod tests {
             out.iter().map(|b| String::from_utf8_lossy(b).into_owned()).collect::<String>()
         };
         let s = sse(Box::new(responses::ResponsesEncoder::new("resp_1".into(), "m".into())));
-        assert!(s.contains("response.mcp_list_tools.completed") && s.contains("response.mcp_call.completed") && s.contains("response.mcp_call.failed"));
+        assert!(
+            s.contains("response.mcp_list_tools.completed")
+                && s.contains("response.mcp_call.completed")
+                && s.contains("response.mcp_call.failed")
+        );
         let s = sse(Box::new(anthropic::AnthropicEncoder::new("msg_1".into(), "m".into())));
         assert!(s.contains(r#""index":4,"type":"text_delta""#) || s.contains(r#""index":4"#));
         assert!(s.contains(r#""type":"mcp_tool_use""#));
@@ -1527,7 +1540,8 @@ mod accounting_tests {
 
     #[test]
     fn passthrough_content_is_counted_for_estimates() {
-        let chat = json!({ "choices": [{ "delta": { "content": "hello", "tool_calls": [{ "function": { "arguments": "{\"a\":1}" } }] } }] });
+        let chat =
+            json!({ "choices": [{ "delta": { "content": "hello", "tool_calls": [{ "function": { "arguments": "{\"a\":1}" } }] } }] });
         assert_eq!(content_bytes(Inbound::Chat, "", &chat), 5 + 7);
         assert_eq!(content_bytes(Inbound::Chat, "", &json!({ "choices": [] })), 0);
         let text = json!({ "type": "content_block_delta", "delta": { "type": "text_delta", "text": "abc" } });

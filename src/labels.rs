@@ -92,9 +92,7 @@ impl FromRequestParts<AppState> for ClientLabels {
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, _: &AppState) -> Result<Self, Response> {
-        Labels::from_headers(&parts.headers)
-            .map(ClientLabels)
-            .map_err(|e| e.into_response_for(crate::auth::dialect_of(parts)))
+        Labels::from_headers(&parts.headers).map(ClientLabels).map_err(|e| e.into_response_for(crate::auth::dialect_of(parts)))
     }
 }
 

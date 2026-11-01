@@ -207,7 +207,12 @@ pub(crate) struct Described {
 
 impl From<Info> for Described {
     fn from(i: Info) -> Self {
-        Self { max_input_tokens: i.max_input_tokens, max_output_tokens: i.max_tokens, retires: i.retires, capabilities: i.capabilities.map(|c| c.0) }
+        Self {
+            max_input_tokens: i.max_input_tokens,
+            max_output_tokens: i.max_tokens,
+            retires: i.retires,
+            capabilities: i.capabilities.map(|c| c.0),
+        }
     }
 }
 
@@ -437,7 +442,8 @@ mod tests {
                 capabilities: Some(caps),
             }
         };
-        let native = json!({ "max_input_tokens": 200000, "max_output_tokens": 64000, "supports_pdf_input": true, "deprecation_date": "2027-01-01" });
+        let native =
+            json!({ "max_input_tokens": 200000, "max_output_tokens": 64000, "supports_pdf_input": true, "deprecation_date": "2027-01-01" });
         let translated = json!({ "max_input_tokens": 100000, "max_output_tokens": 128000, "supports_vision": true });
         let both = info(native.clone(), ApiStyle::Anthropic).and(info(translated, ApiStyle::Chat));
         assert_eq!((both.max_input_tokens, both.max_tokens), (Some(100000), Some(64000)));

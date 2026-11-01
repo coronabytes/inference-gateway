@@ -322,7 +322,10 @@ impl DeploymentConfig {
         if let Some(s) = &self.aws_service {
             let ok = s.strip_prefix("bedrock").is_some_and(|rest| {
                 rest.is_empty()
-                    || rest.strip_prefix('-').is_some_and(|r| !r.is_empty() && r.split('-').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())))
+                    || rest.strip_prefix('-').is_some_and(|r| {
+                        !r.is_empty()
+                            && r.split('-').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+                    })
             });
             if !ok {
                 return Err(format!("aws_service '{s}' is not a Bedrock signing name (bedrock or bedrock-<name>)"));
@@ -382,7 +385,7 @@ impl Secrets {
             &self.client_secret,
         ]
         .into_iter()
-            .filter_map(|v| v.as_deref())
+        .filter_map(|v| v.as_deref())
     }
 
     pub fn presence(&self) -> BTreeMap<&'static str, bool> {
@@ -512,7 +515,10 @@ mod tests {
         let single: Route = serde_json::from_value(serde_json::json!({ "model": "luna", "description": "d" })).unwrap();
         assert_eq!((single.name.as_str(), single.model_names().collect::<Vec<_>>()), ("luna", vec!["luna"]));
         // Written back in the new shape, without an unset effort.
-        assert_eq!(serde_json::to_value(&single).unwrap(), serde_json::json!({ "name": "luna", "description": "d", "models": [{ "model": "luna" }] }));
+        assert_eq!(
+            serde_json::to_value(&single).unwrap(),
+            serde_json::json!({ "name": "luna", "description": "d", "models": [{ "model": "luna" }] })
+        );
         assert!(serde_json::from_value::<Route>(serde_json::json!({ "name": "x", "description": "d", "models": [], "extra": 1 })).is_err());
     }
 
@@ -715,12 +721,9 @@ impl Deployment {
         use ReasoningEffort as E;
         let anthropic = matches!(self.style, ApiStyle::Anthropic | ApiStyle::Converse);
         let mut efforts: Vec<E> = match self.catalog.as_deref() {
-            Some(c) if c.get("reasoning_effort_levels").is_some_and(serde_json::Value::is_array) => c["reasoning_effort_levels"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|l| l.as_str().and_then(E::parse))
-                .collect(),
+            Some(c) if c.get("reasoning_effort_levels").is_some_and(serde_json::Value::is_array) => {
+                c["reasoning_effort_levels"].as_array().into_iter().flatten().filter_map(|l| l.as_str().and_then(E::parse)).collect()
+            }
             Some(c) => E::ALL
                 .into_iter()
                 .filter(|e| match c.get(format!("supports_{}_reasoning_effort", e.as_str())).and_then(serde_json::Value::as_bool) {
@@ -732,7 +735,9 @@ impl Deployment {
             None => vec![E::Minimal, E::Low, E::Medium, E::High],
         };
         // Bedrock may cap the efforts below what the model itself takes.
-        if let Some(ceiling) = self.catalog.as_deref().and_then(|c| c.get("bedrock_output_config_effort_ceiling")?.as_str()).and_then(E::parse) {
+        if let Some(ceiling) =
+            self.catalog.as_deref().and_then(|c| c.get("bedrock_output_config_effort_ceiling")?.as_str()).and_then(E::parse)
+        {
             efforts.retain(|e| *e <= ceiling);
         }
         if anthropic && !efforts.contains(&E::None) {
@@ -895,7 +900,11 @@ impl TryFrom<serde_json::Value> for Route {
     fn try_from(v: serde_json::Value) -> Result<Self, Self::Error> {
         if v.get("model").is_some() && v.get("models").is_none() {
             let s: SingleRoute = serde_json::from_value(v)?;
-            return Ok(Route { name: s.model.clone(), description: s.description, models: vec![RouteModel { model: s.model, reasoning_effort: None }] });
+            return Ok(Route {
+                name: s.model.clone(),
+                description: s.description,
+                models: vec![RouteModel { model: s.model, reasoning_effort: None }],
+            });
         }
         let p: PoolRoute = serde_json::from_value(v)?;
         Ok(Route { name: p.name, description: p.description, models: p.models })
