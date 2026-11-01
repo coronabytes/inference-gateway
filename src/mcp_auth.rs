@@ -8,8 +8,9 @@
 //! A person signed in to the console approves a client and picks the virtual key it acts as. The
 //! client then gets tokens for the MCP endpoint it asked for (`resource`), and its requests there
 //! count as the key's: its access, limits, budgets and logging apply. Access tokens last an hour,
-//! refresh tokens 30 days and rotate on use. Tokens are stored as SHA-256 hashes only (see
-//! `client_grants`); grants are listed and revoked per key in the console.
+//! refresh tokens 30 days and rotate on use; a grant ends 90 days after its approval however often
+//! it is refreshed, and at once when a replaced refresh token is presented again. Tokens are stored
+//! as SHA-256 hashes only (see `client_grants`); grants are listed and revoked per key in the console.
 
 use std::{
     collections::HashMap,
@@ -52,6 +53,11 @@ const CODE_TTL: Duration = Duration::from_secs(300);
 const MAX_DOCUMENT: usize = 5 * 1024;
 /// How long a replica trusts what it read of a token; revoking takes effect on the others within it.
 const TOKEN_CACHE: Duration = Duration::from_secs(60);
+/// Metadata documents a replica keeps, at most: the soonest to expire makes room.
+const MAX_DOCUMENTS: usize = 256;
+/// Authorization requests a replica takes a minute. People connect an app now and then; anything
+/// faster is a scan, since the request fetches the document any caller names.
+const AUTHORIZE_PER_MINUTE: u32 = 60;
 
 /// A grant as stored: one client, one key, one MCP endpoint.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -111,6 +117,8 @@ pub struct Store {
     docs: Mutex<HashMap<String, (Arc<ClientDoc>, Instant)>>,
     tokens: Mutex<HashMap<[u8; 32], (Cached, Instant)>>,
     http: OnceLock<reqwest::Client>,
+    /// When the current minute of authorization requests began, and how many it has had.
+    authorizations: Mutex<Option<(Instant, u32)>>,
 }
 
 #[derive(Clone)]
@@ -225,8 +233,42 @@ impl Store {
         })
     }
 
+    /// Whether this replica takes another authorization request now (`AUTHORIZE_PER_MINUTE`).
+    pub fn allow_authorization(&self) -> bool {
+        let mut slot = self.authorizations.lock().expect("authorizations");
+        let now = Instant::now();
+        match slot.as_mut() {
+            Some((since, n)) if now.duration_since(*since) < Duration::from_secs(60) => {
+                if *n >= AUTHORIZE_PER_MINUTE {
+                    return false;
+                }
+                *n += 1;
+                true
+            }
+            _ => {
+                *slot = Some((now, 1));
+                true
+            }
+        }
+    }
+
+    /// Keeps a document until `until`, within `MAX_DOCUMENTS`: expired ones go first, then the
+    /// one that expires soonest.
+    fn keep_document(&self, client_id: &str, doc: Arc<ClientDoc>, until: Instant) {
+        let mut docs = self.docs.lock().expect("docs");
+        let now = Instant::now();
+        docs.retain(|_, (_, until)| *until > now);
+        if docs.len() >= MAX_DOCUMENTS
+            && let Some(soonest) = docs.iter().min_by_key(|(_, (_, until))| *until).map(|(k, _)| k.clone())
+        {
+            docs.remove(&soonest);
+        }
+        docs.insert(client_id.to_string(), (doc, until));
+    }
+
     /// The client's metadata document, fetched (without following redirects, at most 5 KB, from an
-    /// address the gateway may reach) or from this replica's cache.
+    /// address the gateway may reach) or from this replica's cache. Why a fetch failed goes to the
+    /// log only: the caller is not signed in, and the answer must not tell what is at the address.
     pub async fn document(&self, state: &AppState, client_id: &str) -> Result<Arc<ClientDoc>, String> {
         if let Some((doc, until)) = self.docs.lock().expect("docs").get(client_id)
             && *until > Instant::now()
@@ -235,29 +277,33 @@ impl Store {
         }
         check_client_id(client_id)?;
         state.cfg.upstream_policy.check_url(client_id).map_err(|why| format!("the client's metadata document is at an address the gateway may not reach: {why}"))?;
+        let unreadable = |why: String| {
+            tracing::info!(client = %client_id, why, "an MCP client's metadata document could not be read");
+            format!("the client's metadata document at {client_id} could not be read (see the gateway log)")
+        };
         let resp = self
             .http(state)
             .get(client_id)
             .header(reqwest::header::ACCEPT, "application/json")
             .send()
             .await
-            .map_err(|e| format!("the client's metadata document could not be fetched: {e}"))?;
+            .map_err(|e| unreadable(format!("fetch failed: {e}")))?;
         if resp.status() != reqwest::StatusCode::OK {
-            return Err(format!("the client's metadata document answered {} instead of 200", resp.status().as_u16()));
+            return Err(unreadable(format!("answered HTTP {}", resp.status().as_u16())));
         }
         let keep = cache_for(resp.headers());
         let mut body = Vec::new();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            body.extend_from_slice(&chunk.map_err(|e| format!("the client's metadata document could not be read: {e}"))?);
+            body.extend_from_slice(&chunk.map_err(|e| unreadable(format!("read failed: {e}")))?);
             if body.len() > MAX_DOCUMENT {
-                return Err("the client's metadata document is larger than 5 KB".into());
+                return Err(unreadable("larger than 5 KB".into()));
             }
         }
-        let v: Value = serde_json::from_slice(&body).map_err(|_| "the client's metadata document is not JSON".to_string())?;
+        let v: Value = serde_json::from_slice(&body).map_err(|_| unreadable("not JSON".into()))?;
         let doc = Arc::new(parse_document(client_id, &v)?);
         if let Some(keep) = keep {
-            self.docs.lock().expect("docs").insert(client_id.to_string(), (doc.clone(), Instant::now() + keep));
+            self.keep_document(client_id, doc.clone(), Instant::now() + keep);
         }
         Ok(doc)
     }
@@ -398,9 +444,13 @@ impl FromRequestParts<AppState> for McpKey {
 /// A refusal shown to the person, for a request whose client or redirect URI cannot be trusted:
 /// nothing is sent back to the client then.
 fn refuse_page(msg: &str) -> Response {
+    refuse_with(StatusCode::BAD_REQUEST, msg)
+}
+
+fn refuse_with(status: StatusCode, msg: &str) -> Response {
     let msg = msg.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     (
-        StatusCode::BAD_REQUEST,
+        status,
         Html(format!(
             "<!doctype html><meta charset=utf-8><title>Sign-in refused</title><body style=\"font-family:system-ui;max-width:40em;margin:4em auto\"><h1>The app's sign-in was refused</h1><p>{msg}</p><p>Nothing was sent back to the app.</p>"
         )),
@@ -450,6 +500,10 @@ pub async fn authorize(State(state): State<AppState>, headers: HeaderMap, uri: U
     let issuer = origin(&headers, &uri);
     let param = |k: &str| q.get(k).map(String::as_str).filter(|v| !v.is_empty());
     let Some(client_id) = param("client_id") else { return refuse_page("The app did not say who it is (client_id).") };
+    if !state.mcp_auth.allow_authorization() {
+        tracing::warn!(client = %client_id, "MCP client sign-ins are being started faster than this replica takes them");
+        return refuse_with(StatusCode::TOO_MANY_REQUESTS, "Too many apps are signing in to this gateway right now; try again in a minute.");
+    }
     let doc = match state.mcp_auth.document(&state, client_id).await {
         Ok(d) => d,
         Err(e) => return refuse_page(&e),
@@ -621,7 +675,16 @@ pub async fn token(State(state): State<AppState>, headers: HeaderMap, uri: Uri, 
                     token_response(&access, &refresh, &g.scope)
                 }
                 Ok(Some(_)) => token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the key it was approved for can no longer be used"),
-                Ok(None) => token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the refresh token is invalid, expired, used or not this client's"),
+                // A refresh token the gateway already replaced is in someone else's hands: the grant ends.
+                Ok(None) => match db::revoke_replayed_client_grant(&state.db, client_id, &hash(old)).await {
+                    Ok(Some(id)) => {
+                        state.mcp_auth.forget_tokens();
+                        tracing::warn!(grant = %id, client = %client_id, "a replaced refresh token was presented again; the grant is revoked");
+                        token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the refresh token was used before; the grant has been revoked, sign in again")
+                    }
+                    Ok(None) => token_error(StatusCode::BAD_REQUEST, "invalid_grant", "the refresh token is invalid, expired, used or not this client's"),
+                    Err(e) => token_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &format!("the grant could not be read: {e}")),
+                },
                 Err(e) => token_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &format!("the grant could not be read: {e}")),
             }
         }
@@ -700,6 +763,30 @@ mod tests {
         assert_eq!(resource_path(Some("https://gw.example.com"), gw).unwrap().0, "/");
         assert!(resource_path(Some("https://gw.example.com/v1/chat/completions"), gw).is_err());
         assert!(resource_path(Some("https://gw.example.com/mcp/a/b"), gw).is_err());
+    }
+
+    #[test]
+    fn the_document_cache_is_bounded_and_sign_ins_are_limited() {
+        let store = Store::default();
+        let doc = |n: usize| Arc::new(ClientDoc { client_id: format!("https://c.example/{n}.json"), client_name: None, client_uri: None, redirect_uris: vec![] });
+        let now = Instant::now();
+        for n in 0..MAX_DOCUMENTS {
+            store.keep_document(&doc(n).client_id, doc(n), now + Duration::from_secs(100 + n as u64));
+        }
+        store.keep_document("https://c.example/new.json", doc(9999), now + Duration::from_secs(3600));
+        let docs = store.docs.lock().unwrap();
+        assert_eq!(docs.len(), MAX_DOCUMENTS);
+        // The one that expired soonest made room.
+        assert!(!docs.contains_key("https://c.example/0.json") && docs.contains_key("https://c.example/1.json") && docs.contains_key("https://c.example/new.json"));
+        drop(docs);
+
+        for _ in 0..AUTHORIZE_PER_MINUTE {
+            assert!(store.allow_authorization());
+        }
+        assert!(!store.allow_authorization());
+        // A minute later, the window starts over.
+        *store.authorizations.lock().unwrap() = Some((Instant::now() - Duration::from_secs(61), AUTHORIZE_PER_MINUTE));
+        assert!(store.allow_authorization());
     }
 
     #[test]

@@ -233,26 +233,33 @@ impl Card {
 }
 
 /// Agents' cards in this replica's memory, fetched again after `CARD_FRESH` or when the agent's
-/// settings change.
+/// settings change. Where each key signs in on its own, the card is fetched with the key's token
+/// and may be that account's own, so it is kept per key.
 #[derive(Default)]
-pub struct Cards(std::sync::Mutex<HashMap<Uuid, (Arc<A2aAgent>, Instant, Arc<Card>)>>);
+pub struct Cards(std::sync::Mutex<HashMap<(Uuid, Option<Uuid>), (Arc<A2aAgent>, Instant, Arc<Card>)>>);
 
 const CARD_FRESH: Duration = Duration::from_secs(300);
 
 impl Cards {
     /// `who`: who asks, for an agent whose keys sign in on their own and whose card needs it.
     pub async fn get(&self, state: &AppState, agent: &Arc<A2aAgent>, who: Option<Who<'_>>) -> Result<Arc<Card>, String> {
-        if let Some((a, at, card)) = self.0.lock().expect("cards lock").get(&agent.id)
+        let slot = (agent.id, if agent.auth.per_key() { who.as_ref().map(|w| w.key) } else { None });
+        if let Some((a, at, card)) = self.0.lock().expect("cards lock").get(&slot)
             && Arc::ptr_eq(a, agent)
             && at.elapsed() < CARD_FRESH
         {
             return Ok(card.clone());
         }
         let card = Arc::new(fetch_card(state, agent, who).await?);
-        self.0.lock().expect("cards lock").insert(agent.id, (agent.clone(), Instant::now(), card.clone()));
+        let mut cards = self.0.lock().expect("cards lock");
+        cards.retain(|_, (_, at, _)| at.elapsed() < CARD_FRESH);
+        cards.insert(slot, (agent.clone(), Instant::now(), card.clone()));
         Ok(card)
     }
 }
+
+/// A card is read up to this size.
+const MAX_CARD: usize = 1 << 20;
 
 /// The agent's card, as the agent serves it to the gateway. Where each key signs in on its own,
 /// the card is fetched without credentials (cards are mostly public) unless `who` has signed in.
@@ -270,7 +277,7 @@ pub async fn fetch_card(state: &AppState, agent: &A2aAgent, who: Option<Who<'_>>
     if !status.is_success() {
         return Err(format!("the card's address answered HTTP {}", status.as_u16()));
     }
-    let bytes = resp.bytes().await.map_err(|e| format!("the card could not be read: {}", GatewayError::from_reqwest(&e).message))?;
+    let bytes = crate::oauth::read_body(resp, MAX_CARD).await.map_err(|e| format!("the card could not be read: {e}"))?;
     let raw: Value = serde_json::from_slice(&bytes).map_err(|_| "the card is not JSON".to_string())?;
     Card::parse(raw)
 }
@@ -388,6 +395,27 @@ fn ask_rest(path: &str, body: &[u8]) -> Ask {
         return Ask::Refused(NO_EXTENDED_CARD);
     }
     Ask::Other
+}
+
+/// The client's path after `/rest/`, as the agent gets it. Axum percent-decoded it, so it is
+/// parsed as a URL path again and comes back encoded as reqwest sends it. Refused when it would
+/// leave the interface's path (`.` or `..` segments, with `/` or `\`), or holds `?` or `#`, which
+/// would cut it short on the way.
+fn rest_path(raw: &str) -> Option<String> {
+    if raw.split(['/', '\\']).any(|s| s == "." || s == "..") {
+        return None;
+    }
+    let u = reqwest::Url::parse(&format!("http://x/{}", raw.trim_start_matches('/'))).ok()?;
+    if u.query().is_some() || u.fragment().is_some() {
+        return None;
+    }
+    Some(u.path().trim_start_matches('/').to_string())
+}
+
+/// Whether `url` is under the interface's URL: same origin, and its path below the interface's.
+fn stays_under(url: &str, interface: &str) -> bool {
+    let (Ok(u), Ok(i)) = (reqwest::Url::parse(url), reqwest::Url::parse(interface)) else { return false };
+    u.origin() == i.origin() && u.path().starts_with(&format!("{}/", i.path().trim_end_matches('/')))
 }
 
 /// How long the gateway remembers which key a task or context belongs to, since it was last used.
@@ -618,6 +646,9 @@ pub async fn rest(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let Some(path) = rest_path(&path) else {
+        return GatewayError::invalid("the path must stay under the agent's interface: no . or .. segments, and no ? or #").into_response_for(Dialect::OpenAi);
+    };
     let ask = ask_rest(&path, &body);
     forward(&state, &key, &name, Binding::Rest, method, &path, uri.query(), &headers, body, ask, None)
         .await
@@ -700,6 +731,12 @@ async fn forward(
     };
     if let Err(why) = state.cfg.upstream_policy.check_url(&url) {
         let e = GatewayError::internal(format!("the agent's address is not allowed: {why}"));
+        fail(&mut exchange, &e);
+        return Err(e);
+    }
+    // The client's path, checked above, cannot leave the interface; this holds whatever the URL parser made of it.
+    if binding == Binding::Rest && !stays_under(&url, &interface.url) {
+        let e = GatewayError::invalid("the path must stay under the agent's interface");
         fail(&mut exchange, &e);
         return Err(e);
     }
@@ -878,6 +915,21 @@ mod tests {
         assert_eq!(ask_rest("tasks/t1/pushNotificationConfigs/c", b""), Ask::Task("t1".into()));
         assert_eq!(ask_rest("tasks", b""), Ask::Refused(NO_LISTING));
         assert_eq!(ask_rest("extendedAgentCard", b""), Ask::Refused(NO_EXTENDED_CARD));
+    }
+
+    #[test]
+    fn rest_paths_stay_under_the_interface() {
+        assert_eq!(rest_path("v1/message:send").as_deref(), Some("v1/message:send"));
+        assert_eq!(rest_path("/tasks/t 1").as_deref(), Some("tasks/t%201"));
+        for bad in ["../admin", "a/../../b", "a\\..\\b", "./tasks", "tasks#x", "tasks?all=1"] {
+            assert_eq!(rest_path(bad), None, "{bad}");
+        }
+        let iface = "https://agent.example/a2a/rest";
+        assert!(stays_under("https://agent.example/a2a/rest/v1/tasks/t1", iface));
+        assert!(!stays_under("https://agent.example/a2a/admin", iface));
+        assert!(!stays_under("https://agent.example/a2a/restricted", iface));
+        assert!(!stays_under("https://other.example/a2a/rest/x", iface));
+        assert!(stays_under("https://agent.example/x", "https://agent.example/"));
     }
 
     #[test]

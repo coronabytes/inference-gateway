@@ -214,6 +214,18 @@ async fn forward(state: &AppState, key: &Arc<VirtualKey>, name: &str, method: Me
         .ok_or_else(|| GatewayError::not_found(format!("no MCP server '{name}' that this key may use")))?;
     let labels = Labels::from_headers(headers)?;
     let messages = if method == Method::POST { messages(&body) } else { Vec::new() };
+    // A `tools/call` is a request: one without an id (a string or a number) is refused here rather
+    // than passed to a server that might run it unanswered, unlimited, unlogged and uncharged.
+    if let Some(m) = messages.iter().find(|m| m.get("method").and_then(Value::as_str) == Some("tools/call") && m.get("id").and_then(id_key).is_none()) {
+        let mut t = Tracker::new(state, Some(key), &labels, &server.name, "mcp", false);
+        t.tool(m.pointer("/params/name").and_then(Value::as_str).unwrap_or("?"));
+        t.fail_status(400, "tools/call without an id");
+        if messages.len() > 1 {
+            return Err(GatewayError::invalid("every tools/call needs an id that is a string or a number"));
+        }
+        let error = json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32600, "message": "tools/call needs an id that is a string or a number" } });
+        return Ok(axum::Json(error).into_response());
+    }
     // A call of a tool the server's filters hide is answered here, as one of an unknown tool.
     if let Some((id, tool)) = messages.iter().filter_map(call_of).find(|(_, tool)| !server.allows_tool(tool)) {
         let mut t = Tracker::new(state, Some(key), &labels, &server.name, "mcp", false);
@@ -1003,6 +1015,18 @@ mod tests {
         assert_eq!((status, &reply["error"]["code"]), (StatusCode::OK, &json!(-32602)));
         let r = records.try_recv().unwrap();
         assert_eq!((r.tool.as_deref(), r.status_code, r.cost_usd), (Some("secret"), 403, 0.0));
+
+        // A call without an id, or with one that is not a string or number, never reaches the server.
+        for id in [None, Some(json!(true)), Some(json!({}))] {
+            let mut m = json!({ "jsonrpc": "2.0", "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "hi" } } });
+            if let Some(id) = id {
+                m["id"] = id;
+            }
+            let (status, _, reply) = call(&app, "/mcp/tools", Some(&session), m).await;
+            assert_eq!((status, &reply["error"]["code"]), (StatusCode::OK, &json!(-32600)));
+            let r = records.try_recv().unwrap();
+            assert_eq!((r.tool.as_deref(), r.status_code, r.cost_usd), (Some("echo"), 400, 0.0));
+        }
 
         let echo = json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "hi" } } });
         call(&app, "/mcp/tools", Some(&session), echo).await;
