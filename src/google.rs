@@ -98,7 +98,7 @@ impl Google {
         let credentials = self.credentials(key, secrets)?;
         let why = match tokio::time::timeout(TOKEN_TIMEOUT, credentials.access_token()).await {
             Ok(Ok(t)) => return Ok(t.token),
-            Ok(Err(e)) => crate::admin_auth::error_chain(&e),
+            Ok(Err(e)) => crate::util::error_chain(&e),
             Err(_) => format!("no answer within {} s", TOKEN_TIMEOUT.as_secs()),
         };
         // A failed credential stays failed ("subsequent calls will also fail"): the next request

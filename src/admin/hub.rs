@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::R;
 use crate::{
-    admin_auth::{Access, OwnKey},
+    admin::auth::{Access, OwnKey},
     api::{key_can_use, models},
     audit::{self, Actor},
     db,

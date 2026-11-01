@@ -5,7 +5,6 @@ pub mod chat;
 pub mod decisions;
 pub mod embeddings;
 mod guard;
-pub mod mcp_tools;
 pub mod models;
 pub mod rerank;
 pub mod responses;
@@ -36,6 +35,7 @@ use crate::{
     error::{Dialect, ErrorKind, GatewayError},
     ir::{Aggregator, ChatRequest, ChatResponse, Message, Part, Role, StreamEvent, Usage},
     labels::{ClientLabels, Labels},
+    mcp,
     model::{ApiStyle, AutoRouter, Deployment, Mode, PromptLogging, ProviderKind, VirtualKey},
     providers::{self, ByteStream, EventStream, Op},
     registry::Snapshot,
@@ -318,12 +318,12 @@ pub(crate) async fn run_model(
     // Gateway MCP tools: taken out of the request, tool routers replaced by the servers they
     // pick, listed for the key, run by the gateway.
     let mut routed = Vec::new();
-    let toolset = match mcp_tools::take(&mut raw, inbound) {
+    let toolset = match mcp::tools::take(&mut raw, inbound) {
         Ok(w) if w.is_empty() => None,
         Ok(w) => {
-            let (w, r) = mcp_tools::route(state, &key, labels, &raw, inbound, w).await;
+            let (w, r) = mcp::tools::route(state, &key, labels, &raw, inbound, w).await;
             routed = r;
-            match mcp_tools::toolset(state, &key, labels, w).await {
+            match mcp::tools::toolset(state, &key, labels, w).await {
                 Ok(set) => Some(Arc::new(set)),
                 Err(e) => {
                     tracker.fail(&e);
@@ -417,7 +417,7 @@ pub(crate) async fn run_model(
             if ir.is_none() {
                 let parsed = inbound.parse(&raw).and_then(|mut p| {
                     if let Some(set) = &toolset {
-                        mcp_tools::offer(&mut p, set)?;
+                        mcp::tools::offer(&mut p, set)?;
                     }
                     Ok(p)
                 });
@@ -436,8 +436,8 @@ pub(crate) async fn run_model(
             };
             match &toolset {
                 Some(set) => {
-                    let caller = mcp_tools::Caller { key: key.clone(), labels: labels.clone() };
-                    match mcp_tools::start(state, &d, turn.into_owned(), set.clone(), caller).await {
+                    let caller = mcp::tools::Caller { key: key.clone(), labels: labels.clone() };
+                    match mcp::tools::start(state, &d, turn.into_owned(), set.clone(), caller).await {
                         Ok((first, rest)) if stream => Ok(Outcome::Stream { first, rest }),
                         Ok((first, rest)) => collect(first, rest).await,
                         Err(e) => Err(e),
@@ -537,7 +537,7 @@ pub(crate) async fn run_model(
     resp.headers_mut().insert("x-request-id", request_id);
     guardrail_header(&mut resp, guarded.as_ref());
     if !routed.is_empty() {
-        for (name, value) in mcp_tools::Routed::headers(&routed) {
+        for (name, value) in mcp::tools::Routed::headers(&routed) {
             if let Ok(v) = HeaderValue::from_str(&value) {
                 resp.headers_mut().insert(name, v);
             }

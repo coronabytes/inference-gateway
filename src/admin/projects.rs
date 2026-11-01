@@ -20,7 +20,7 @@ use super::{
     search_text, yes,
 };
 use crate::{
-    admin_auth::Access,
+    admin::auth::Access,
     audit::{self, Actor},
     budget::Spender,
     db,

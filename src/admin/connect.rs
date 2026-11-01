@@ -1,4 +1,4 @@
-//! Admin API for MCP clients signing in to the gateway (see `mcp_auth`): the console shows a
+//! Admin API for MCP clients signing in to the gateway (see `oauth::server`): the console shows a
 //! waiting request, and the person approves it for one of the keys they may use, or denies it.
 //! Each key lists the clients it lets in, and any of them can be revoked.
 
@@ -12,11 +12,11 @@ use uuid::Uuid;
 
 use super::{R, check_sees_key};
 use crate::{
-    admin_auth::Access,
+    admin::auth::Access,
     audit::{self, Actor},
     db,
     error::AdminError,
-    mcp_auth::{self, ClientGrant, Pending},
+    oauth::server::{self, ClientGrant, Pending},
     state::AppState,
 };
 
@@ -45,7 +45,7 @@ fn host(url: &str) -> String {
 }
 
 async fn pending(state: &AppState, id: &str) -> R<Pending> {
-    let saved = state.cache.peek(&mcp_auth::request_key(id)).await.map_err(|e| AdminError::unavailable(e.to_string()))?;
+    let saved = state.cache.peek(&server::request_key(id)).await.map_err(|e| AdminError::unavailable(e.to_string()))?;
     saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or_else(|| {
         AdminError(StatusCode::NOT_FOUND, "this sign-in has expired or was answered already; start it again in the app".into())
     })
@@ -53,7 +53,7 @@ async fn pending(state: &AppState, id: &str) -> R<Pending> {
 
 /// Takes the request: it is answered once.
 async fn take(state: &AppState, id: &str) -> R<Pending> {
-    let saved = state.cache.take(&mcp_auth::request_key(id)).await.map_err(|e| AdminError::unavailable(e.to_string()))?;
+    let saved = state.cache.take(&server::request_key(id)).await.map_err(|e| AdminError::unavailable(e.to_string()))?;
     saved.and_then(|s| serde_json::from_str(&s).ok()).ok_or_else(|| {
         AdminError(StatusCode::NOT_FOUND, "this sign-in has expired or was answered already; start it again in the app".into())
     })
@@ -103,7 +103,7 @@ pub(crate) async fn approve(
     let p = take(&state, &id).await?;
     let (client, resource) = (p.client_name.clone().unwrap_or_else(|| p.client_id.clone()), p.resource.clone());
     let by = actor.name.clone().unwrap_or_else(|| actor.kind.to_string());
-    let redirect = mcp_auth::approve(&state, p, key.id, Some(by)).await.map_err(AdminError::unavailable)?;
+    let redirect = server::approve(&state, p, key.id, Some(by)).await.map_err(AdminError::unavailable)?;
     audit::Event::new("key", "connect_app")
         .on(key.id, &key.name)
         .details(serde_json::json!({ "client": client, "resource": resource }))
@@ -115,7 +115,7 @@ pub(crate) async fn approve(
 /// `POST /admin/api/connect/{id}/deny`.
 pub(crate) async fn deny(State(state): State<AppState>, Path(id): Path<String>) -> R<Json<ConnectAnswer>> {
     let p = take(&state, &id).await?;
-    Ok(Json(ConnectAnswer { redirect: mcp_auth::denied(&p) }))
+    Ok(Json(ConnectAnswer { redirect: server::denied(&p) }))
 }
 
 /// `GET /admin/api/keys/{id}/apps`: the MCP clients signed in as this key.

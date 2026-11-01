@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::{R, check_sees_key, label_filter};
 use crate::{
-    admin_auth::Access,
+    admin::auth::Access,
     audit::{self, Actor},
     db,
     error::AdminError,

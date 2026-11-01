@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use super::{R, check_sees_key};
 use crate::{
-    admin_auth::Access,
+    admin::auth::Access,
     audit::{self, Actor},
     db,
     error::AdminError,

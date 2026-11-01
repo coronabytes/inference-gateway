@@ -1,5 +1,5 @@
 //! Admin API: credentials, deployments, routers, virtual keys, metrics, logs, cluster. Requests
-//! authenticate with the master key or an admin session (see `admin_auth`).
+//! authenticate with the master key or an admin session (see `admin::auth`).
 
 use axum::{
     Json, Router,
@@ -14,6 +14,7 @@ use crate::{db, error::AdminError, state::AppState};
 
 pub(crate) mod a2a;
 mod aliases;
+pub(crate) mod auth;
 pub(crate) mod connect;
 mod credentials;
 mod deployments;
@@ -117,11 +118,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/playground/{api}", post(playground::playground))
         .route("/playground/a2a/{agent}", post(playground::playground_a2a))
         .route("/playground/a2a/{agent}/card", get(playground::playground_a2a_card))
-        .merge(crate::admin_auth::protected_api_routes())
+        .merge(crate::admin::auth::protected_api_routes())
         .merge(crate::prices::routes())
         // A route layer, so the guard knows which route it guards (users reach only some).
-        .route_layer(middleware::from_fn_with_state(state, crate::admin_auth::require_admin))
-        .merge(crate::admin_auth::api_routes())
+        .route_layer(middleware::from_fn_with_state(state, crate::admin::auth::require_admin))
+        .merge(crate::admin::auth::api_routes())
 }
 
 /// A list page's search text, trimmed and in lower case; `None` when empty.

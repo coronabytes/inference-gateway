@@ -284,12 +284,12 @@ mod tests {
     async fn resolver_blocks_names_that_resolve_internally() {
         let client = |p: &Policy| reqwest::Client::builder().dns_resolver(p.resolver()).build().unwrap();
         let err = client(&Policy::default()).get("http://localhost:9/").send().await.unwrap_err();
-        let chain = crate::admin_auth::error_chain(&err);
+        let chain = crate::util::error_chain(&err);
         assert!(chain.contains("loopback or private address"), "{chain}");
         // Allowed: the name resolves, and the request fails only because nothing listens on port 9.
         let allowed = Policy::from_list("127.0.0.0/8,::1").unwrap();
         let err = client(&allowed).get("http://localhost:9/").send().await.unwrap_err();
-        assert!(!crate::admin_auth::error_chain(&err).contains("loopback or private address"));
+        assert!(!crate::util::error_chain(&err).contains("loopback or private address"));
     }
 
     #[test]

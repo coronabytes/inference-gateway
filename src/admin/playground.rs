@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::{R, sees_key};
 use crate::{
-    admin_auth::Access,
+    admin::auth::Access,
     db,
     error::AdminError,
     model::{Mode, VirtualKey},

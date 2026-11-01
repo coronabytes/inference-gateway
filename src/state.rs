@@ -26,7 +26,7 @@ pub struct Inner {
     /// Upstream OAuth tokens in memory.
     pub oauth: crate::oauth::Tokens,
     /// What MCP clients signed in to the gateway with OAuth: their documents and tokens.
-    pub mcp_auth: crate::mcp_auth::Store,
+    pub mcp_auth: crate::oauth::server::Store,
     /// Memory for logged prompts and responses until they are written.
     pub bodies: crate::capture::Budget,
     pub started: Instant,
@@ -112,7 +112,7 @@ fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Send
         mcp: crate::mcp::Upstreams::default(),
         a2a: crate::a2a::Cards::default(),
         oauth: crate::oauth::Tokens::default(),
-        mcp_auth: crate::mcp_auth::Store::default(),
+        mcp_auth: crate::oauth::server::Store::default(),
         bodies: crate::capture::Budget::new(1 << 20),
         started: Instant::now(),
         started_at: chrono::Utc::now(),

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{R, label_filter};
-use crate::{admin_auth::Access, db, error::AdminError, state::AppState};
+use crate::{admin::auth::Access, db, error::AdminError, state::AppState};
 
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]

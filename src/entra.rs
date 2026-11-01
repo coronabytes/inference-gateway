@@ -112,7 +112,7 @@ impl Entra {
         let credential = self.credential(&key, source)?;
         let why = match tokio::time::timeout(TOKEN_TIMEOUT, credential.get_token(&[scope], None)).await {
             Ok(Ok(t)) => return Ok(t.token.secret().to_string()),
-            Ok(Err(e)) => crate::admin_auth::error_chain(&e),
+            Ok(Err(e)) => crate::util::error_chain(&e),
             Err(_) => format!("no answer within {} s", TOKEN_TIMEOUT.as_secs()),
         };
         // The next request builds the credential anew, so fixing the environment takes effect.

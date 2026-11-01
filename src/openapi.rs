@@ -480,7 +480,7 @@ mod schemas {
 #[allow(dead_code)]
 mod paths {
     use super::schemas::*;
-    use crate::{admin, admin_auth, api, budget, db, model, oauth, prices};
+    use crate::{admin, api, budget, db, model, oauth, prices};
 
     // ------------------------------------------------------------ inference
 
@@ -1051,7 +1051,7 @@ mod paths {
     /// The MCP clients signed in to the gateway with OAuth as this key.
     #[utoipa::path(get, path = "/admin/api/keys/{id}/apps", tag = "MCP client sign-in", params(("id" = Uuid, Path)),
         responses(
-            (status = 200, description = "The key's grants, newest first.", body = Vec<crate::mcp_auth::ClientGrant>),
+            (status = 200, description = "The key's grants, newest first.", body = Vec<crate::oauth::server::ClientGrant>),
             (status = 404, description = "No such key, or not one of the caller's.", body = AdminError),
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
@@ -1105,14 +1105,14 @@ mod paths {
     ///
     /// The client secret is never returned.
     #[utoipa::path(get, path = "/admin/api/settings/oidc", tag = "Sign-in",
-        responses((status = 200, description = "The settings.", body = admin_auth::SettingsView)),
+        responses((status = 200, description = "The settings.", body = admin::auth::SettingsView)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn get_oidc_settings() {}
 
     /// Save single sign-on settings
-    #[utoipa::path(put, path = "/admin/api/settings/oidc", tag = "Sign-in", request_body = admin_auth::SettingsInput,
+    #[utoipa::path(put, path = "/admin/api/settings/oidc", tag = "Sign-in", request_body = admin::auth::SettingsInput,
         responses(
-            (status = 200, description = "The saved settings.", body = admin_auth::SettingsView),
+            (status = 200, description = "The saved settings.", body = admin::auth::SettingsView),
             (status = 400, description = "Invalid settings.", body = AdminError),
         ),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
@@ -1131,7 +1131,7 @@ mod paths {
     /// Everyone who has signed in with single sign-on, admins and users, with the projects each
     /// user works in.
     #[utoipa::path(get, path = "/admin/api/admins", tag = "Sign-in",
-        responses((status = 200, description = "The people.", body = Vec<admin_auth::PersonView>)),
+        responses((status = 200, description = "The people.", body = Vec<admin::auth::PersonView>)),
         security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
     fn list_admins() {}
 
@@ -1148,9 +1148,9 @@ mod paths {
     /// The projects a user works in: there they manage keys and see the playground, the request
     /// log and metrics, and nothing else. Admins see every project.
     #[utoipa::path(put, path = "/admin/api/admins/{id}/projects", tag = "Sign-in", params(("id" = Uuid, Path)),
-        request_body = admin_auth::PersonProjects,
+        request_body = admin::auth::PersonProjects,
         responses(
-            (status = 200, description = "The user with their projects.", body = admin_auth::PersonView),
+            (status = 200, description = "The user with their projects.", body = admin::auth::PersonView),
             (status = 400, description = "Not a user, or an unknown project.", body = AdminError),
             (status = 404, description = "No such person.", body = AdminError),
         ),
@@ -2060,11 +2060,11 @@ mod tests {
             ("", include_str!("main.rs"), ""),
             ("/admin/api", include_str!("admin.rs"), ""),
             ("/admin/api", include_str!("prices.rs"), ""),
-            ("/admin/api", include_str!("admin_auth.rs"), "pub fn browser_routes"),
+            ("/admin/api", include_str!("admin/auth.rs"), "pub fn browser_routes"),
         ];
         let mut out = BTreeSet::new();
         for (prefix, src, split) in sources {
-            // In admin_auth.rs, the routes after `browser_routes` are mounted at /admin/auth.
+            // In admin/auth.rs, the routes after `browser_routes` are mounted at /admin/auth.
             let parts = match src.split_once(split).filter(|_| !split.is_empty()) {
                 Some((api, browser)) => vec![(prefix, api), ("/admin/auth", browser)],
                 None => vec![(prefix, src)],

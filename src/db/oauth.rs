@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
-use crate::mcp_auth::ClientGrant;
+use crate::oauth::server::ClientGrant;
 
 pub async fn insert_client_grant(pool: &PgPool, g: &ClientGrant, access_hash: &[u8], refresh_hash: &[u8]) -> sqlx::Result<()> {
     sqlx::query!(

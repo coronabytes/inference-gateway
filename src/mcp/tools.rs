@@ -14,8 +14,8 @@ use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::Inbound;
 use crate::{
+    api::Inbound,
     error::{ErrorKind, GatewayError},
     ir::{self, Aggregator, BlockKind, ChatRequest, ImageSource, McpItem, Message, Part, Role, StopReason, StreamEvent, Usage},
     labels::Labels,
@@ -206,7 +206,7 @@ pub async fn route(
     if !wanted.iter().any(|w| snap.tool_routers.contains_key(&w.server)) {
         return (wanted, Vec::new());
     }
-    let transcript = inbound.parse(raw).map(|r| super::routing::transcript(&r));
+    let transcript = inbound.parse(raw).map(|r| crate::api::routing::transcript(&r));
     let (mut out, mut routed) = (Vec::new(), Vec::new());
     for w in wanted {
         let Some(router) = snap.tool_routers.get(&w.server) else {

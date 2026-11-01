@@ -118,10 +118,10 @@ impl GatewayError {
         let err = if e.is_timeout() {
             Self::timeout("upstream timed out")
         } else if e.is_connect() {
-            tracing::warn!(error = %crate::admin_auth::error_chain(e), "could not connect to upstream");
+            tracing::warn!(error = %crate::util::error_chain(e), "could not connect to upstream");
             Self::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "could not connect to upstream (see gateway logs)")
         } else {
-            tracing::warn!(error = %crate::admin_auth::error_chain(e), "upstream transport error");
+            tracing::warn!(error = %crate::util::error_chain(e), "upstream transport error");
             Self::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "upstream transport error (see gateway logs)")
         };
         Self { upstream: true, ..err }

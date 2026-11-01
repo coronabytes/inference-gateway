@@ -358,7 +358,7 @@ pub enum StreamEvent {
     Annotation {
         annotation: Value,
     },
-    /// What the gateway did with its MCP tools (see `api::mcp_tools`): a whole item of the
+    /// What the gateway did with its MCP tools (see `mcp::tools`): a whole item of the
     /// response at block `index`, never started or stopped. Responses and Messages return it,
     /// Chat Completions has no place for it.
     Mcp {

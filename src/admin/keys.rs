@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use super::{LIST_BUDGET_LOOKUPS, R, project_filter, search_text, tag_filter, valid_model_name, yes};
 use crate::{
-    admin_auth::Access,
+    admin::auth::Access,
     audit::{self, Actor},
     budget::Spender,
     db,
