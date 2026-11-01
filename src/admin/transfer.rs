@@ -41,11 +41,13 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::{
-    AliasInput, DeploymentInput, R, RouterInput, alias_row, check_alias, check_deployment, check_deployment_fits, check_router,
-    clean_settings,
+    R,
+    aliases::{AliasInput, alias_row, check_alias, retarget_aliases, target_name},
+    credentials::clean_settings,
+    deployments::{DeploymentInput, check_deployment, check_deployment_fits, rename_model, to_row},
     guardrails::{check_credential, check_guardrail},
     hub::check_metadata,
-    rename_model, retarget_aliases, router_row, target_name, to_row,
+    routers::{RouterInput, check_router, router_row},
 };
 use crate::{
     audit::{self, Actor},

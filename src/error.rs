@@ -118,10 +118,10 @@ impl GatewayError {
         let err = if e.is_timeout() {
             Self::timeout("upstream timed out")
         } else if e.is_connect() {
-            tracing::warn!(error = %crate::admin_auth::error_chain(e), "could not connect to upstream");
+            tracing::warn!(error = %crate::util::error_chain(e), "could not connect to upstream");
             Self::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "could not connect to upstream (see gateway logs)")
         } else {
-            tracing::warn!(error = %crate::admin_auth::error_chain(e), "upstream transport error");
+            tracing::warn!(error = %crate::util::error_chain(e), "upstream transport error");
             Self::new(ErrorKind::Upstream, StatusCode::BAD_GATEWAY, "upstream transport error (see gateway logs)")
         };
         Self { upstream: true, ..err }
@@ -225,6 +225,25 @@ impl AdminError {
     }
     pub fn conflict(m: impl Into<String>) -> Self {
         Self(StatusCode::CONFLICT, m.into())
+    }
+    pub fn forbidden(m: impl Into<String>) -> Self {
+        Self(StatusCode::FORBIDDEN, m.into())
+    }
+    pub fn internal(m: impl Into<String>) -> Self {
+        Self(StatusCode::INTERNAL_SERVER_ERROR, m.into())
+    }
+    /// An upstream the request needed failed.
+    pub fn bad_gateway(m: impl Into<String>) -> Self {
+        Self(StatusCode::BAD_GATEWAY, m.into())
+    }
+    /// Valkey is out of reach, or the replica is shutting down.
+    pub fn unavailable(m: impl Into<String>) -> Self {
+        Self(StatusCode::SERVICE_UNAVAILABLE, m.into())
+    }
+    /// For `map_err` on an insert or update: a second `what` (such as "a credential") with the
+    /// same name is a conflict; any other database error converts as usual.
+    pub fn conflict_on_duplicate(what: &'static str) -> impl Fn(sqlx::Error) -> Self {
+        move |e| if crate::db::is_unique_violation(&e) { Self::conflict(format!("{what} with this name already exists")) } else { e.into() }
     }
 }
 

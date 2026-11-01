@@ -44,6 +44,7 @@ use crate::{
     model::{KeyScope, OidcSettingsRow, PersonRole},
     netguard::Policy,
     state::AppState,
+    util::error_chain,
 };
 
 type R<T> = Result<T, AdminError>;
@@ -417,7 +418,7 @@ fn unauthenticated() -> AdminError {
 pub async fn require_admin(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     match authenticated_via(&state, &req).await {
         Some((Via::Session | Via::Dev | Via::DevUser, _)) if !csrf_ok(&req) => {
-            AdminError(StatusCode::FORBIDDEN, format!("missing {CSRF_HEADER} header")).into_response()
+            AdminError::forbidden(format!("missing {CSRF_HEADER} header")).into_response()
         }
         Some((via, dev_user)) => {
             let signed_in = req.extensions().get::<Auth>().and_then(|a| a.user.clone());
@@ -426,7 +427,7 @@ pub async fn require_admin(State(state): State<AppState>, mut req: Request, next
                 Err(e) => return e.into_response(),
             };
             if matches!(access, Access::User { .. }) && !may_call(&req, USER_ROUTES) {
-                return AdminError(StatusCode::FORBIDDEN, "only admins may do this".into()).into_response();
+                return AdminError::forbidden("only admins may do this").into_response();
             }
             let Some(actor) = actor(&state, &req, via, dev_user) else {
                 return unauthenticated().into_response();
@@ -449,7 +450,7 @@ pub async fn require_admin(State(state): State<AppState>, mut req: Request, next
                 req.extensions_mut().insert(OwnKey(k.id));
                 next.run(req).await
             }
-            Some(_) => AdminError(StatusCode::FORBIDDEN, "this key's scope does not include the admin API".into()).into_response(),
+            Some(_) => AdminError::forbidden("this key's scope does not include the admin API").into_response(),
             None => unauthenticated().into_response(),
         },
     }
@@ -573,9 +574,9 @@ async fn dev_login(
         return Err(AdminError::not_found());
     }
     if !req_headers.contains_key(CSRF_HEADER) {
-        return Err(AdminError(StatusCode::FORBIDDEN, format!("missing {CSRF_HEADER} header")));
+        return Err(AdminError::forbidden(format!("missing {CSRF_HEADER} header")));
     }
-    let fail = |e: tower_sessions::session::Error| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    let fail = |e: tower_sessions::session::Error| AdminError::internal(e.to_string());
     // A new session id on sign-in, as for single sign-on.
     session.cycle_id().await.map_err(fail)?;
     let actor = if q.role.as_deref() == Some("user") {
@@ -597,9 +598,9 @@ async fn dev_login(
 
 async fn logout(State(state): State<AppState>, mut auth: Auth, session: Session, req_headers: axum::http::HeaderMap) -> R<StatusCode> {
     if !req_headers.contains_key(CSRF_HEADER) {
-        return Err(AdminError(StatusCode::FORBIDDEN, format!("missing {CSRF_HEADER} header")));
+        return Err(AdminError::forbidden(format!("missing {CSRF_HEADER} header")));
     }
-    let fail = |e: String| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e);
+    let fail = |e: String| AdminError::internal(e);
     let dev = session.remove::<bool>(DEV_KEY).await.map_err(|e| fail(e.to_string()))? == Some(true);
     let dev_user = session.remove::<Uuid>(DEV_USER_KEY).await.map_err(|e| fail(e.to_string()))?;
     let actor = match auth.logout().await.map_err(|e| fail(e.to_string()))? {
@@ -864,22 +865,6 @@ fn token_payload(jwt: &str) -> Option<serde_json::Map<String, Value>> {
     let payload = jwt.split('.').nth(1)?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
     serde_json::from_slice(&bytes).ok()
-}
-
-/// An error and its causes, `a: b: c`. A cause whose text the message already includes (as some
-/// libraries' errors do) is not repeated.
-pub fn error_chain(e: &dyn std::error::Error) -> String {
-    let mut s = e.to_string();
-    let mut cur = e.source();
-    while let Some(c) = cur {
-        let text = c.to_string();
-        if !s.contains(&text) {
-            s.push_str(": ");
-            s.push_str(&text);
-        }
-        cur = c.source();
-    }
-    s
 }
 
 /// openidconnect's HTTP client on the gateway's reqwest. Redirects are not followed, as the
@@ -1164,26 +1149,6 @@ async fn delete_admin(State(state): State<AppState>, Extension(actor): Extension
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn error_chains_skip_repeated_causes() {
-        #[derive(Debug)]
-        struct E(String, Option<Box<E>>);
-        impl std::fmt::Display for E {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-        impl std::error::Error for E {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-                self.1.as_deref().map(|e| e as _)
-            }
-        }
-        let inner = E("HTTP 400".into(), None);
-        let middle = E("refresh failed: HTTP 400".into(), Some(Box::new(inner)));
-        let outer = E("token failed".into(), Some(Box::new(middle)));
-        assert_eq!(error_chain(&outer), "token failed: refresh failed: HTTP 400");
-    }
 
     fn sso() -> Sso {
         Sso {

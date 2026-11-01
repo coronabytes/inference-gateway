@@ -32,6 +32,7 @@ use uuid::Uuid;
 
 pub mod hub;
 pub mod router;
+pub mod tools;
 
 use crate::{
     accounting::Tracker,
@@ -39,9 +40,8 @@ use crate::{
     crypto::SecretBox,
     error::{Dialect, ErrorKind, GatewayError},
     labels::Labels,
-    mcp_auth::McpKey,
     model::VirtualKey,
-    oauth::{Kind, OAuthConfig, Slot, UpstreamAuth, Who},
+    oauth::{Kind, OAuthConfig, Slot, UpstreamAuth, Who, server::McpKey},
     sse::SseParser,
     state::AppState,
     util::TtlCache,

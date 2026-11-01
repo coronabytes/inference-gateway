@@ -194,10 +194,6 @@ pub(super) fn check_guardrail(
     Ok((name, description, config))
 }
 
-fn conflict_on_duplicate_name(e: sqlx::Error) -> AdminError {
-    if db::is_unique_violation(&e) { AdminError::conflict("a guardrail with this name already exists") } else { e.into() }
-}
-
 async fn credential_name(state: &AppState, id: Uuid) -> R<Option<String>> {
     Ok(db::get_credential(&state.db, id).await?.map(|c| c.name))
 }
@@ -260,7 +256,7 @@ pub(crate) async fn create_guardrail(
         created_at: now,
         updated_at: now,
     };
-    db::insert_guardrail(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::insert_guardrail(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("a guardrail"))?;
     broadcast_reload(&state, "guardrail created").await;
     tracing::info!(guardrail = %row.id, provider = %row.provider, "guardrail created");
     let cred = credential_name(&state, row.credential_id).await?;
@@ -287,7 +283,7 @@ pub(crate) async fn update_guardrail(
     row.credential_id = i.credential_id;
     row.config = sqlx::types::Json(config);
     row.prices = sqlx::types::Json(i.prices.unwrap_or(row.prices.0));
-    db::update_guardrail(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::update_guardrail(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("a guardrail"))?;
     broadcast_reload(&state, "guardrail updated").await;
     tracing::info!(guardrail = %id, "guardrail updated");
     let cred = credential_name(&state, row.credential_id).await?;
@@ -354,8 +350,7 @@ pub(crate) async fn test_guardrail(
     let cred = db::get_credential(&state.db, row.credential_id)
         .await?
         .ok_or_else(|| AdminError::bad_request("the guardrail's credential is gone"))?;
-    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, cred.secrets.as_deref())
-        .map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, cred.secrets.as_deref()).map_err(AdminError::internal)?;
     let g = Callable { row: &row, settings: &cred.settings.0, secrets: &secrets };
     let started = std::time::Instant::now();
     let result = guardrails::check(&state, &g, t.source, &[t.text]).await;

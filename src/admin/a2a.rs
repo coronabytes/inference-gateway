@@ -168,10 +168,6 @@ async fn row(state: &AppState, i: A2aAgentInput, existing: Option<&A2aAgentRow>)
     })
 }
 
-fn conflict_on_duplicate_name(e: sqlx::Error) -> AdminError {
-    if db::is_unique_violation(&e) { AdminError::conflict("an A2A agent with this name already exists") } else { e.into() }
-}
-
 pub(crate) async fn list_a2a_agents(State(state): State<AppState>) -> R<Json<Vec<A2aAgentView>>> {
     Ok(Json(db::list_a2a_agents(&state.db).await?.into_iter().map(view).collect()))
 }
@@ -182,7 +178,7 @@ pub(crate) async fn create_a2a_agent(
     Json(i): Json<A2aAgentInput>,
 ) -> R<(StatusCode, Json<A2aAgentView>)> {
     let row = row(&state, i, None).await?;
-    db::insert_a2a_agent(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::insert_a2a_agent(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("an A2A agent"))?;
     broadcast_reload(&state, "A2A agent created").await;
     tracing::info!(a2a_agent = %row.id, name = %row.name, "A2A agent created");
     let v = view(row);
@@ -200,7 +196,7 @@ pub(crate) async fn update_a2a_agent(
     let secret_changed = i.secret.as_deref().is_some_and(|s| !s.trim().is_empty());
     let before = view(existing.clone());
     let row = row(&state, i, Some(&existing)).await?;
-    db::update_a2a_agent(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::update_a2a_agent(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("an A2A agent"))?;
     let dropped = super::oauth::drop_stale_sign_ins(
         &state,
         crate::oauth::Kind::A2a,
@@ -255,7 +251,7 @@ pub(crate) struct A2aAgentTestResult {
 /// of it. No message is sent; nothing is logged or charged.
 pub(crate) async fn test_a2a_agent(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<A2aAgentTestResult>> {
     let row = db::get_a2a_agent(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
-    let agent = A2aAgent::build(row, &state.cfg.secret_box).map_err(|e| AdminError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let agent = A2aAgent::build(row, &state.cfg.secret_box).map_err(AdminError::internal)?;
     let started = std::time::Instant::now();
     let result = crate::a2a::fetch_card(&state, &agent, None).await;
     let latency_ms = started.elapsed().as_millis() as u64;

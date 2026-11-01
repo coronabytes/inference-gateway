@@ -1,7 +1,6 @@
 mod a2a;
 mod accounting;
 mod admin;
-mod admin_auth;
 mod affinity;
 mod api;
 mod audit;
@@ -21,7 +20,6 @@ mod guardrails;
 mod ir;
 mod labels;
 mod mcp;
-mod mcp_auth;
 mod model;
 mod netguard;
 mod oauth;
@@ -159,14 +157,14 @@ async fn run() -> Result<(), String> {
         mcp: mcp::Upstreams::default(),
         a2a: a2a::Cards::default(),
         oauth: oauth::Tokens::default(),
-        mcp_auth: mcp_auth::Store::default(),
+        mcp_auth: oauth::server::Store::default(),
         bodies: capture::Budget::new(prompt_log_buffer),
         started: Instant::now(),
         started_at: chrono::Utc::now(),
     });
     state.settings.reload(&state.db).await.map_err(|e| format!("initial settings load: {e}"))?;
     state.registry.reload(&state.db, &state.cfg).await.map_err(|e| format!("initial registry load: {e}"))?;
-    admin_auth::warn_if_no_sign_in(&state).await;
+    admin::auth::warn_if_no_sign_in(&state).await;
 
     let writer = tokio::spawn(accounting::run_writer(state.clone(), rx, shutdown_rx));
     tokio::spawn(sync::run_subscriber(state.clone()));
@@ -200,14 +198,14 @@ async fn run() -> Result<(), String> {
         .route("/a2a/{agent}", post(a2a::jsonrpc))
         .route("/a2a/{agent}/.well-known/agent-card.json", get(a2a::card))
         .route("/a2a/{agent}/rest/{*path}", get(a2a::rest).post(a2a::rest).delete(a2a::rest))
-        // The gateway as the OAuth authorization server of its MCP endpoints (see `mcp_auth`).
-        .route("/.well-known/oauth-protected-resource", get(mcp_auth::resource_root))
-        .route("/.well-known/oauth-protected-resource/mcp", get(mcp_auth::resource_hub))
-        .route("/.well-known/oauth-protected-resource/mcp/{server}", get(mcp_auth::resource_server))
-        .route("/.well-known/oauth-authorization-server", get(mcp_auth::metadata))
-        .route("/oauth/authorize", get(mcp_auth::authorize))
-        .route("/oauth/token", post(mcp_auth::token))
-        .route("/oauth/revoke", post(mcp_auth::revoke));
+        // The gateway as the OAuth authorization server of its MCP endpoints (see `oauth::server`).
+        .route("/.well-known/oauth-protected-resource", get(oauth::server::resource_root))
+        .route("/.well-known/oauth-protected-resource/mcp", get(oauth::server::resource_hub))
+        .route("/.well-known/oauth-protected-resource/mcp/{server}", get(oauth::server::resource_server))
+        .route("/.well-known/oauth-authorization-server", get(oauth::server::metadata))
+        .route("/oauth/authorize", get(oauth::server::authorize))
+        .route("/oauth/token", post(oauth::server::token))
+        .route("/oauth/revoke", post(oauth::server::revoke));
     if let Some(signals) = telemetry::describe() {
         tracing::info!(%signals, "exporting OpenTelemetry");
     }
@@ -229,14 +227,14 @@ async fn run() -> Result<(), String> {
         docs = docs.nest_service("/docs", ServeDir::new(dir));
     }
     let docs = docs
-        .layer(axum::middleware::from_fn_with_state(state.clone(), admin_auth::require_signed_in))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), admin::auth::require_signed_in))
         .layer(axum::middleware::from_fn_with_state(state.clone(), docs_enabled));
-    let admin_routes = Router::new().nest("/api", admin::router(state.clone())).nest("/auth", admin_auth::browser_routes()).merge(docs);
+    let admin_routes = Router::new().nest("/api", admin::router(state.clone())).nest("/auth", admin::auth::browser_routes()).merge(docs);
 
     let mut app = inference
         .route("/health/live", get(|| async { "ok" }))
         .route("/health/ready", get(ready))
-        .nest("/admin", admin_routes.layer(admin_auth::layer(&state)));
+        .nest("/admin", admin_routes.layer(admin::auth::layer(&state)));
 
     // The former public addresses: off, or on to the new ones. Either way, not the file server,
     // which would hand out the reference's files and answer /openapi.json with the console's page.

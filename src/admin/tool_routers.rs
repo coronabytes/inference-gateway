@@ -171,10 +171,6 @@ pub(super) fn check(
     })
 }
 
-fn conflict_on_duplicate_name(e: sqlx::Error) -> AdminError {
-    if db::is_unique_violation(&e) { AdminError::conflict("a tool router with this name already exists") } else { e.into() }
-}
-
 pub(crate) async fn list_tool_routers(State(state): State<AppState>) -> R<Json<Vec<ToolRouterView>>> {
     Ok(Json(db::list_tool_routers(&state.db).await?.into_iter().map(view).collect()))
 }
@@ -185,7 +181,7 @@ pub(crate) async fn create_tool_router(
     Json(i): Json<ToolRouterInput>,
 ) -> R<(StatusCode, Json<ToolRouterView>)> {
     let row = row(&state, i, None).await?;
-    db::insert_tool_router(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::insert_tool_router(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("a tool router"))?;
     broadcast_reload(&state, "tool router created").await;
     tracing::info!(tool_router = %row.id, name = %row.name, "tool router created");
     let v = view(row);
@@ -202,7 +198,7 @@ pub(crate) async fn update_tool_router(
     let existing = db::get_tool_router(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     let before = view(existing.clone());
     let row = row(&state, i, Some(&existing)).await?;
-    db::update_tool_router(&state.db, &row).await.map_err(conflict_on_duplicate_name)?;
+    db::update_tool_router(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("a tool router"))?;
     broadcast_reload(&state, "tool router updated").await;
     tracing::info!(tool_router = %id, "tool router updated");
     let v = view(row);

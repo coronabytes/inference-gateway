@@ -30,9 +30,8 @@ use crate::{
     auth,
     error::{Dialect, GatewayError},
     labels::Labels,
-    mcp_auth::McpKey,
     model::VirtualKey,
-    oauth::Who,
+    oauth::{Who, server::McpKey},
     state::AppState,
 };
 

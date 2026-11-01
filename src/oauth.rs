@@ -10,6 +10,9 @@
 //! upstream's authorization server (RFC 9728 for MCP servers, the agent card for A2A agents, then
 //! RFC 8414 or OpenID metadata) and gets the gateway a public client there: its client ID metadata
 //! document (CIMD) where the server takes one, else dynamic client registration (RFC 7591).
+//!
+//! The other way round, the gateway as the authorization server of its own MCP endpoints, is
+//! `server`.
 
 use std::{
     sync::Arc,
@@ -33,6 +36,8 @@ use crate::{
     state::AppState,
     util::TtlCache,
 };
+
+pub mod server;
 
 /// An upstream's OAuth client, as configured.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]

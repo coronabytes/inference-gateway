@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use super::{Changes, bad, claim};
 use crate::{
-    admin::{R, check_budget, valid_model_name},
+    admin::{R, keys::check_budget, valid_model_name},
     guardrails::GuardrailRow,
     model::{KeyScope, ProjectRow, PromptLogging, VirtualKey, normalize_tags},
 };
