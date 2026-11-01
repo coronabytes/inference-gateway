@@ -304,8 +304,11 @@ pub async fn fetch_card(state: &AppState, agent: &A2aAgent, who: Option<Who<'_>>
 /// What the admin API's test shows of a card.
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct CardSummary {
+    #[schema(required)]
     pub name: Option<String>,
+    #[schema(required)]
     pub description: Option<String>,
+    #[schema(required)]
     pub version: Option<String>,
     /// The interfaces the gateway proxies: binding, protocol version and the agent's own URL.
     pub interfaces: Vec<CardInterface>,
@@ -323,6 +326,7 @@ pub struct CardInterface {
 pub struct CardSkill {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub description: Option<String>,
 }
 
@@ -633,7 +637,18 @@ pub(crate) fn origin(headers: &HeaderMap, uri: &Uri) -> String {
     format!("{scheme}://{host}")
 }
 
-/// `GET /a2a/{agent}/.well-known/agent-card.json`: the agent's card, with the gateway's addresses.
+/// A2A: agent card
+///
+/// The agent's card as the agent serves it, with the gateway's addresses as its interfaces (the newest
+/// JSON-RPC and HTTP+JSON ones) and the virtual key as its security.
+#[utoipa::path(get, path = "/a2a/{agent}/.well-known/agent-card.json", operation_id = "a2a_card", tag = "A2A", params(("agent" = String, Path)),
+    responses(
+        (status = 200, description = "The agent card.", body = Object),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 404, description = "No such agent for this key.", body = crate::error::OpenAiError),
+        (status = 502, description = "The agent's card could not be fetched or read.", body = crate::error::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn card(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -656,7 +671,21 @@ pub async fn card_for(state: &AppState, key: &Arc<VirtualKey>, name: &str, uri: 
     result.unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
 }
 
-/// `POST /a2a/{agent}`: the agent's JSON-RPC interface.
+/// A2A: JSON-RPC
+///
+/// The agent's JSON-RPC interface, in A2A 1.0 (`SendMessage`, …) or 0.3 (`message/send`, …), as the card
+/// says. Listing tasks and the extended card are not offered.
+#[utoipa::path(post, path = "/a2a/{agent}", operation_id = "a2a_jsonrpc", tag = "A2A", params(("agent" = String, Path),
+        ("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 200, description = crate::openapi::A2A_STATES, content((Object = "application/json"), (String = "text/event-stream"))),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 404, description = "No such agent for this key.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = crate::error::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn jsonrpc(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -676,7 +705,21 @@ pub async fn jsonrpc_for(state: &AppState, key: &Arc<VirtualKey>, name: &str, he
         .unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
 }
 
-/// `GET`, `POST` and `DELETE /a2a/{agent}/rest/{*path}`: the agent's HTTP+JSON interface.
+/// A2A: HTTP+JSON
+///
+/// The agent's HTTP+JSON interface: `path` as the A2A specification has it, such as `message:send` or
+/// `tasks/{id}`.
+#[utoipa::path(post, path = "/a2a/{agent}/rest/{*path}", operation_id = "a2a_rest_post", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path),
+        ("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 200, description = crate::openapi::A2A_STATES, content((Object = "application/json"), (String = "text/event-stream"))),
+        (status = 403, description = "Listing tasks or the extended card, which are not offered.", body = crate::error::OpenAiError),
+        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget, for a message; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The agent failed, or refused the gateway's credentials.", body = crate::error::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn rest(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -694,6 +737,46 @@ pub async fn rest(
     forward(&state, &key, &name, Binding::Rest, method, &path, uri.query(), &headers, body, ask, None)
         .await
         .unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
+}
+
+// `rest` for the other methods, each with its own documentation.
+
+/// A2A: HTTP+JSON, read
+#[utoipa::path(get, path = "/a2a/{agent}/rest/{*path}", operation_id = "a2a_rest_get", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path)),
+    responses(
+        (status = 200, description = "The agent's answer.", content((Object = "application/json"), (String = "text/event-stream"))),
+        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::error::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
+pub async fn rest_get(
+    state: State<AppState>,
+    key: ClientKey,
+    path: Path<(String, String)>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    rest(state, key, path, method, uri, headers, body).await
+}
+
+/// A2A: HTTP+JSON, delete
+#[utoipa::path(delete, path = "/a2a/{agent}/rest/{*path}", operation_id = "a2a_rest_delete", tag = "A2A", params(("agent" = String, Path), ("*path" = String, Path)),
+    responses(
+        (status = 200, description = "The agent's answer."),
+        (status = 404, description = "No such agent for this key, or another key's task.", body = crate::error::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
+pub async fn rest_delete(
+    state: State<AppState>,
+    key: ClientKey,
+    path: Path<(String, String)>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    rest(state, key, path, method, uri, headers, body).await
 }
 
 /// A refusal in the binding's own form: a JSON-RPC error for JSON-RPC (`id` is the request's), an

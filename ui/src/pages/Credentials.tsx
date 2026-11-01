@@ -38,7 +38,7 @@ function missingSecret(c: Credential): boolean {
 }
 
 /** The region label for a region value, or the value itself. */
-function regionLabel(regions: { value: string; label: string }[], value: string | undefined): string {
+function regionLabel(regions: { value: string; label: string }[], value: string | null | undefined): string {
   const v = value || "global";
   return regions.find((r) => r.value === v)?.label ?? v;
 }

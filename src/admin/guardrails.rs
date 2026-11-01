@@ -32,9 +32,12 @@ pub(crate) struct GuardrailView {
     id: Uuid,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     description: Option<String>,
+    #[schema(value_type = crate::guardrails::GuardrailProvider)]
     provider: String,
     credential_id: Uuid,
+    #[schema(required)]
     credential_name: Option<String>,
     config: GuardrailConfig,
     prices: GuardrailPrices,
@@ -213,6 +216,12 @@ pub(crate) struct EnforcedOn {
     keys: Vec<String>,
 }
 
+/// List guardrails
+///
+/// With the projects and keys that apply each one to every request.
+#[utoipa::path(get, path = "/guardrails", tag = "Guardrails",
+    responses((status = 200, description = "The guardrails.", body = Vec<GuardrailListItem>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_guardrails(State(state): State<AppState>) -> R<Json<Vec<GuardrailListItem>>> {
     let (rows, creds, holders) =
         tokio::try_join!(db::list_guardrails(&state.db), db::list_credentials(&state.db), db::guardrail_holders(&state.db))?;
@@ -233,6 +242,17 @@ pub(crate) async fn list_guardrails(State(state): State<AppState>) -> R<Json<Vec
     ))
 }
 
+/// Create guardrail
+///
+/// Refers to a guardrail defined at the provider, called with one of its credentials. Without
+/// prices, the provider's list prices.
+#[utoipa::path(post, path = "/guardrails", tag = "Guardrails", request_body = GuardrailInput,
+    responses(
+        (status = 201, description = "The new guardrail.", body = GuardrailView),
+        (status = 400, description = "Invalid guardrail.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn create_guardrail(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -265,6 +285,17 @@ pub(crate) async fn create_guardrail(
     Ok((StatusCode::CREATED, Json(v)))
 }
 
+/// Update guardrail
+///
+/// Without prices, the stored prices stay.
+#[utoipa::path(put, path = "/guardrails/{id}", tag = "Guardrails", params(("id" = Uuid, Path)),
+    request_body = GuardrailInput,
+    responses(
+        (status = 200, description = "The guardrail.", body = GuardrailView),
+        (status = 400, description = "Invalid guardrail.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such guardrail.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn update_guardrail(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -295,6 +326,13 @@ pub(crate) async fn update_guardrail(
     Ok(Json(v))
 }
 
+/// Delete guardrail
+#[utoipa::path(delete, path = "/guardrails/{id}", tag = "Guardrails", params(("id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Deleted."),
+        (status = 404, description = "No such guardrail.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn delete_guardrail(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -328,16 +366,29 @@ pub(crate) struct GuardrailTestResult {
     ok: bool,
     latency_ms: u64,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     verdict: Option<Verdict>,
     /// The provider's error, when `ok` is false: an unknown guardrail, missing permissions, …
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     status: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     error: Option<String>,
 }
 
-/// Checks a text with the guardrail, as the gateway would check a prompt or a response. Nothing
-/// is stored and nothing is charged to a key; the provider bills the check.
+/// Test guardrail
+///
+/// Checks a text as a prompt or a response: what the guardrail found, the text as it may
+/// pass, and the billed units and cost. The provider bills the check; nothing is stored.
+#[utoipa::path(post, path = "/guardrails/{id}/test", tag = "Guardrails", params(("id" = Uuid, Path)),
+    request_body = GuardrailTest,
+    responses(
+        (status = 200, description = "The outcome, or the provider's error with `ok: false`.", body = GuardrailTestResult),
+        (status = 404, description = "No such guardrail.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// Nothing is charged to a key.
 pub(crate) async fn test_guardrail(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -361,7 +412,12 @@ pub(crate) async fn test_guardrail(
     }))
 }
 
-/// The guardrails' prices as the provider lists them, for the console's reset button.
+/// Guardrail list prices
+///
+/// Each provider's list prices, USD per 1,000 text units for each kind of policy.
+#[utoipa::path(get, path = "/guardrails/prices", operation_id = "guardrail_prices", tag = "Guardrails",
+    responses((status = 200, description = "Prices by provider.", body = Object)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn list_prices() -> Json<Value> {
     Json(json!({
         "bedrock": GuardrailPrices::list(GuardrailProvider::Bedrock),

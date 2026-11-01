@@ -4,7 +4,7 @@ pub mod anthropic;
 pub mod chat;
 pub mod decisions;
 pub mod embeddings;
-mod guard;
+pub(crate) mod guard;
 pub mod models;
 pub mod rerank;
 pub mod responses;
@@ -136,6 +136,21 @@ pub fn sse_event(event: &str, data: &Value) -> Bytes {
 // Every public endpoint takes `ClientKey` before its body, so unauthenticated requests are
 // refused from their headers and never get a body buffered (see `auth::ClientKey`).
 
+/// Messages
+///
+/// The Anthropic Messages API, for every model behind the gateway.
+#[utoipa::path(post, path = "/v1/messages", tag = "Inference", request_body = crate::openapi::MessagesRequest,
+    responses(
+        (status = 200, description = "The message, or server-sent events with `stream: true`.",
+            content((crate::openapi::ProviderAnswer = "application/json"), (String = "text/event-stream"))),
+        (status = 400, description = "Invalid request.", body = crate::error::AnthropicError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::AnthropicError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::AnthropicError),
+        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::error::AnthropicError),
+        (status = 502, description = "The provider failed.", body = crate::error::AnthropicError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key_header" = []), ("virtual_key" = [])))]
 pub async fn messages(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -146,6 +161,22 @@ pub async fn messages(
     serve(&state, key, labels, &headers, body, Inbound::Messages).await
 }
 
+/// Responses
+///
+/// The OpenAI Responses API, with `previous_response_id` on every model.
+#[utoipa::path(post, path = "/v1/responses", tag = "Inference", request_body = crate::openapi::ResponsesRequest,
+    responses(
+        (status = 200, description = "The response, or server-sent events with `stream: true`.",
+            content((crate::openapi::ProviderAnswer = "application/json"), (String = "text/event-stream"))),
+        (status = 400, description = "Invalid request.", body = crate::error::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::OpenAiError),
+        (status = 404, description = "The previous response is unknown, expired, or belongs to another key.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The provider failed.", body = crate::error::OpenAiError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn responses(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -156,6 +187,21 @@ pub async fn responses(
     serve(&state, key, labels, &headers, body, Inbound::Responses).await
 }
 
+/// Chat Completions
+///
+/// The OpenAI Chat Completions API, for every model behind the gateway.
+#[utoipa::path(post, path = "/v1/chat/completions", tag = "Inference", request_body = crate::openapi::ChatCompletionRequest,
+    responses(
+        (status = 200, description = "The completion, or server-sent events with `stream: true`.",
+            content((crate::openapi::ProviderAnswer = "application/json"), (String = "text/event-stream"))),
+        (status = 400, description = "Invalid request.", body = crate::error::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget; see `Retry-After`.", body = crate::error::OpenAiError),
+        (status = 502, description = "The provider failed.", body = crate::error::OpenAiError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn chat_completions(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -1188,8 +1234,20 @@ fn inspect(tracker: &mut Tracker, inbound: Inbound, v: &Value, pin: Option<&PinS
     }
 }
 
-/// `POST /v1/messages/count_tokens` — forwarded to an Anthropic-style deployment when one
-/// serves the model, otherwise a rough estimate (≈4 bytes per token).
+/// Count tokens
+///
+/// Anthropic's token count. Forwarded to an Anthropic-style deployment of the model, else
+/// estimated from the request's size. Counts against the key's limits like a request.
+#[utoipa::path(post, path = "/v1/messages/count_tokens", tag = "Inference", request_body = crate::openapi::CountTokensRequest,
+    responses(
+        (status = 200, description = "The token count.", body = TokenCount),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::AnthropicError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::AnthropicError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::error::AnthropicError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key_header" = []), ("virtual_key" = [])))]
+// The estimate is rough: about 4 bytes per token.
 pub async fn count_tokens(
     State(state): State<AppState>,
     ClientKey(key): ClientKey,
@@ -1249,7 +1307,13 @@ async fn count(
         return Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response());
     }
     let estimate = (body_len / 4).max(1);
-    Ok(Json(json!({ "input_tokens": estimate })).into_response())
+    Ok(Json(TokenCount { input_tokens: estimate }).into_response())
+}
+
+/// A token count, as Anthropic's API answers it.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct TokenCount {
+    input_tokens: usize,
 }
 
 #[cfg(test)]

@@ -63,6 +63,7 @@ pub(crate) struct ProjectDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     max_budget_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<crate::budget::BudgetPeriod>)]
     budget_period: Option<String>,
     /// The names of the guardrails every request of its keys goes through.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -182,6 +183,7 @@ pub(crate) struct KeyDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     max_budget_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<crate::budget::BudgetPeriod>)]
     budget_period: Option<String>,
     #[serde(default = "yes")]
     enabled: bool,

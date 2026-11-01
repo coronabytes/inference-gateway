@@ -1,3 +1,10 @@
+import type { components } from "./api.gen";
+
+/** The API's types, generated from the gateway's OpenAPI document (`npm run gen:api`). The few
+ * written out below are answers the gateway builds as plain JSON, which the document describes only
+ * as objects. */
+type S = components["schemas"];
+
 const TOKEN_KEY = "gw_admin_token";
 
 export function getToken(): string | null {
@@ -64,606 +71,128 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
 }
 
 /** `GET /admin/api/auth/session`: works signed out. */
-export interface SessionInfo {
-  authenticated: boolean;
-  via: "master_key" | "virtual_key" | "project_key" | "session" | "dev" | "dev_user" | null;
-  user: { id?: string; email?: string | null; name?: string | null } | null;
-  /** An admin may do everything; a user only works in `projects`. Null while signed out. */
-  role: "admin" | "user" | null;
-  /** A user's projects; null for an admin. */
-  projects: string[] | null;
-  sso: { display_name: string } | null;
-  /** Whether GATEWAY_MASTER_KEY is set; without it, single sign-on is the only sign-in. */
-  master_key: boolean;
-  /** Local development: the sign-in screen offers "Dev Login". */
-  dev: boolean;
-  /** The git tag the gateway was built from, e.g. `v1.0.0`, or `v1.0.0-16-ge9477e1` between tags. */
-  version: string;
-  /** Whether the API reference at /docs (and /openapi.json) is served. */
-  api_docs: boolean;
-}
+export type SessionInfo = S["SessionInfo"];
 
-export interface OidcSettings {
-  configured: boolean;
-  enabled: boolean;
-  display_name: string;
-  issuer_url: string;
-  client_id: string;
-  client_secret_set: boolean;
-  public_url: string;
-  redirect_uri: string | null;
-  /** ID token claim with the user's roles; a dotted path reaches nested claims. */
-  roles_claim: string;
-  /** The role that grants admin access. */
-  allowed_role: string | null;
-  /** The role that signs in as a user, who works only in the projects an admin adds them to. */
-  user_role: string | null;
-  updated_at: string | null;
-}
+export type OidcSettings = S["OidcSettingsView"];
 
-export interface OidcSettingsInput extends Omit<OidcSettings, "configured" | "client_secret_set" | "redirect_uri" | "updated_at"> {
-  /** Omitted keeps the stored secret; "" removes it. */
-  client_secret?: string;
-}
+export type OidcSettingsInput = S["OidcSettingsInput"];
 
-export interface AdminUser {
-  id: string;
-  issuer: string;
-  subject: string;
-  email: string | null;
-  name: string | null;
-  created_at: string;
-  last_login_at: string;
-  /** From their roles at their last sign-in. */
-  role: "admin" | "user";
-  /** The projects a user works in; empty for admins, who see every project. */
-  projects: string[];
-}
+export type AdminUser = S["PersonView"];
 
-export type Provider = "openai" | "azure" | "bedrock" | "anthropic" | "typesafe" | "mistral" | "vertex" | "gemini";
+export type Provider = S["ProviderKind"];
 /** Upstream protocol of a chat deployment. */
-export type ApiStyle = "chat" | "responses" | "anthropic" | "converse";
+export type ApiStyle = S["ApiStyle"];
 /** What a deployment serves: chat endpoints, /v1/embeddings, /v1/decisions and /v1/systemone, or /v1/rerank. */
-export type Mode = "chat" | "embedding" | "decision" | "rerank";
+export type Mode = S["Mode"];
 
-export interface DeploymentConfig {
-  api_style?: ApiStyle;
-  headers?: Record<string, string>;
-  max_tokens_field?: string;
-  default_max_tokens?: number;
-  thinking_mode?: string;
-  forward_sampling?: boolean;
-  aws_service?: string;
-  /** Bedrock with the Anthropic Messages protocol: Claude through InvokeModel, or bedrock-mantle (the default). */
-  bedrock_api?: "invoke" | "mantle";
-}
+export type DeploymentConfig = S["DeploymentConfig"];
 
-export interface Deployment {
-  id: string;
-  model_name: string;
-  mode: Mode;
-  /** Price catalog key, e.g. azure/gpt-4o for an Azure deployment with its own name. */
-  base_model: string | null;
-  /** Permission tags: a key with tags needs all of them to use this deployment. */
-  tags: string[];
-  /** Projects whose keys alone may use this deployment, whatever their tags; empty = any key. */
-  project_ids: string[];
-  provider: Provider;
-  upstream_model: string;
-  config: DeploymentConfig;
-  credential_id: string;
-  credential_name: string | null;
-  weight: number;
-  priority: number;
-  rpm_limit: number | null;
-  tpm_limit: number | null;
-  timeout_secs: number;
-  input_cost_per_mtok: number;
-  output_cost_per_mtok: number;
-  cache_read_cost_per_mtok: number | null;
-  cache_write_cost_per_mtok: number | null;
-  /** Input tokens above which the long_* prices apply to the whole request; null = one price tier. */
-  long_context_threshold: number | null;
-  long_input_cost_per_mtok: number | null;
-  long_output_cost_per_mtok: number | null;
-  long_cache_read_cost_per_mtok: number | null;
-  long_cache_write_cost_per_mtok: number | null;
-  /** USD per 1,000 searches: rerank queries, or the web searches a chat model runs. */
-  cost_per_k_searches: number | null;
-  enabled: boolean;
-  cooldown_secs: number | null;
-  /** Its recent calls, as adaptive routing sees them; absent without any. */
-  health?: DeploymentHealth | null;
-  /** The reasoning efforts it accepts, from its price catalog entry; absent while it is not loaded (disabled). */
-  reasoning_efforts?: ReasoningEffort[] | null;
-  created_at: string;
-  updated_at: string;
-}
+export type Deployment = S["DeploymentView"];
 
 /** A deployment's recent calls, each counting half as much a minute later. */
-export interface DeploymentHealth {
-  calls: number;
-  /** Share of the calls that failed with a rate limit, server error or timeout. */
-  error_rate: number;
-  /** Average time to first token of streamed responses. */
-  ttft_ms: number | null;
-  /** The share of its weight the deployment gets now: 1 when healthy, down to 0.05. */
-  weight_factor: number;
-}
+export type DeploymentHealth = S["HealthView"];
 
-export interface Secrets {
-  api_key?: string;
-  aws_access_key_id?: string;
-  aws_secret_access_key?: string;
-  aws_session_token?: string;
-  /** Vertex: the service account key file (JSON). */
-  google_service_account?: string;
-  /** Azure with Entra ID: the app registration's client secret, instead of an API key. */
-  client_secret?: string;
-}
+export type Secrets = S["Secrets"];
 
-export interface CredentialSettings {
-  /** openai/anthropic/mistral/gemini: API base; azure: resource endpoint (required); bedrock/vertex: optional endpoint override. */
-  base_url?: string;
-  /** Azure only. */
-  api_version?: string;
-  /** Bedrock (falls back to the AWS environment); Mistral: global, eu or us; Vertex: global, eu, us or a region. */
-  region?: string;
-  /** Vertex only; defaults to the service account's project. */
-  project_id?: string;
-  /** OpenAI-compatible only: the header the API key is sent in, as is, instead of `Authorization: Bearer`. */
-  auth_header?: string;
-  /**
-   * Azure and Vertex AI: "environment" signs in as the gateway's own identity, storing no secret.
-   * Azure: workload identity, AZURE_* variables or managed identity; Vertex AI: Application Default Credentials.
-   */
-  identity?: "environment";
-  /** Azure with Entra ID: the app registration's directory (tenant) ID or domain. */
-  tenant_id?: string;
-  /** Azure with Entra ID: the app registration's application (client) ID. */
-  client_id?: string;
-}
+export type CredentialSettings = S["CredentialSettings"];
 
 /** A deployment on an Azure credential's resource, read from Azure Resource Manager (Entra ID credentials only). */
-export interface FoundryDeployment {
-  /** The deployment name, sent as the upstream model. */
-  name: string;
-  /** The model deployed, e.g. gpt-4o. */
-  model: string;
-  model_version?: string;
-  /** The model's vendor, e.g. OpenAI, Anthropic, Cohere. */
-  format?: string;
-  /** Deployment type, e.g. GlobalStandard. */
-  sku?: string;
-  /** Data zone deployments: the zone, eu or us, from the resource's region. Their prices are keyed azure/eu/… and azure/us/…. */
-  data_zone?: "eu" | "us";
-  /** Requests and tokens per minute its quota allows. */
-  rpm?: number;
-  tpm?: number;
-  mode: Mode;
-  api_style?: ApiStyle;
-  state?: string;
-}
+export type FoundryDeployment = S["FoundryDeployment"];
 
 /** An AWS region the gateway's SDK knows (its built-in endpoint partitions). */
-export interface AwsRegion {
-  /** e.g. eu-central-1 */
-  id: string;
-  /** e.g. Europe (Frankfurt) */
-  name: string;
-  /** aws, aws-eusc (European Sovereign Cloud), aws-us-gov (GovCloud) or aws-cn (China). */
-  partition: string;
-}
+export type AwsRegion = S["AwsRegion"];
 
 /** A Bedrock model or inference profile a credential can call, with its account's quota in the credential's region. */
-export interface BedrockModel {
-  /** The model or inference profile ID, sent as the upstream model. */
-  id: string;
-  /** Display name, e.g. EU Anthropic Claude Sonnet 4. */
-  name: string;
-  provider?: string;
-  /** The model ID in the region, a geographic inference profile (eu., us., …) or the global one: each has its own quota. */
-  kind: "on_demand" | "cross_region" | "global";
-  mode: Mode;
-  /** Requests and tokens per minute the account's quota allows; shared by everything using the account. */
-  rpm?: number;
-  tpm?: number;
-  legacy: boolean;
-}
+export type BedrockModel = S["BedrockModel"];
 
-export interface BedrockModels {
-  region: string;
-  models: BedrockModel[];
-  /** Why the models or inference profiles could not be listed (e.g. a missing permission). */
-  models_error?: string;
-  /** Why the quotas could not be read. */
-  quotas_error?: string;
-}
+export type BedrockModels = S["BedrockModels"];
 
-export interface FoundryDeployments {
-  /** The resource's Azure Resource Manager ID. */
-  resource: string;
-  /** The resource's region, e.g. swedencentral. */
-  location?: string;
-  deployments: FoundryDeployment[];
-}
+export type FoundryDeployments = S["FoundryDeployments"];
 
-export interface Credential {
-  id: string;
-  name: string;
-  provider: Provider;
-  settings: CredentialSettings;
-  secrets_set: Record<keyof Secrets, boolean>;
-  /** Vertex: who the stored key file authenticates as. */
-  service_account?: { client_email: string; project_id: string | null };
-  deployments: number;
-  created_at: string;
-  updated_at: string;
-}
+export type Credential = S["CredentialView"];
 
-export type GuardrailProvider = "bedrock" | "mistral" | "model_armor";
+export type GuardrailProvider = S["GuardrailProvider"];
 
 /** USD per 1,000 text units (up to 1,000 characters each) for each kind of policy; images per image. */
-export interface GuardrailPrices {
-  content: number;
-  content_image: number;
-  topic: number;
-  sensitive_information: number;
-  word: number;
-  contextual_grounding: number;
-  automated_reasoning: number;
-  /** Mistral: per million input tokens. */
-  tokens: number;
-}
+export type GuardrailPrices = S["GuardrailPrices"];
 
-export interface GuardrailConfig {
-  /** Bedrock: the guardrail's id or ARN. */
-  guardrail_identifier?: string;
-  /** Bedrock: a version number, or DRAFT. */
-  guardrail_version?: string;
-  /** Mistral: the moderation model; mistral-moderation-latest when unset. */
-  model?: string;
-  /** Mistral: the categories that block; Model Armor: the filters that do. Others found are flagged. */
-  block?: string[];
-  /** Mistral: the score from which a category counts as found; Mistral's own decision when unset. */
-  threshold?: number;
-  /** Model Armor: the template's id. */
-  template?: string;
-  /** Model Armor: the template's location, such as europe-west4. */
-  location?: string;
-  /** Model Armor: the template's project; the service account's when unset. */
-  project_id?: string;
-}
+export type GuardrailConfig = S["GuardrailConfig"];
 
-export interface Guardrail {
-  id: string;
-  name: string;
-  description?: string;
-  provider: GuardrailProvider;
-  credential_id: string;
-  credential_name: string | null;
-  config: GuardrailConfig;
-  prices: GuardrailPrices;
-  created_at: string;
-  updated_at: string;
-}
+export type Guardrail = S["GuardrailView"];
 
 /** A guardrail in `GET /guardrails`: with the projects and keys whose every request it screens, by name. */
-export interface GuardrailListItem extends Guardrail {
-  enforced_on: { projects: string[]; keys: string[] };
-}
+export type GuardrailListItem = S["GuardrailListItem"];
 
 /** The header in which a request asks for guardrails by name, on top of those enforced on its key. */
 export const GUARDRAILS_HEADER = "x-gateway-guardrails";
 
-export interface GuardrailInput {
-  name: string;
-  description?: string;
-  provider?: GuardrailProvider;
-  credential_id: string;
-  config: GuardrailConfig;
-  prices?: GuardrailPrices;
-}
+export type GuardrailInput = S["GuardrailInput"];
 
-export interface GuardrailFinding {
-  policy: "content" | "topic" | "word" | "pii" | "regex" | "grounding" | "moderation" | "pi_and_jailbreak" | "rai" | "malicious_uris" | "csam" | "sdp";
-  kind: string;
-  action: string;
-  matched?: string;
-  confidence?: string;
-}
+export type GuardrailFinding = S["Finding"];
 
 /** What `POST /guardrails/{id}/test` answers. */
-export interface GuardrailTestResult {
-  ok: boolean;
-  latency_ms: number;
-  action?: "passed" | "flagged" | "masked" | "blocked";
-  outputs?: string[];
-  findings?: GuardrailFinding[];
-  usage?: Record<string, number>;
-  cost_usd?: number;
-  status?: number;
-  error?: string;
-}
+export type GuardrailTestResult = S["GuardrailTestResult"];
 
-export type McpAuth = "none" | "bearer" | "header" | "oauth" | "oauth_user";
+export type McpAuth = S["McpAuth"];
 
-/** The request labels an `oauth_user` upstream tells a key's sign-ins apart by: one per tenant, or per tenant and user. */
+/** The request labels an `oauth_user` upstream tells a key's sign-ins apart by: one per tenant, or per tenant and user.
+ * The API takes any list of labels (`OAuthConfig.sign_in_by`); these are the ones the console offers. */
 export type SignInBy = [] | ["tenant"] | ["tenant", "user"];
 
 /** An upstream's OAuth client, for `oauth` (client credentials) and `oauth_user` (each key signs in). */
-export interface OAuthConfig {
-  token_url: string;
-  authorization_url?: string;
-  client_id: string;
-  scopes: string[];
-  /** The RFC 8707 resource the tokens are for. */
-  resource?: string;
-  /** The redirect URI the client was registered with. */
-  redirect_uri?: string;
-  token_auth?: "client_secret_basic" | "client_secret_post" | "none";
-  /** For `oauth_user`: the request labels that tell a key's sign-ins apart. Empty or absent: the key signs in once. */
-  sign_in_by?: SignInBy;
-  /** For `oauth_user`: days a sign-in is kept unused before it is deleted, 1 to 90 (7 when absent). */
-  sign_in_retention_days?: number;
-}
+export type OAuthConfig = S["OAuthConfig"];
 
 /** What `POST /oauth/discover` found. */
-export interface OAuthDiscovered {
-  token_url?: string;
-  authorization_url?: string;
-  registration_url?: string;
-  scopes: string[];
-  resource?: string;
-  token_auth_methods: string[];
-  /** The authorization server takes client ID metadata documents (CIMD) as client IDs. */
-  client_metadata_documents: boolean;
-  client_id?: string;
-  client_secret?: string;
-  redirect_uri?: string;
-  /** How the gateway got `client_id`: its metadata document's URL, or registration. */
-  client?: "metadata_document" | "registered";
-}
+export type OAuthDiscovered = S["Discovered"];
 
-/** An upstream a key signs in to on its own (`GET /keys/{id}/connections`). */
 /** An MCP client signed in to the gateway with OAuth as a key (`GET /keys/{id}/apps`). */
-export interface ClientGrant {
-  id: string;
-  key_id: string;
-  /** The client's metadata document URL. */
-  client_id: string;
-  client_name?: string;
-  redirect_uri: string;
-  /** `/mcp`, `/mcp/{server}`, or `/` for every MCP endpoint. */
-  resource: string;
-  created_by?: string;
-  created_at: string;
-  last_used_at?: string;
-}
+export type ClientGrant = S["ClientGrant"];
 
 /** An MCP client's sign-in waiting for approval (`GET /connect/{id}`). */
-export interface ConnectRequest {
-  client_id: string;
-  client_host: string;
-  client_name?: string;
-  client_uri?: string;
-  redirect_uri: string;
-  redirect_host: string;
-  /** It returns to a program on this computer. */
-  redirect_local: boolean;
-  /** It returns to another host than the client's own. */
-  redirect_elsewhere: boolean;
-  resource: string;
-}
+export type ConnectRequest = S["ConnectRequest"];
 
-export interface KeyConnection {
-  kind: "mcp" | "a2a";
-  upstream_id: string;
-  name: string;
-  connected: boolean;
-  signed_in_at?: string;
-  /** When the key's sign-in was last used, at most an hour off. */
-  last_used_at?: string;
-  expires_at?: string;
-  refreshable: boolean;
-  scope?: string;
-  connected_by?: string;
-  /** The request labels that tell the key's sign-ins apart; absent where the key signs in once. */
-  sign_in_by?: SignInBy;
-  /** How many sign-ins the key has by those labels. */
-  sign_ins?: number;
-}
+/** An upstream a key signs in to on its own (`GET /keys/{id}/connections`). */
+export type KeyConnection = S["Connection"];
 
 /** One of a key's sign-ins per tenant or user (`GET /keys/{id}/connections/{kind}/{upstream}/sign-ins`). */
-export interface SignIn {
-  /** `tenant=…,user=…`. */
-  labels: string;
-  signed_in_at: string;
-  /** When it was last used, at most an hour off. */
-  last_used_at: string;
-  expires_at?: string;
-  refreshable: boolean;
-  scope?: string;
-  connected_by?: string;
-}
+export type SignIn = S["SignIn"];
 
 /** An MCP server the gateway proxies at `/mcp/{name}` (`GET /mcp-servers`). */
-export interface McpServer {
-  id: string;
-  name: string;
-  description?: string;
-  url: string;
-  auth: McpAuth;
-  /** The header that carries the secret, for `header` auth. */
-  auth_header?: string;
-  /** Whether a secret is stored; the secret itself is never returned. */
-  has_secret: boolean;
-  oauth?: OAuthConfig;
-  tags: string[];
-  project_ids: string[];
-  timeout_secs: number;
-  enabled: boolean;
-  /** The tools keys may call; empty for every tool the server offers. */
-  allowed_tools: string[];
-  /** Tools keys may not call, whatever `allowed_tools` says. */
-  denied_tools: string[];
-  /** USD per tool call, unless `tool_prices` names the tool. */
-  price_per_call: number;
-  tool_prices: Record<string, number>;
-  created_at: string;
-  updated_at: string;
-}
+export type McpServer = S["McpServerView"];
 
-export interface McpServerInput {
-  name: string;
-  description?: string;
-  url: string;
-  auth: McpAuth;
-  auth_header?: string;
-  /** Omitted on update: the stored secret stays. */
-  secret?: string;
-  oauth?: OAuthConfig;
-  tags: string[];
-  project_ids: string[];
-  timeout_secs: number;
-  enabled: boolean;
-  allowed_tools: string[];
-  denied_tools: string[];
-  price_per_call: number;
-  tool_prices: Record<string, number>;
-}
+export type McpServerInput = S["McpServerInput"];
 
-/** What `POST /mcp-servers/{id}/test` answers. */
 /** A tool router route: one MCP server's tools, offered when the decision model finds them needed. */
-export interface ToolRoute {
-  name: string;
-  description: string;
-  server_id: string;
-  /** Empty for all of the server's tools. */
-  tools: string[];
-}
+export type ToolRoute = S["ToolRoute"];
 
 /** A tool router (`GET /tool-routers`): requests name it like an MCP server. */
-export interface ToolRouter {
-  id: string;
-  name: string;
-  description?: string;
-  decision_model: string;
-  instructions?: string;
-  routes: ToolRoute[];
-  threshold: number;
-  max_routes?: number;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type ToolRouter = S["ToolRouterView"];
 
-export type ToolRouterInput = Omit<ToolRouter, "id" | "created_at" | "updated_at" | "description" | "instructions" | "max_routes"> & {
-  description: string | null;
-  instructions: string | null;
-  max_routes: number | null;
-};
+export type ToolRouterInput = S["ToolRouterInput"];
 
-export interface McpServerTestResult {
-  ok: boolean;
-  latency_ms: number;
-  protocol_version?: string;
-  server_info?: { name?: string; version?: string };
-  tools: { name: string; description?: string }[];
-  error?: string;
-}
+/** What `POST /mcp-servers/{id}/test` answers. */
+export type McpServerTestResult = S["McpServerTestResult"];
 
 /** An A2A agent the gateway proxies at `/a2a/{name}` (`GET /a2a-agents`). */
-export interface A2aAgent {
-  id: string;
-  name: string;
-  description?: string;
-  card_url: string;
-  auth: McpAuth;
-  auth_header?: string;
-  /** Whether a secret is stored; the secret itself is never returned. */
-  has_secret: boolean;
-  oauth?: OAuthConfig;
-  tags: string[];
-  project_ids: string[];
-  timeout_secs: number;
-  /** USD per message sent to the agent. */
-  price_per_message: number;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type A2aAgent = S["A2aAgentView"];
 
-export interface A2aAgentInput {
-  name: string;
-  description?: string;
-  card_url: string;
-  auth: McpAuth;
-  auth_header?: string;
-  /** Omitted on update: the stored secret stays. */
-  secret?: string;
-  oauth?: OAuthConfig;
-  tags: string[];
-  project_ids: string[];
-  timeout_secs: number;
-  price_per_message: number;
-  enabled: boolean;
-}
+export type A2aAgentInput = S["A2aAgentInput"];
 
 /** What `POST /a2a-agents/{id}/test` answers: the agent's card, as far as the gateway proxies it. */
-export interface A2aAgentTestResult {
-  ok: boolean;
-  latency_ms: number;
-  name?: string;
-  description?: string;
-  version?: string;
-  interfaces?: { binding: "JSONRPC" | "HTTP+JSON"; version: string; url: string }[];
-  skills?: { name: string; description?: string }[];
-  error?: string;
-}
+export type A2aAgentTestResult = S["A2aAgentTestResult"];
 
-export interface CredentialInput {
-  name: string;
-  provider?: Provider;
-  settings: CredentialSettings;
-  /** On update, omitted fields are kept and empty strings clear them. */
-  secrets: Secrets;
-}
+export type CredentialInput = S["CredentialInput"];
 
 /** A tag and how many deployments, routers, MCP servers and keys carry it (`GET /tags`). */
-export interface TagInfo {
-  tag: string;
-  deployments: number;
-  routers: number;
-  mcp_servers: number;
-  keys: number;
-}
+export type TagInfo = S["TagUsage"];
 
 /** A key or project as a picker offers it (`GET /keys/options`, `GET /projects/options`). */
-export interface NamedItem {
-  id: string;
-  name: string;
-  /** A key's project. */
-  project_id?: string;
-}
+export type NamedItem = S["NamedItem"];
 
 /** What the playground offers for a key (`GET /playground/options`). */
-export interface PlaygroundOptions {
-  /** `web_search`: requests may have it search the web (it has a web search, and the key and its project allow it). */
-  models: { name: string; mode: Mode; router: boolean; web_search: boolean }[];
-  /** Those enforced on the key or its project always apply. */
-  guardrails: { name: string; enforced: boolean }[];
-  /** The MCP servers and A2A agents the key may use; `needs_sign_in`: the key signs in itself, and has not yet. */
-  mcp_servers: PlaygroundUpstream[];
-  a2a_agents: PlaygroundUpstream[];
-}
+export type PlaygroundOptions = S["PlaygroundOptions"];
 
-export interface PlaygroundUpstream {
-  name: string;
-  needs_sign_in: boolean;
-  /** A tool router, listed with the MCP servers. */
-  router?: boolean;
-}
+export type PlaygroundUpstream = S["PlaygroundUpstream"];
 
 /** Puts a list filter in a query as `a,b`, with `none` (a value that cannot be an id or a tag) sent as `-`. */
 export function setListParam(q: URLSearchParams, name: string, values: string[], none?: string) {
@@ -678,117 +207,32 @@ export function keyAllows(key: Pick<VirtualKey, "allowed_tags" | "project_id">, 
   return key.allowed_tags.length === 0 || d.tags.every((t) => key.allowed_tags.includes(t));
 }
 
-export type DeploymentInput = Omit<Deployment, "id" | "credential_name" | "cooldown_secs" | "health" | "created_at" | "updated_at">;
+export type DeploymentInput = S["DeploymentInput"];
 
-export type BudgetPeriod = "day" | "week" | "month";
+export type BudgetPeriod = S["BudgetPeriod"];
 
 /** What a key may call: the inference API, the admin API, or both; `project` is the admin API for
  * the key's project only, with the rights of a user who works in it. */
-export type KeyScope = "inference" | "admin" | "all" | "project";
+export type KeyScope = S["KeyScope"];
 
 /** Whether a key with this scope calls models. */
 export const callsModels = (s: KeyScope) => s === "inference" || s === "all";
 
-export interface BudgetStatus {
-  period: BudgetPeriod;
-  limit_usd: number;
-  spent_usd: number;
-  resets_at: string;
-}
+export type BudgetStatus = S["BudgetStatus"];
 
-export interface VirtualKey {
-  id: string;
-  name: string;
-  key_prefix: string;
-  scope: KeyScope;
-  /** The project the key is grouped under; null for none. */
-  project_id: string | null;
-  /** False while the key's project is inactive: the key is then refused. */
-  project_active: boolean;
-  allowed_models: string[];
-  /** Deployment tags the key holds; empty = every deployment. */
-  allowed_tags: string[];
-  rpm_limit: number | null;
-  tpm_limit: number | null;
-  /** Budget per `budget_period`; null = unlimited. */
-  max_budget_usd: number | null;
-  budget_period: BudgetPeriod | null;
-  /** Lifetime spend. */
-  spend_usd: number;
-  spend_reset_at: string | null;
-  /** Current budget period and its spend; null for unlimited keys. */
-  budget: BudgetStatus | null;
-  enabled: boolean;
-  expires_at: string | null;
-  metadata: Record<string, unknown>;
-  /** Guardrails every request of the key goes through, on top of its project's. */
-  guardrail_ids: string[];
-  /** Requests may have the model search the web, unless the key's project forbids it. */
-  web_search: boolean;
-  /** Its prompts and responses are logged, for debugging, where its project allows it. */
-  prompt_logging: boolean;
-  /** Whether they are logged now: its own switch where the project allows it, always where the project forces it. */
-  prompt_logged: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type VirtualKey = S["KeyView"];
 
 /** Whether a project's keys' prompts and responses are logged: never, those that opt in, or all. */
-export type PromptLogging = "deny" | "allow" | "force";
+export type PromptLogging = S["PromptLogging"];
 
 /** A group of keys. While inactive, its keys are refused like disabled ones; it grants and limits nothing. */
-export interface Project {
-  id: string;
-  name: string;
-  description: string | null;
-  /** While false, the project's keys are refused like disabled keys. */
-  enabled: boolean;
-  /** Budget per `budget_period`, on top of each key's own; null = unlimited. */
-  max_budget_usd: number | null;
-  budget_period: BudgetPeriod | null;
-  spend_reset_at: string | null;
-  /** Current budget period and its spend; null for unlimited projects. */
-  budget: BudgetStatus | null;
-  /** How many keys it groups. */
-  keys: number;
-  /** Guardrails every request of the project's keys goes through. */
-  guardrail_ids: string[];
-  /** While false, no key in the project may have the model search the web, whatever its own setting. */
-  web_search: boolean;
-  /** Whether its keys' prompts and responses are logged, for debugging. */
-  prompt_logging: PromptLogging;
-  created_at: string;
-  updated_at: string;
-}
+export type Project = S["ProjectView"];
 
-export interface ProjectInput {
-  name: string;
-  description: string | null;
-  enabled: boolean;
-  max_budget_usd: number | null;
-  budget_period: BudgetPeriod | null;
-  guardrail_ids?: string[];
-  web_search: boolean;
-  prompt_logging: PromptLogging;
-}
+export type ProjectInput = S["ProjectInput"];
 
-export interface KeyInput {
-  name: string;
-  scope: KeyScope;
-  project_id: string | null;
-  allowed_models: string[];
-  allowed_tags: string[];
-  rpm_limit: number | null;
-  tpm_limit: number | null;
-  max_budget_usd: number | null;
-  budget_period: BudgetPeriod | null;
-  expires_at: string | null;
-  enabled: boolean;
-  /** Admins only; omitted, the key keeps its guardrails. */
-  guardrail_ids?: string[];
-  web_search: boolean;
-  prompt_logging: boolean;
-}
+export type KeyInput = S["KeyInput"];
+
+// `GET /metrics` builds its answer as plain JSON.
 
 export interface Totals {
   requests: number;
@@ -828,61 +272,27 @@ export interface Metrics {
 }
 
 /** Every reasoning effort OpenAI's and Anthropic's APIs take, in order. `none` turns reasoning off (no thinking for Anthropic models). */
-export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort = S["ReasoningEffort"];
 
-export interface RouteModel {
-  model: string;
-  /** Replaces the client's effort on requests to this model; unset keeps it. */
-  reasoning_effort?: ReasoningEffort | null;
-}
+export type RouteModel = S["RouteModel"];
 
 /** A named pool of chat models; the decision model picks a route by name, then one of its models serves. */
-export interface Route {
-  name: string;
-  description: string;
-  models: RouteModel[];
-}
+export type Route = S["Route"];
 
-export interface AutoRouter {
-  id: string;
-  model_name: string;
-  decision_model: string;
-  instructions: string | null;
-  routes: Route[];
-  /** The name of the route used when the decision fails; the first route when null. */
-  fallback_route: string | null;
-  /** Permission tags, with the same rule as a deployment's. */
-  tags: string[];
-  enabled: boolean;
-  /** Conversations stay on the route and model their first turn was sent to. */
-  sticky: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type AutoRouter = S["RouterView"];
 
-export type RouterInput = Omit<AutoRouter, "id" | "created_at" | "updated_at">;
+export type RouterInput = S["RouterInput"];
 
 /** A router in `GET /routers`: with the models it names that no deployment serves. */
-export interface AutoRouterListItem extends AutoRouter {
-  missing: string[];
-}
+export type AutoRouterListItem = S["RouterListItem"];
 
 /** A model name that serves another model: a deployment's or an auto router's, named by its id. */
-export interface ModelAlias {
-  id: string;
-  model_name: string;
-  /** The deployment or router whose model the alias serves; it follows that model's renames. */
-  target_id: string;
-  /** The target's model name now; null once the target is deleted. */
-  target: string | null;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type ModelAlias = S["AliasView"];
 
-export type AliasInput = Pick<ModelAlias, "model_name" | "target_id" | "enabled">;
+export type AliasInput = S["AliasInput"];
 
-/** What each guardrail of a logged request was given, found, did and answered. */
+/** What each guardrail of a logged request was given, found, did and answered. The gateway stores
+ * these steps as plain JSON with the request, so the document does not describe them. */
 export interface GuardrailStep {
   guardrail: string;
   provider: string;
@@ -899,79 +309,14 @@ export interface GuardrailStep {
 }
 
 /** A logged request's prompt and response (`/logs/{id}/bodies`). */
-export interface LogBodies {
-  request: unknown;
-  screened_request: unknown;
-  guardrails: GuardrailStep[] | null;
-  response: unknown;
-  request_bytes: number;
-  response_bytes: number;
-  status: "stored" | "truncated" | null;
-  previous: string | null;
-  next: string | null;
-}
+export type LogBodies = Omit<S["BodiesView"], "guardrails"> & { guardrails: GuardrailStep[] | null };
 
-export interface LogRow {
-  id: string;
-  ts: string;
-  key_id: string | null;
-  key_name: string | null;
-  model_name: string;
-  deployment_id: string | null;
-  provider: string | null;
-  /** The deployment's provider model and credential, as configured now; null once it is deleted. */
-  upstream_model: string | null;
-  credential_name: string | null;
-  /** The tools its response called, where its prompt and response are logged. */
-  tool_calls: string[] | null;
-  /** The tool an MCP call (api `mcp`) called, on the server named by `model_name`. */
-  tool: string | null;
-  /** A message to an A2A agent (api `a2a`): the state its task was left in, such as `completed`. */
-  task_state: string | null;
-  /** A message to an A2A agent: its context, shared by a conversation's messages. */
-  context_id: string | null;
-  api: string;
-  stream: boolean;
-  status_code: number;
-  latency_ms: number;
-  ttft_ms: number | null;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  cost_usd: number;
-  attempts: number;
-  error: string | null;
-  /** Set on the calls of a routed request: the id of the router's entry. */
-  parent_id: string | null;
-  /** The labels the client sent (`x-gateway-labels`). */
-  labels: Record<string, string> | null;
-  /** What the guardrails did to the prompt; never the text they matched. */
-  guardrails: { applied: string[]; action: "passed" | "flagged" | "masked" | "blocked"; findings: string[] } | null;
-  /** The guardrails' part of `cost_usd`. */
-  guardrail_cost_usd: number;
-  /** Searches billed: web searches a chat model ran, or a rerank model's searches. */
-  searches: number;
-  /** The searches' part of `cost_usd`. */
-  search_cost_usd: number;
-  /** Prompt logging: whether its prompt and response were stored, and what became of them. */
-  bodies: "stored" | "truncated" | "expired" | "dropped" | "deleted" | null;
-}
+export type LogRow = S["LogRow"];
 
 /** An audit log entry: who changed what through the admin API. */
-export interface AuditEntry {
-  id: string;
-  ts: string;
-  actor_kind: "master_key" | "virtual_key" | "session" | "dev" | "system";
-  actor_id: string | null;
-  actor_name: string | null;
-  action: string;
-  target_type: string;
-  target_id: string | null;
-  target_name: string | null;
-  /** For an update, the changed fields as `{ field: { from, to } }`; for a create, the new object. */
-  details: Record<string, unknown>;
-}
+export type AuditEntry = S["AuditEntry"];
+
+// `GET /cluster` builds its answer as plain JSON.
 
 export interface Instance {
   id: string;
@@ -1007,58 +352,21 @@ export interface InstanceSettings {
 }
 
 /** The settings every replica applies (`/settings`), changed in the console without a restart. */
-export interface GatewaySettings {
-  max_attempts: number;
-  cooldown_secs: number;
-  adaptive_routing: boolean;
-  sticky_routing: boolean;
-  reload_secs: number;
-  request_log_retention_days: number;
-  audit_log_retention_days: number;
-  /** Days logged prompts and responses are kept: 1 to 60, and no longer than the request log. */
-  prompt_log_retention_days: number;
-  /** Largest logged request or response, in KB; longer strings in it are cut. */
-  prompt_log_max_kb: number;
-  response_ttl_minutes: number;
-  conversation_quota_mb: number;
-  max_body_mb: number;
-  header_timeout_secs: number;
-  body_timeout_secs: number;
-  max_connections: number;
-  api_docs: boolean;
-  price_import: boolean;
-  price_import_hours: number;
-  /** After every import, deployments whose prices no longer match the catalog take its prices. */
-  price_auto_accept: boolean;
-  /** Prompt logging for keys outside projects; projects set their own. Never `force`. */
-  prompt_logging: Exclude<PromptLogging, "force">;
-}
+export type GatewaySettings = S["Settings"];
 
-export interface GatewaySettingsView {
-  settings: GatewaySettings;
-  defaults: GatewaySettings;
-  updated_at: string | null;
-}
+export type GatewaySettingsView = S["SettingsView"];
 
-/** One LiteLLM catalog entry, stored as is (per-token USD prices, limits, capabilities). */
+/** One LiteLLM catalog entry, stored as is (per-token USD prices, limits, capabilities). `GET /prices`
+ * builds its answer as plain JSON. */
 export interface PriceEntry {
   key: string;
   data: Record<string, unknown>;
 }
 
-export interface PriceImport {
-  imported_at: string;
-  source: string;
-  total: number;
-  added: number;
-  updated: number;
-  removed: number;
-}
+export type PriceImport = S["PriceImport"];
 
 /** What a manual import changed: with `price_auto_accept` on, also the deployments that took the new prices. */
-export interface ImportSummary extends PriceImport {
-  accepted?: number;
-}
+export type ImportSummary = S["ImportSummary"];
 
 export interface PriceSearch {
   total: number;
@@ -1072,47 +380,17 @@ export interface PriceSearch {
 }
 
 /** `GET /admin/api/hub`: the models the gateway serves, or those one key may use. */
-export interface Hub {
-  key?: HubKey;
-  /** Enforced ones (`applied` key or project) first, then those a client may ask for. */
-  guardrails: HubGuardrail[];
-  models: HubModel[];
-  /** Models before the mode, vendor and search filters. */
-  total: number;
-  /** The modes (`router` for auto routers) and vendors among those, for the filters. */
-  modes: string[];
-  vendors: string[];
-}
+export type Hub = Omit<S["HubView"], "models"> & { models: HubModel[] };
 
-export interface HubKey {
-  id: string;
-  name: string;
-  scope: KeyScope;
-  project: string | null;
-  status: "active" | "disabled" | "expired" | "project inactive" | "no inference";
-  allowed_models: string[];
-  allowed_tags: string[];
-}
+export type HubKey = S["HubKey"];
 
-export interface HubGuardrail {
-  id: string;
-  name: string;
-  description?: string;
-  provider: GuardrailProvider;
-  applied: "key" | "project" | "on request";
-  prices: GuardrailPrices;
-}
+export type HubGuardrail = S["HubGuardrail"];
 
 /** What the hub knows of a model or a deployment; null is unknown. */
-export interface HubLimits {
-  max_input_tokens: number | null;
-  max_output_tokens: number | null;
-  retires: string | null;
-  /** Chat models: capabilities by path, such as `image_input` and `thinking.supported`. */
-  capabilities: Record<string, boolean | null> | null;
-}
+export type HubLimits = S["Described"];
 
-/** A model's own description, kept by the gateway. */
+/** A model's own description, kept by the gateway. It is free-form JSON (admins may add any field),
+ * so the document leaves it open; these are the fields the console reads. */
 export interface ModelMetadata {
   display_name?: string;
   /** Who makes the model, such as Anthropic or Google; not who hosts it. */
@@ -1121,58 +399,12 @@ export interface ModelMetadata {
   [field: string]: unknown;
 }
 
-export interface HubModel extends HubLimits {
-  name: string;
-  /** For a model alias, what its target is. */
-  kind: "model" | "router";
-  mode: Mode;
-  metadata: ModelMetadata;
-  /** Who makes it: the metadata's vendor, or without one the vendor its names suggest. */
-  vendor?: string;
-  tags: string[];
-  /** Set for a model alias: the model name it serves. */
-  target?: string;
-  /** An auto router's models that the key reaches. */
-  routes?: string[];
-  /** Lowest priority (tried first) first. */
-  deployments: HubDeployment[];
-  /** With `stats=true`, when it had requests in the last 24 hours. */
-  stats?: HubStats;
-}
+export type HubModel = Omit<S["HubModel"], "metadata"> & { metadata: ModelMetadata };
 
 /** A model's requests over the last 24 hours. */
-export interface HubStats {
-  requests: number;
-  errors: number;
-  p50_latency_ms?: number;
-  tokens_per_second?: number;
-  /** `[requests, errors]` per hour, oldest first; the last is the current hour. */
-  hours: [number, number][];
-}
+export type HubStats = S["HubStats"];
 
-export interface HubDeployment extends HubLimits {
-  id: string;
-  /** The model name it is deployed under; differs from the model's for an auto router. */
-  model: string;
-  provider: Provider;
-  upstream_model: string;
-  priority: number;
-  weight: number;
-  first_choice: boolean;
-  tags: string[];
-  prices: HubPrices;
-}
+export type HubDeployment = S["HubDeployment"];
 
 /** USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches. */
-export interface HubPrices {
-  input: number;
-  output: number;
-  cache_read: number;
-  cache_write: number;
-  long_context_threshold?: number;
-  long_input?: number;
-  long_output?: number;
-  long_cache_read?: number;
-  long_cache_write?: number;
-  per_k_searches: number;
-}
+export type HubPrices = S["HubPrices"];

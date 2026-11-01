@@ -1,0 +1,11 @@
+{
+  "name": "gen-api",
+  "private": true,
+  "version": "1.0.0",
+  "license": "AGPL-3.0-only",
+  "description": "openapi-typescript, which generates src/api.gen.ts from openapi.json (npm run gen:api). It needs TypeScript 5's compiler API, which TypeScript 7 no longer has, so it gets its own TypeScript here.",
+  "dependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

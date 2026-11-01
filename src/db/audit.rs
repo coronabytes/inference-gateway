@@ -14,15 +14,19 @@ pub struct AuditEntry {
     /// (the gateway's scheduled work).
     pub actor_kind: String,
     /// The admin user or virtual key.
+    #[schema(required)]
     pub actor_id: Option<Uuid>,
     /// The admin's email or name, or the virtual key's name.
+    #[schema(required)]
     pub actor_name: Option<String>,
     /// `create`, `update`, `delete`, `regenerate`, `reset_spend`, `import`, `sign_in`, ...
     pub action: String,
     /// `credential`, `deployment`, `router`, `key`, `project`, `configuration`, `price_catalog`,
     /// `oidc_settings`, `admin` or `session`.
     pub target_type: String,
+    #[schema(required)]
     pub target_id: Option<Uuid>,
+    #[schema(required)]
     pub target_name: Option<String>,
     /// For an update, the changed fields as `{"field": {"from": .., "to": ..}}`; for a create,
     /// the new object. Never secrets.

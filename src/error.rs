@@ -3,7 +3,7 @@ use axum::{
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use serde_json::json;
+use serde::Serialize;
 
 /// Which client dialect an error should be rendered in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,15 +168,16 @@ impl GatewayError {
     }
 
     pub fn body(&self, dialect: Dialect) -> serde_json::Value {
-        match dialect {
-            Dialect::Anthropic => json!({
-                "type": "error",
-                "error": { "type": self.anthropic_type(), "message": self.message }
+        let message = self.message.clone();
+        let body = match dialect {
+            Dialect::Anthropic => {
+                serde_json::to_value(AnthropicError { kind: "error", error: AnthropicErrorDetail { kind: self.anthropic_type(), message } })
+            }
+            Dialect::OpenAi => serde_json::to_value(OpenAiError {
+                error: OpenAiErrorDetail { message, kind: self.openai_type(), param: None, code: self.code },
             }),
-            Dialect::OpenAi => json!({
-                "error": { "message": self.message, "type": self.openai_type(), "param": null, "code": self.code }
-            }),
-        }
+        };
+        body.expect("error bodies serialize")
     }
 
     pub fn into_response_for(self, dialect: Dialect) -> Response {
@@ -188,6 +189,41 @@ impl GatewayError {
         }
         resp
     }
+}
+
+/// An error, in the OpenAI API's format.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OpenAiError {
+    error: OpenAiErrorDetail,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct OpenAiErrorDetail {
+    message: String,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    /// Always null: the gateway does not say which parameter was wrong.
+    #[schema(required)]
+    param: Option<String>,
+    /// Such as `content_filter`, when a guardrail refused the prompt.
+    #[schema(required)]
+    code: Option<&'static str>,
+}
+
+/// An error, in the Anthropic API's format.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct AnthropicError {
+    /// Always `error`.
+    #[serde(rename = "type")]
+    kind: &'static str,
+    error: AnthropicErrorDetail,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct AnthropicErrorDetail {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    message: String,
 }
 
 fn extract_message(body: &str) -> Option<String> {
@@ -256,13 +292,32 @@ impl From<sqlx::Error> for AdminError {
 
 impl IntoResponse for AdminError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({ "error": self.1 }))).into_response()
+        (self.0, Json(AdminErrorBody { error: self.1 })).into_response()
     }
+}
+
+/// An admin API error.
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = AdminError)]
+pub struct AdminErrorBody {
+    error: String,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::extract_message;
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn error_bodies() {
+        let e = GatewayError::content_filter("no");
+        assert_eq!(
+            e.body(Dialect::OpenAi),
+            json!({ "error": { "message": "no", "type": "invalid_request_error", "param": null, "code": "content_filter" } })
+        );
+        assert_eq!(e.body(Dialect::Anthropic), json!({ "type": "error", "error": { "type": "invalid_request_error", "message": "no" } }));
+    }
 
     #[test]
     fn upstream_error_messages() {

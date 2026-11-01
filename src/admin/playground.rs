@@ -62,7 +62,16 @@ pub(crate) struct PlaygroundGuardrail {
     enforced: bool,
 }
 
-/// `GET /admin/api/playground/options?key_id=…`.
+/// Playground options
+///
+/// The models a key may call, with their modes, the guardrails a request may ask for (those
+/// the key or its project enforce marked), and the MCP servers and A2A agents it may use.
+#[utoipa::path(get, path = "/playground/options", tag = "Playground", params(PlaygroundQuery),
+    responses(
+        (status = 200, description = "The key's models, guardrails, MCP servers and A2A agents.", body = PlaygroundOptions),
+        (status = 404, description = "No such key, or not one of the caller's.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn playground_options(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -124,8 +133,15 @@ fn playground_key(state: &AppState, access: &Access, id: Uuid) -> Result<std::sy
     crate::auth::key_by_id(state, id).map_err(not_found)
 }
 
-/// `POST /admin/api/playground/a2a/{agent}?key_id=…`: a JSON-RPC call of the agent as the key,
-/// as at `/a2a/{agent}`, logged and charged as there.
+/// Playground: an A2A agent
+///
+/// A JSON-RPC call of an A2A agent as a chosen virtual key, as at `/a2a/{agent}`: logged,
+/// counted against the key's limits and charged the agent's price.
+#[utoipa::path(post, path = "/playground/a2a/{agent}", tag = "Playground",
+    params(("agent" = String, Path), PlaygroundQuery),
+    request_body = Object,
+    responses((status = 200, description = "The agent's answer, or its event stream.", body = Object)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn playground_a2a(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -140,7 +156,13 @@ pub(super) async fn playground_a2a(
     }
 }
 
-/// `GET /admin/api/playground/a2a/{agent}/card?key_id=…`: the agent's card as the key gets it.
+/// Playground: an A2A agent's card
+///
+/// The agent's card as a chosen virtual key gets it at `/a2a/{agent}/.well-known/agent-card.json`.
+#[utoipa::path(get, path = "/playground/a2a/{agent}/card", tag = "Playground",
+    params(("agent" = String, Path), PlaygroundQuery),
+    responses((status = 200, description = "The agent card, with the gateway's addresses.", body = Object)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn playground_a2a_card(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -155,11 +177,17 @@ pub(super) async fn playground_a2a_card(
     }
 }
 
-/// `POST /admin/api/playground/{chat|responses|messages|embeddings|rerank|decisions|systemone|models|models-extended}?key_id=…`
-/// — the admin UI's playground. Runs the normal inference pipeline as the chosen virtual key,
-/// so its model access, rate limits, budget and request logging all apply. `models` and
-/// `models-extended` answer as `GET /v1/models` and `GET /v1/models-extended` do for the key,
-/// and ignore the body.
+/// Playground
+///
+/// Runs an inference request as a chosen virtual key, with its limits, budget and logging.
+/// `api` is `chat`, `responses`, `messages`, `embeddings`, `rerank`, `decisions` or `systemone`; the
+/// body is that endpoint's. `models` and `models-extended` list the key's models as
+/// `GET /v1/models` and `GET /v1/models-extended` do; their body is ignored.
+#[utoipa::path(post, path = "/playground/{api}", tag = "Playground",
+    params(("api" = String, Path), PlaygroundQuery),
+    request_body = Object,
+    responses((status = 200, description = "The endpoint's answer.", body = crate::openapi::ProviderAnswer)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn playground(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,

@@ -16,6 +16,18 @@ use crate::{
     state::AppState,
 };
 
+/// What the guardrails did to a request, as its request log entry keeps it: never the text they
+/// matched.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct GuardrailSummary {
+    /// The guardrails that checked the prompt, by name.
+    applied: Vec<String>,
+    /// The strongest action any of them took.
+    action: Action,
+    /// What they found, as `policy:kind`, such as `pii:NAME`.
+    findings: BTreeSet<String>,
+}
+
 /// A string, or the `text` of the text parts of an array of parts.
 fn content(out: &mut Vec<String>, v: &Value, at: String, text_types: &[&str]) {
     match v {
@@ -193,7 +205,10 @@ pub(crate) async fn screen_prompt(
     let mut steps: Vec<Value> = Vec::new();
     let charge = |applied: &Vec<String>, action: Action, findings: &BTreeSet<String>, cost: f64, steps: Vec<Value>| GuardrailCharge {
         cost_usd: cost,
-        summary: Some(json!({ "applied": applied, "action": action, "findings": findings })),
+        summary: Some(
+            serde_json::to_value(GuardrailSummary { applied: applied.clone(), action, findings: findings.clone() })
+                .expect("summaries serialize"),
+        ),
         trace: trace.then_some(steps),
     };
     for g in guards {

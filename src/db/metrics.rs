@@ -225,7 +225,9 @@ pub async fn model_speeds(
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct KeyUsageRow {
+    #[schema(required)]
     pub key_id: Option<Uuid>,
+    #[schema(required)]
     pub key_name: Option<String>,
     pub requests: i64,
     pub input_tokens: i64,

@@ -56,7 +56,22 @@ static SERVICE: LazyLock<StreamableHttpService<Hub, LocalSessionManager>> = Lazy
     StreamableHttpService::new(|| Ok(Hub), Arc::new(LocalSessionManager::default()), config)
 });
 
-/// `POST`, `GET` and `DELETE /mcp`: the key is authenticated here, before the SDK reads anything.
+/// MCP: every server
+///
+/// One MCP server with the tools of every MCP server the key may use, named
+/// `{server}__{tool}`, where the server's tool filters allow them. The gateway answers here itself,
+/// statelessly, in any protocol version, and calls the tool in a session it keeps with the server for
+/// the key. Each `tools/call` is an entry in the request log (api `mcp`), counts against the key's
+/// limits and budgets, and is charged the tool's price.
+#[utoipa::path(post, path = "/mcp", operation_id = "mcp_hub_post", tag = "MCP", request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 200, description = "The gateway's answer.", content((Object = "application/json"))),
+        (status = 202, description = "Accepted: notifications and responses have no answer."),
+        (status = 401, description = "Missing, invalid, disabled or expired key or token; `WWW-Authenticate` names the protected resource metadata.", body = crate::error::OpenAiError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
+// The key is authenticated here, before the SDK reads anything.
 pub async fn hub(State(state): State<AppState>, McpKey(key): McpKey, req: Request) -> Response {
     let labels = match Labels::from_headers(req.headers()) {
         Ok(l) => l,
@@ -68,6 +83,28 @@ pub async fn hub(State(state): State<AppState>, McpKey(key): McpKey, req: Reques
         Ok(resp) => resp.map(axum::body::Body::new),
         Err(never) => match never {},
     }
+}
+
+// `hub` for the other methods, each with its own documentation.
+
+/// MCP: every server, listen
+///
+/// Not offered: the gateway's own MCP server sends nothing unasked.
+#[utoipa::path(get, path = "/mcp", operation_id = "mcp_hub_get", tag = "MCP",
+    responses((status = 405, description = "Not offered.")),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
+pub async fn hub_get(state: State<AppState>, key: McpKey, req: Request) -> Response {
+    hub(state, key, req).await
+}
+
+/// MCP: every server, end session
+///
+/// Not needed: the gateway's own MCP server keeps no sessions.
+#[utoipa::path(delete, path = "/mcp", operation_id = "mcp_hub_delete", tag = "MCP",
+    responses((status = 405, description = "Not needed.")),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
+pub async fn hub_delete(state: State<AppState>, key: McpKey, req: Request) -> Response {
+    hub(state, key, req).await
 }
 
 #[derive(Clone)]

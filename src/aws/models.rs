@@ -49,14 +49,17 @@ pub struct BedrockModel {
     /// Its display name, e.g. `EU Anthropic Claude Sonnet 4`.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub provider: Option<String>,
     pub kind: InferenceKind,
     /// What the model serves.
     pub mode: Mode,
     /// Requests and tokens per minute the account's quota for this model allows, in this region.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub rpm: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub tpm: Option<i64>,
     /// A legacy model, on its way out.
     pub legacy: bool,
@@ -69,9 +72,11 @@ pub struct BedrockModels {
     pub models: Vec<BedrockModel>,
     /// Why the models or inference profiles could not be listed, if they could not.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub models_error: Option<String>,
     /// Why the quotas could not be read, if they could not.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub quotas_error: Option<String>,
 }
 

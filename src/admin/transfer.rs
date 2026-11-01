@@ -242,7 +242,13 @@ pub(crate) struct ExportQuery {
     sections: Option<String>,
 }
 
-/// `GET /admin/api/config/export[?sections=…]`: the configuration as a JSON download.
+/// Export configuration
+///
+/// Credentials, MCP servers and A2A agents come without their secrets; keys with the hash of
+/// theirs, never the secret itself.
+#[utoipa::path(get, path = "/config/export", operation_id = "export_config", tag = "Configuration", params(ExportQuery),
+    responses((status = 200, description = "The configuration.", body = Document)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn export(State(state): State<AppState>, Query(q): Query<ExportQuery>) -> R<impl IntoResponse> {
     let wanted: HashSet<&str> = match q.sections.as_deref() {
         None => SECTIONS.into_iter().collect(),
@@ -333,7 +339,9 @@ pub(crate) struct ImportQuery {
     dry_run: bool,
 }
 
-#[derive(Serialize, Default, Debug)]
+/// What an import changes in one section.
+#[derive(Serialize, Default, Debug, utoipa::ToSchema)]
+#[schema(as = ImportChanges)]
 struct Changes {
     created: Vec<String>,
     updated: Vec<String>,
@@ -378,13 +386,24 @@ fn claim(claimed: &mut HashSet<Uuid>, id: Uuid, what: &str) -> R<()> {
     }
 }
 
-/// `POST /admin/api/config/import[?dry_run=true]`.
+/// Import configuration
+///
+/// Merges a configuration file into this gateway, in one transaction. Entries update what has
+/// their id, or else what matches them by name; renames carry over to routers, keys and model
+/// metadata.
+#[utoipa::path(post, path = "/config/import", operation_id = "import_config", tag = "Configuration", params(ImportQuery),
+    request_body = Document,
+    responses(
+        (status = 200, description = "What changed, or would change with `dry_run`.", body = ImportResult),
+        (status = 400, description = "The file is invalid or does not fit this gateway.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn import(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Query(q): Query<ImportQuery>,
     Json(body): Json<Value>,
-) -> R<Json<Value>> {
+) -> R<Json<ImportResult>> {
     let doc: Document = serde_json::from_value(body).map_err(|e| bad(format!("not a configuration file: {e}")))?;
     if doc.format != FORMAT {
         return Err(bad("not an Inference Gateway configuration file"));
@@ -918,26 +937,48 @@ pub(super) async fn import(
         });
         audit::Event::new("configuration", "import").details(details).record(&state, &actor).await;
     }
-    Ok(Json(json!({
-        "dry_run": q.dry_run,
-        "credentials": cred_changes,
-        "guardrails": guard_changes,
-        "projects": project_changes,
-        "deployments": dep_changes,
-        "routers": router_changes,
-        "aliases": alias_changes,
-        // The file's keys, and keys whose allowed models follow a renamed model.
-        "keys": key_changes,
-        "model_metadata": meta_changes,
-        "mcp_servers": server_import.changes,
-        "a2a_agents": agent_import.changes,
-        "tool_routers": router_import.changes,
-        // New credentials that need their secrets entered before their deployments work.
-        "needs_secrets": needs_secrets,
-        // New MCP servers and A2A agents that work once their secret is entered.
-        "mcp_servers_need_secrets": server_import.needs_secrets,
-        "a2a_agents_need_secrets": agent_import.needs_secrets,
-    })))
+    Ok(Json(ImportResult {
+        dry_run: q.dry_run,
+        credentials: cred_changes,
+        guardrails: guard_changes,
+        projects: project_changes,
+        deployments: dep_changes,
+        routers: router_changes,
+        aliases: alias_changes,
+        keys: key_changes,
+        model_metadata: meta_changes,
+        mcp_servers: server_import.changes,
+        a2a_agents: agent_import.changes,
+        tool_routers: router_import.changes,
+        needs_secrets,
+        mcp_servers_need_secrets: server_import.needs_secrets,
+        a2a_agents_need_secrets: agent_import.needs_secrets,
+    }))
+}
+
+/// What an import changed, or would change with `dry_run`, section by section.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ImportResult {
+    dry_run: bool,
+    credentials: Changes,
+    guardrails: Changes,
+    projects: Changes,
+    deployments: Changes,
+    routers: Changes,
+    aliases: Changes,
+    /// The file's keys, and keys whose allowed models follow a renamed model.
+    keys: Changes,
+    /// Models whose metadata the file sets, or that takes a renamed model's along.
+    model_metadata: Changes,
+    mcp_servers: Changes,
+    a2a_agents: Changes,
+    tool_routers: Changes,
+    /// New credentials that need their secrets entered before their deployments work.
+    needs_secrets: Vec<String>,
+    /// New MCP servers that work once their secret is entered.
+    mcp_servers_need_secrets: Vec<String>,
+    /// New A2A agents that work once their secret is entered.
+    a2a_agents_need_secrets: Vec<String>,
 }
 
 #[cfg(test)]
@@ -977,7 +1018,7 @@ mod tests {
         db::delete_credential(&state.db, cred.id).await.unwrap();
         let run =
             |doc: Value| import(State(state.clone()), Extension(Actor::master_key()), Query(ImportQuery { dry_run: false }), Json(doc));
-        let Json(result) = run(doc.clone()).await.unwrap();
+        let result = serde_json::to_value(run(doc.clone()).await.unwrap().0).unwrap();
         assert_eq!(result["credentials"]["created"], json!(["openai"]));
         assert_eq!(result["deployments"]["created"].as_array().map(Vec::len), Some(1));
         assert_eq!(result["needs_secrets"], json!(["openai"]));
@@ -985,7 +1026,7 @@ mod tests {
         assert_eq!((deps.len(), deps[0].model_name.as_str(), deps[0].id), (1, "luna", dep.id));
 
         // The same file again changes nothing.
-        let Json(again) = run(doc).await.unwrap();
+        let again = serde_json::to_value(run(doc).await.unwrap().0).unwrap();
         assert_eq!(again["credentials"]["created"], json!([]));
         assert_eq!(again["deployments"]["created"], json!([]));
         assert_eq!(again["deployments"]["updated"], json!([]));

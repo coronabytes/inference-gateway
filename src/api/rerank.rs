@@ -20,6 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
@@ -38,6 +39,20 @@ const MAX_DOCUMENTS: usize = 1000;
 /// Documents per billed search.
 const DOCUMENTS_PER_SEARCH: usize = 100;
 
+/// Rerank
+///
+/// Ranks documents by relevance to a query, on Azure AI Foundry (Cohere), Amazon Bedrock and
+/// OpenAI-compatible rerank servers. Also served at `/v2/rerank` and `/rerank`.
+#[utoipa::path(post, path = "/v1/rerank", tag = "Inference", request_body = crate::openapi::RerankRequest,
+    responses(
+        (status = 200, description = "The documents, most relevant first.", body = RerankResponse),
+        (status = 400, description = "Invalid request.", body = crate::error::OpenAiError),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+        (status = 403, description = "The key may not use this model.", body = crate::error::OpenAiError),
+        (status = 429, description = "A rate limit or the key's budget.", body = crate::error::OpenAiError),
+    ),
+    params(("x-gateway-labels" = Option<String>, Header, description = crate::openapi::LABELS_HEADER)),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn rerank(State(state): State<AppState>, ClientKey(key): ClientKey, ClientLabels(labels): ClientLabels, body: Bytes) -> Response {
     serve(&state, key, labels, body).await.unwrap_or_else(|e| e.into_response_for(Dialect::OpenAi))
 }
@@ -130,11 +145,11 @@ async fn run(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &Byt
     let (ranked, usage) =
         super::with_failover(state, &candidates, &req.model, &mut tracker, |d| async move { call(state, &d, req).await }).await?;
     tracker.set_usage(usage);
-    let body = response(&tracker.id.to_string(), req, ranked, &usage);
+    let answer = response(&tracker.id.to_string(), req, ranked, &usage);
     if let Some(c) = tracker.log() {
-        c.response(crate::capture::Body::Json(body.clone()));
+        c.response(crate::capture::Body::Json(serde_json::to_value(&answer).expect("the answer serializes")));
     }
-    let mut resp = Json(body).into_response();
+    let mut resp = Json(answer).into_response();
     resp.headers_mut().insert("x-request-id", HeaderValue::from_str(&tracker.id.to_string()).expect("uuid header"));
     Ok(resp)
 }
@@ -294,25 +309,61 @@ fn ranked(v: &Value, score_field: &str) -> Result<Vec<Ranked>, GatewayError> {
 }
 
 /// The response: the ranked documents, most relevant first, at most `top_n` of them.
-fn response(id: &str, req: &RerankRequest, mut ranked: Vec<Ranked>, usage: &Usage) -> Value {
+fn response(id: &str, req: &RerankRequest, mut ranked: Vec<Ranked>, usage: &Usage) -> RerankResponse {
     ranked.retain(|r| r.index < req.documents.len());
     ranked.sort_by(|a, b| b.score.total_cmp(&a.score));
     ranked.truncate(req.top_n.unwrap_or(req.documents.len()));
-    let results: Vec<Value> = ranked
+    let results = ranked
         .iter()
-        .map(|r| {
-            let mut item = json!({ "index": r.index, "relevance_score": r.score });
-            if req.return_documents {
-                item["document"] = json!({ "text": req.documents[r.index] });
-            }
-            item
+        .map(|r| RerankResult {
+            index: r.index,
+            relevance_score: r.score,
+            document: req.return_documents.then(|| RerankDocument { text: req.documents[r.index].clone() }),
         })
         .collect();
-    let mut billed = json!({ "search_units": usage.search_units });
-    if usage.input_tokens > 0 {
-        billed["input_tokens"] = usage.input_tokens.into();
-    }
-    json!({ "id": id, "model": req.model, "results": results, "meta": { "billed_units": billed } })
+    let billed_units =
+        BilledUnits { search_units: usage.search_units, input_tokens: (usage.input_tokens > 0).then_some(usage.input_tokens) };
+    RerankResponse { id: id.to_string(), model: req.model.clone(), results, meta: RerankMeta { billed_units } }
+}
+
+/// Ranked documents, most relevant first, as Cohere's v2 API returns them.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct RerankResponse {
+    /// The request's id, as in the request log.
+    id: String,
+    model: String,
+    results: Vec<RerankResult>,
+    meta: RerankMeta,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct RerankResult {
+    /// The document's position in the request.
+    index: usize,
+    relevance_score: f64,
+    /// With `return_documents`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    document: Option<RerankDocument>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct RerankDocument {
+    text: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct RerankMeta {
+    billed_units: BilledUnits,
+}
+
+/// What the request is billed by: searches, and the tokens where the provider counts them.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct BilledUnits {
+    search_units: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    input_tokens: Option<u64>,
 }
 
 /// Health check for the admin API: ranks two short documents, outside of any key's accounting.
@@ -409,7 +460,7 @@ mod tests {
             Ranked { index: 9, score: 1.0 },
         ];
         let usage = Usage { search_units: 1, ..Default::default() };
-        let v = response("id", &req(Some(2), true), ranked, &usage);
+        let v = serde_json::to_value(response("id", &req(Some(2), true), ranked, &usage)).unwrap();
         assert_eq!(
             v["results"],
             json!([{ "index": 2, "relevance_score": 0.8, "document": { "text": "c" } }, { "index": 1, "relevance_score": 0.5, "document": { "text": "b" } }])

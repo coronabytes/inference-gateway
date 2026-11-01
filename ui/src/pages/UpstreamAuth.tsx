@@ -39,7 +39,7 @@ const SIGN_IN_BY: Record<Exclude<SignInPer, "key">, SignInBy> = { tenant: ["tena
 export const SIGN_IN_PER_LABEL: Record<SignInPer, string> = { key: "Key", tenant: "Tenant", user: "Tenant and user" };
 
 /** The form's choice for a stored `sign_in_by`. */
-export function signInPer(by?: SignInBy): SignInPer {
+export function signInPer(by?: readonly string[]): SignInPer {
   return by?.length === 2 ? "user" : by?.length === 1 ? "tenant" : "key";
 }
 
@@ -63,7 +63,7 @@ export function authState(from?: { auth: McpAuth; auth_header?: string; oauth?: 
     tokenUrl: o?.token_url ?? "",
     authorizationUrl: o?.authorization_url ?? "",
     clientId: o?.client_id ?? "",
-    scopes: o?.scopes.join(" ") ?? "",
+    scopes: o?.scopes?.join(" ") ?? "",
     resource: o?.resource ?? "",
     redirectUri: o?.redirect_uri ?? "",
     tokenAuth: o?.token_auth ?? "",
@@ -445,7 +445,7 @@ export function AuthFields({
 }
 
 /** The host of an address, for a summary. */
-function host(url?: string): string {
+function host(url?: string | null): string {
   try {
     return url ? new URL(url).host : "";
   } catch {

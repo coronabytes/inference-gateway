@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Openai,
@@ -786,12 +786,16 @@ pub struct OidcSettingsRow {
 pub struct ProjectRow {
     pub id: Uuid,
     pub name: String,
+    #[schema(required)]
     pub description: Option<String>,
     pub enabled: bool,
     /// Budget per `budget_period`, on top of each key's own; None = unlimited.
+    #[schema(required)]
     pub max_budget_usd: Option<f64>,
+    #[schema(required, value_type = Option<crate::budget::BudgetPeriod>)]
     pub budget_period: Option<String>,
     /// Set by "reset spend": the current period counts only spend after this.
+    #[schema(required)]
     pub spend_reset_at: Option<DateTime<Utc>>,
     /// Guardrails every request of the project's keys goes through.
     pub guardrail_ids: Vec<Uuid>,
@@ -835,7 +839,9 @@ pub struct AdminUserRow {
     pub id: Uuid,
     pub issuer: String,
     pub subject: String,
+    #[schema(required)]
     pub email: Option<String>,
+    #[schema(required)]
     pub name: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_login_at: DateTime<Utc>,
@@ -1034,22 +1040,29 @@ pub struct VirtualKey {
     /// Whether the key calls the inference API, the admin API or both.
     pub scope: KeyScope,
     /// The project the key is grouped under in the console.
+    #[schema(required)]
     pub project_id: Option<Uuid>,
     /// False while the key's project is inactive; the key is then refused like a disabled one.
     pub project_active: bool,
     pub allowed_models: Vec<String>,
     /// Deployment tags this key holds; empty means no tag restriction.
     pub allowed_tags: Vec<String>,
+    #[schema(required)]
     pub rpm_limit: Option<i32>,
+    #[schema(required)]
     pub tpm_limit: Option<i32>,
     /// Budget per `budget_period` (day, week or month); None = unlimited.
+    #[schema(required)]
     pub max_budget_usd: Option<f64>,
+    #[schema(required, value_type = Option<crate::budget::BudgetPeriod>)]
     pub budget_period: Option<String>,
     /// Lifetime spend (informational; budgets use per-period spend).
     pub spend_usd: f64,
     /// Set by "reset spend": the current period counts only spend after this.
+    #[schema(required)]
     pub spend_reset_at: Option<DateTime<Utc>>,
     pub enabled: bool,
+    #[schema(required)]
     pub expires_at: Option<DateTime<Utc>>,
     pub metadata: serde_json::Value,
     /// Guardrails every request of this key goes through, on top of its project's.

@@ -46,22 +46,52 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use serde_json::json;
 use tower_http::{
     services::{ServeDir, ServeFile},
     set_header::SetResponseHeaderLayer,
 };
+
+use utoipa::OpenApi;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{config::Config, state::AppState};
 
 /// The git tag this gateway was built from (see build.rs), e.g. `v1.0.0`.
 pub const VERSION: &str = env!("GATEWAY_VERSION");
 
-#[tokio::main]
-async fn main() {
+/// Stack for the thread the gateway starts on and for the runtime's workers. Building the routers
+/// and their OpenAPI document (utoipa) takes deep stack frames in debug builds, more than the 1 MB
+/// Windows gives a process's main thread.
+const STACK_BYTES: usize = 16 * 1024 * 1024;
+
+fn main() {
+    let gateway = std::thread::Builder::new()
+        .name("gateway".into())
+        .stack_size(STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(STACK_BYTES)
+                .build()
+                .expect("the async runtime starts")
+                .block_on(start())
+        })
+        .expect("the gateway thread starts");
+    if let Err(panic) = gateway.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn start() {
     // `inference-gateway healthcheck` for container health probes (the image has no shell or curl).
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
         std::process::exit(healthcheck());
+    }
+    // `inference-gateway openapi` prints the OpenAPI document, from which the console's API types
+    // are generated. It reads no environment and connects to nothing.
+    if std::env::args().nth(1).as_deref() == Some("openapi") {
+        println!("{}", openapi::export());
+        return;
     }
     // For `rediss://`: the Valkey client uses rustls's process-wide provider, which rustls cannot
     // choose itself while both ring and aws-lc-rs are in the build.
@@ -173,68 +203,12 @@ async fn run() -> Result<(), String> {
     tokio::spawn(sync::run_maintenance(state.clone()));
     tokio::spawn(prices::run_scheduled_import(state.clone()));
 
-    let mut inference = Router::new()
-        .route("/v1/messages", post(api::messages))
-        .route("/v1/messages/count_tokens", post(api::count_tokens))
-        .route("/v1/responses", post(api::responses))
-        .route("/v1/chat/completions", post(api::chat_completions))
-        .route("/v1/decisions", post(api::decisions::decisions))
-        .route("/decisions", post(api::decisions::decisions))
-        .route("/v1/systemone", post(api::decisions::systemone))
-        .route("/systemone", post(api::decisions::systemone))
-        .route("/v1/embeddings", post(api::embeddings::embeddings))
-        .route("/embeddings", post(api::embeddings::embeddings))
-        // Cohere-style clients call /v1/rerank or /v2/rerank, Jina and vLLM ones also /rerank.
-        .route("/v1/rerank", post(api::rerank::rerank))
-        .route("/v2/rerank", post(api::rerank::rerank))
-        .route("/rerank", post(api::rerank::rerank))
-        .route("/v1/models", get(api::models::list_models))
-        .route("/v1/models-extended", get(api::models::list_models_extended))
-        // Sign-ins of tenants and users to MCP servers and A2A agents (see `api::sign_ins`).
-        .route("/v1/oauth/sign-ins", get(api::sign_ins::list).post(api::sign_ins::link))
-        .route("/v1/oauth/sign-ins/{kind}/{name}", axum::routing::delete(api::sign_ins::sign_out))
-        .route("/mcp", post(mcp::hub::hub).get(mcp::hub::hub).delete(mcp::hub::hub))
-        .route("/mcp/{server}", post(mcp::proxy).get(mcp::proxy).delete(mcp::proxy))
-        .route("/a2a/{agent}", post(a2a::jsonrpc))
-        .route("/a2a/{agent}/.well-known/agent-card.json", get(a2a::card))
-        .route("/a2a/{agent}/rest/{*path}", get(a2a::rest).post(a2a::rest).delete(a2a::rest))
-        // The gateway as the OAuth authorization server of its MCP endpoints (see `oauth::server`).
-        .route("/.well-known/oauth-protected-resource", get(oauth::server::resource_root))
-        .route("/.well-known/oauth-protected-resource/mcp", get(oauth::server::resource_hub))
-        .route("/.well-known/oauth-protected-resource/mcp/{server}", get(oauth::server::resource_server))
-        .route("/.well-known/oauth-authorization-server", get(oauth::server::metadata))
-        .route("/oauth/authorize", get(oauth::server::authorize))
-        .route("/oauth/token", post(oauth::server::token))
-        .route("/oauth/revoke", post(oauth::server::revoke));
     if let Some(signals) = telemetry::describe() {
         tracing::info!(%signals, "exporting OpenTelemetry");
     }
-    if telemetry::enabled() {
-        inference = inference.route_layer(axum::middleware::from_fn(telemetry::http_span));
-    }
-
-    // The OpenAPI document, and the API reference that renders it (static files in the console's
-    // build, from ui/public/docs), for signed-in people and admin keys only. They live under
-    // /admin, the only path the session cookie is sent to. They answer 404 while the `api_docs`
-    // setting is off.
-    let docs_dir = ui_dir
-        .as_ref()
-        .map(|d| d.join("docs"))
-        .filter(|d| d.join("index.html").exists())
-        .or_else(|| cfg!(debug_assertions).then(|| "ui/public/docs".into()));
-    let mut docs = Router::new().route("/openapi.json", get(openapi::document));
-    if let Some(dir) = docs_dir {
-        docs = docs.nest_service("/docs", ServeDir::new(dir));
-    }
-    let docs = docs
-        .layer(axum::middleware::from_fn_with_state(state.clone(), admin::auth::require_signed_in))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), docs_enabled));
-    let admin_routes = Router::new().nest("/api", admin::router(state.clone())).nest("/auth", admin::auth::browser_routes()).merge(docs);
-
-    let mut app = inference
-        .route("/health/live", get(|| async { "ok" }))
-        .route("/health/ready", get(ready))
-        .nest("/admin", admin_routes.layer(admin::auth::layer(&state)));
+    let mut app: Router<AppState> = routes(Some(&state)).into();
+    // Built here, on the gateway's own thread, rather than on a worker at the first request.
+    openapi::prepare();
 
     // The former public addresses: off, or on to the new ones. Either way, not the file server,
     // which would hand out the reference's files and answer /openapi.json with the console's page.
@@ -297,6 +271,84 @@ async fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// The gateway's API: the inference endpoints, the health probes and the admin API, each handler
+/// registered with its `#[utoipa::path]`, so the OpenAPI document comes from these routers. `state`
+/// runs the middleware that guards them; without one, the routes are only read for the document,
+/// which so needs neither a database nor any configuration.
+fn routes(state: Option<&AppState>) -> OpenApiRouter<AppState> {
+    // The paths without `/v1` serve the same handlers for clients that leave it out; they are not
+    // documented a second time.
+    let mut inference = OpenApiRouter::with_openapi(openapi::ApiDoc::openapi())
+        .routes(routes!(api::messages))
+        .routes(routes!(api::count_tokens))
+        .routes(routes!(api::responses))
+        .routes(routes!(api::chat_completions))
+        .routes(routes!(api::decisions::decisions))
+        .route("/decisions", post(api::decisions::decisions))
+        .routes(routes!(api::decisions::systemone))
+        .route("/systemone", post(api::decisions::systemone))
+        .routes(routes!(api::embeddings::embeddings))
+        .route("/embeddings", post(api::embeddings::embeddings))
+        // Cohere-style clients call /v1/rerank or /v2/rerank, Jina and vLLM ones also /rerank.
+        .routes(routes!(api::rerank::rerank))
+        .route("/v2/rerank", post(api::rerank::rerank))
+        .route("/rerank", post(api::rerank::rerank))
+        .routes(routes!(api::models::list_models))
+        .routes(routes!(api::models::list_models_extended))
+        // Sign-ins of tenants and users to MCP servers and A2A agents (see `api::sign_ins`).
+        .routes(routes!(api::sign_ins::list, api::sign_ins::link))
+        .routes(routes!(api::sign_ins::sign_out))
+        .routes(routes!(mcp::hub::hub, mcp::hub::hub_get, mcp::hub::hub_delete))
+        .routes(routes!(mcp::proxy, mcp::proxy_get, mcp::proxy_delete))
+        .routes(routes!(a2a::jsonrpc))
+        .routes(routes!(a2a::card))
+        .routes(routes!(a2a::rest_get, a2a::rest, a2a::rest_delete))
+        // The gateway as the OAuth authorization server of its MCP endpoints (see `oauth::server`).
+        .routes(routes!(oauth::server::resource_root))
+        .routes(routes!(oauth::server::resource_hub))
+        .routes(routes!(oauth::server::resource_server))
+        .routes(routes!(oauth::server::metadata))
+        .routes(routes!(oauth::server::authorize))
+        .routes(routes!(oauth::server::token))
+        .routes(routes!(oauth::server::revoke));
+    if telemetry::enabled() {
+        inference = inference.route_layer(axum::middleware::from_fn(telemetry::http_span));
+    }
+
+    let mut admin = OpenApiRouter::new().nest("/api", admin::router(state)).nest("/auth", admin::auth::browser_routes());
+    if let Some(state) = state {
+        // The OpenAPI document, and the API reference that renders it (static files in the console's
+        // build, from ui/public/docs), for signed-in people and admin keys only. They live under
+        // /admin, the only path the session cookie is sent to. They answer 404 while the `api_docs`
+        // setting is off.
+        let docs_dir = state
+            .cfg
+            .ui_dir
+            .as_ref()
+            .map(|d| d.join("docs"))
+            .filter(|d| d.join("index.html").exists())
+            .or_else(|| cfg!(debug_assertions).then(|| "ui/public/docs".into()));
+        let mut docs = Router::new().route("/openapi.json", get(openapi::document));
+        if let Some(dir) = docs_dir {
+            docs = docs.nest_service("/docs", ServeDir::new(dir));
+        }
+        let docs = docs
+            .layer(axum::middleware::from_fn_with_state(state.clone(), admin::auth::require_signed_in))
+            .layer(axum::middleware::from_fn_with_state(state.clone(), docs_enabled));
+        admin = admin.merge(docs.into()).layer(admin::auth::layer(state));
+    }
+
+    inference.routes(routes!(live)).routes(routes!(ready)).nest("/admin", admin)
+}
+
+/// Liveness
+///
+/// The process answers.
+#[utoipa::path(get, path = "/health/live", operation_id = "health_live", tag = "Health", responses((status = 200, description = "`ok`", body = String)))]
+async fn live() -> &'static str {
+    "ok"
+}
+
 fn healthcheck() -> i32 {
     use std::io::{Read, Write};
     let port = std::env::var("GATEWAY_LISTEN").ok().and_then(|a| a.parse::<std::net::SocketAddr>().ok()).map_or(8080, |a| a.port());
@@ -337,11 +389,25 @@ async fn connect_db(cfg: &Config) -> Result<sqlx::PgPool, String> {
     unreachable!()
 }
 
+/// Readiness
+///
+/// Postgres answers and the configuration is loaded. Valkey is reported but not required;
+/// without it, limits are not enforced.
+#[utoipa::path(get, path = "/health/ready", operation_id = "health_ready", tag = "Health",
+    responses((status = 200, description = "Ready.", body = Ready), (status = 503, description = "Not ready.", body = Ready)))]
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     let (pg, valkey) = tokio::join!(db::ping(&state.db), state.cache.ping());
     let loaded = state.registry.snapshot().loaded_at.is_some();
     let status = if pg && loaded { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
-    (status, Json(json!({ "postgres": pg, "valkey": valkey, "registry_loaded": loaded })))
+    (status, Json(Ready { postgres: pg, valkey, registry_loaded: loaded }))
+}
+
+/// What readiness depends on, and whether each is there.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+struct Ready {
+    postgres: bool,
+    valkey: bool,
+    registry_loaded: bool,
 }
 
 async fn shutdown_signal() {

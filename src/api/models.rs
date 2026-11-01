@@ -15,6 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::NaiveDate;
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use super::{key_can_use, web_search_allowed};
@@ -25,14 +26,31 @@ use crate::{
     state::AppState,
 };
 
-/// `GET /v1/models` — Anthropic-shaped when the client sends `anthropic-version`, OpenAI-shaped
-/// otherwise.
+/// List models
+///
+/// The models, auto routers and model aliases this key may use. With an `anthropic-version` header the list
+/// is Anthropic-shaped, and also gives each model's `max_input_tokens`, `max_tokens`,
+/// `capabilities` and `lifecycle`, as far as the price catalog and the gateway know them.
+#[utoipa::path(get, path = "/v1/models", tag = "Inference",
+    responses(
+        (status = 200, description = "The models.", body = ModelsAnswer),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn list_models(State(state): State<AppState>, ClientKey(key): ClientKey, headers: HeaderMap) -> Response {
     serve(&state, &key, &headers)
 }
 
-/// `GET /v1/models-extended` — OpenAI-shaped, with each model's mode, token limits, structured
-/// output support and tags.
+/// List models with details
+///
+/// The models, auto routers and model aliases this key may use, as `GET /v1/models` lists them, with each
+/// model's mode, token limits, structured output support and tags.
+#[utoipa::path(get, path = "/v1/models-extended", tag = "Inference",
+    responses(
+        (status = 200, description = "The models.", body = ModelExtendedList),
+        (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
+    ),
+    security(("virtual_key" = []), ("virtual_key_header" = [])))]
 pub async fn list_models_extended(State(state): State<AppState>, ClientKey(key): ClientKey) -> Response {
     serve_extended(&state, &key)
 }
@@ -51,51 +69,121 @@ pub fn serve(state: &AppState, key: &VirtualKey, headers: &HeaderMap) -> Respons
     let names = names(&snap, key);
     let started = state.started_at;
     let body = if headers.contains_key("anthropic-version") {
-        let data: Vec<Value> = names
+        let data = names
             .iter()
             .map(|n| {
                 let info = describe(&snap, key, n);
-                json!({
-                    "type": "model",
-                    "id": n,
-                    "display_name": n,
-                    "created_at": started.to_rfc3339(),
-                    "capabilities": info.capabilities.as_ref().map(Caps::to_json),
-                    "max_input_tokens": info.max_input_tokens,
-                    "max_tokens": info.max_tokens,
+                AnthropicModel {
+                    kind: "model",
+                    id: n.to_string(),
+                    display_name: n.to_string(),
+                    created_at: started.to_rfc3339(),
+                    capabilities: info.capabilities.as_ref().map(Caps::to_json),
+                    max_input_tokens: info.max_input_tokens,
+                    max_tokens: info.max_tokens,
                     // A scheduled retirement makes a model deprecated; when it was deprecated is
                     // not known.
-                    "lifecycle": if info.retires.is_some() { "deprecated" } else { "active" },
-                    "deprecated_at": null,
-                    "retires_at": info.retires.map(|d| format!("{d}T00:00:00Z")),
-                    "line": null,
-                })
+                    lifecycle: if info.retires.is_some() { "deprecated" } else { "active" },
+                    deprecated_at: None,
+                    retires_at: info.retires.map(|d| format!("{d}T00:00:00Z")),
+                    line: None,
+                }
             })
             .collect();
-        json!({ "data": data, "has_more": false, "first_id": names.first(), "last_id": names.last() })
+        let (first_id, last_id) = (names.first().map(|n| n.to_string()), names.last().map(|n| n.to_string()));
+        ModelsAnswer::Anthropic(AnthropicModelList { data, has_more: false, first_id, last_id })
     } else {
-        let data: Vec<Value> = names
+        let data = names
             .iter()
-            .map(|n| {
-                json!({
-                    "id": n,
-                    "object": "model",
-                    "created": started.timestamp(),
-                    "owned_by": "inference-gateway",
-                    "shutdown_date": describe(&snap, key, n).retires.map(|d| d.to_string()),
-                })
+            .map(|n| ModelEntry {
+                id: n.to_string(),
+                object: "model",
+                created: started.timestamp(),
+                owned_by: "inference-gateway",
+                shutdown_date: describe(&snap, key, n).retires.map(|d| d.to_string()),
             })
             .collect();
-        json!({ "object": "list", "data": data })
+        ModelsAnswer::OpenAi(ModelList { object: "list", data })
     };
     Json(body).into_response()
+}
+
+/// The models a key may use, in the OpenAI format, or in Anthropic's for clients that send
+/// `anthropic-version`.
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub(crate) enum ModelsAnswer {
+    OpenAi(ModelList),
+    Anthropic(AnthropicModelList),
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ModelList {
+    /// Always `list`.
+    object: &'static str,
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ModelEntry {
+    id: String,
+    /// Always `model`.
+    object: &'static str,
+    created: i64,
+    owned_by: &'static str,
+    /// When the model will shut down (`YYYY-MM-DD`), from the price catalog; null if not
+    /// announced.
+    #[schema(required)]
+    shutdown_date: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct AnthropicModelList {
+    data: Vec<AnthropicModel>,
+    /// Always false: the list is never paged.
+    has_more: bool,
+    #[schema(required)]
+    first_id: Option<String>,
+    #[schema(required)]
+    last_id: Option<String>,
+}
+
+/// A model, as Anthropic's API describes one, as far as the price catalog and the gateway know it.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct AnthropicModel {
+    /// Always `model`.
+    #[serde(rename = "type")]
+    kind: &'static str,
+    id: String,
+    display_name: String,
+    /// When this replica started.
+    created_at: String,
+    /// Anthropic's capability groups, such as `{ "pdf_input": { "supported": true } }`; null if the
+    /// price catalog does not know the model.
+    #[schema(value_type = Option<Object>)]
+    #[schema(required)]
+    capabilities: Option<Value>,
+    #[schema(required)]
+    max_input_tokens: Option<u64>,
+    #[schema(required)]
+    max_tokens: Option<u64>,
+    /// `active`, or `deprecated` once a retirement is scheduled.
+    lifecycle: &'static str,
+    /// Always null: when a model was deprecated is not known.
+    #[schema(required)]
+    deprecated_at: Option<String>,
+    #[schema(required)]
+    retires_at: Option<String>,
+    /// Always null.
+    #[schema(required)]
+    line: Option<String>,
 }
 
 /// The models `key` may use, as `GET /v1/models-extended` answers. Also used by the admin
 /// playground.
 pub fn serve_extended(state: &AppState, key: &VirtualKey) -> Response {
     let snap = state.registry.snapshot();
-    let data: Vec<Value> = names(&snap, key)
+    let data = names(&snap, key)
         .into_iter()
         .map(|n| {
             let info = describe(&snap, key, n);
@@ -109,21 +197,56 @@ pub fn serve_extended(state: &AppState, key: &VirtualKey) -> Response {
                 }
             };
             let structured = info.capabilities.as_ref().and_then(|c| c.0.get("structured_outputs").copied().flatten());
-            json!({
-                "id": n,
-                "object": "model",
-                "created": state.started_at.timestamp(),
-                "owned_by": "inference-gateway",
-                "shutdown_date": info.retires.map(|d| d.to_string()),
-                "mode": mode,
-                "max_input_tokens": info.max_input_tokens,
-                "max_output_tokens": info.max_tokens,
-                "structured_outputs": structured == Some(true),
-                "tags": tags,
-            })
+            ModelExtendedEntry {
+                id: n.to_string(),
+                object: "model",
+                created: state.started_at.timestamp(),
+                owned_by: "inference-gateway",
+                shutdown_date: info.retires.map(|d| d.to_string()),
+                mode,
+                max_input_tokens: info.max_input_tokens,
+                max_output_tokens: info.max_tokens,
+                structured_outputs: structured == Some(true),
+                tags,
+            }
         })
         .collect();
-    Json(json!({ "object": "list", "data": data })).into_response()
+    Json(ModelExtendedList { object: "list", data }).into_response()
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ModelExtendedList {
+    /// Always `list`.
+    object: &'static str,
+    data: Vec<ModelExtendedEntry>,
+}
+
+/// A model with what the gateway knows about it. Where a model has several deployments, or
+/// is an auto router, the limits are the lowest among them and `structured_outputs` is true
+/// only if all of them support it.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ModelExtendedEntry {
+    id: String,
+    /// Always `model`.
+    object: &'static str,
+    created: i64,
+    owned_by: &'static str,
+    /// When the model will shut down (`YYYY-MM-DD`), from the price catalog; null if not
+    /// announced.
+    #[schema(required)]
+    shutdown_date: Option<String>,
+    /// What the model serves. Auto routers are `chat`.
+    mode: Mode,
+    /// From the price catalog; null if unknown.
+    #[schema(required)]
+    max_input_tokens: Option<u64>,
+    /// From the price catalog; null if unknown.
+    #[schema(required)]
+    max_output_tokens: Option<u64>,
+    /// Whether the model supports JSON schema output, from the price catalog. False if unknown.
+    structured_outputs: bool,
+    /// The model's deployment tags, or an auto router's own tags.
+    tags: Vec<String>,
 }
 
 /// What is known about a model. `None` is unknown.
@@ -198,10 +321,14 @@ pub(crate) fn web_search(snap: &Snapshot, key: &VirtualKey, name: &str) -> bool 
 /// retirement, and for chat models capabilities by `CAPS` path (`None`: unknown).
 #[derive(Debug, Default, serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct Described {
+    #[schema(required)]
     pub max_input_tokens: Option<u64>,
+    #[schema(required)]
     pub max_output_tokens: Option<u64>,
+    #[schema(required)]
     pub retires: Option<NaiveDate>,
     #[schema(value_type = Option<BTreeMap<String, Option<bool>>>)]
+    #[schema(required)]
     pub capabilities: Option<BTreeMap<&'static str, Option<bool>>>,
 }
 

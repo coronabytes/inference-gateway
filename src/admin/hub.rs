@@ -141,6 +141,7 @@ fn matches(m: &HubModel, modes: &[&str], vendors: &[&str], caps: &[&str], term: 
 pub(crate) struct HubView {
     /// The key the list is for; absent for the whole gateway.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     key: Option<HubKey>,
     /// Guardrails every request of the key goes through (set on the key or its project), then
     /// those a client may ask for by name in `x-gateway-guardrails`.
@@ -160,6 +161,7 @@ pub(crate) struct HubKey {
     id: Uuid,
     name: String,
     scope: KeyScope,
+    #[schema(required)]
     project: Option<String>,
     /// Whether requests with the key are served now: `active`, `disabled`, `expired`,
     /// `project inactive`, or `no inference` for a key whose scope is the admin API only.
@@ -173,7 +175,9 @@ pub(crate) struct HubGuardrail {
     id: Uuid,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     description: Option<String>,
+    #[schema(value_type = crate::guardrails::GuardrailProvider)]
     provider: String,
     /// `key` or `project`: applied to every request. `on request`: when a client asks for it.
     applied: &'static str,
@@ -191,10 +195,12 @@ pub(crate) struct HubModel {
     metadata: Value,
     /// Who makes it: the metadata's `vendor`, or without one the vendor its names suggest.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     vendor: Option<String>,
     tags: Vec<String>,
     /// A model alias's target: the model name it serves.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     target: Option<String>,
     /// What holds for all the deployments it reaches.
     #[serde(flatten)]
@@ -206,6 +212,7 @@ pub(crate) struct HubModel {
     deployments: Vec<HubDeployment>,
     /// With `stats=true`: its requests over the last 24 hours.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     stats: Option<HubStats>,
 }
 
@@ -217,9 +224,11 @@ pub(crate) struct HubStats {
     errors: i64,
     /// The successful requests' median latency.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     p50_latency_ms: Option<i32>,
     /// Output tokens per second while generating: after the first token for streamed answers.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     tokens_per_second: Option<f64>,
     /// `[requests, errors]` per hour, oldest first; the last is the current hour.
     hours: Vec<[i64; 2]>,
@@ -268,6 +277,7 @@ pub(crate) struct HubDeployment {
     id: Uuid,
     /// The model name it is deployed under; differs from the model's for an auto router.
     model: String,
+    #[schema(value_type = crate::model::ProviderKind)]
     provider: String,
     upstream_model: String,
     priority: i32,
@@ -290,14 +300,19 @@ pub(crate) struct HubPrices {
     cache_write: f64,
     /// Requests whose input exceeds this many tokens are billed at the long-context prices.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_context_threshold: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_input: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_output: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_cache_read: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     long_cache_write: Option<f64>,
     per_k_searches: f64,
 }
@@ -343,6 +358,20 @@ fn hub_deployments(ds: &[&Deployment]) -> Vec<HubDeployment> {
     out
 }
 
+/// Model hub
+///
+/// Every model the gateway serves, or with `key` those that key may use: token limits,
+/// capabilities and prices, per model and per deployment that may serve it, each model's
+/// metadata, and the guardrails the key's requests go through. `mode`, `vendor` and `q` narrow
+/// the models as the console's filters do. Besides admins, a project's users and keys may read
+/// the hub of their project's keys, and a key whose scope is the inference API its own.
+#[utoipa::path(get, path = "/hub", operation_id = "model_hub", tag = "Model hub", params(HubQuery),
+    responses(
+        (status = 200, description = "The models.", body = HubView),
+        (status = 400, description = "No such key, or an unknown mode.", body = crate::error::AdminErrorBody),
+        (status = 403, description = "A key whose scope is the inference API asked for another key.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("virtual_key" = []), ("admin_session" = [])))]
 pub(crate) async fn hub(
     State(state): State<AppState>,
     Extension(access): Extension<Access>,
@@ -541,6 +570,15 @@ pub(super) fn check_metadata(mut m: Map<String, Value>) -> R<Map<String, Value>>
     Ok(m)
 }
 
+/// Set model metadata
+///
+/// Replaces a model's metadata, such as `display_name` and `description`; `{}` removes it.
+#[utoipa::path(put, path = "/model-metadata", operation_id = "set_model_metadata", tag = "Model hub", request_body = MetadataInput,
+    responses(
+        (status = 200, description = "The stored metadata.", body = MetadataView),
+        (status = 400, description = "Invalid metadata, or no such model.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(crate) async fn set_metadata(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -565,9 +603,15 @@ pub(crate) async fn set_metadata(
     Ok(Json(MetadataView { model, metadata }))
 }
 
-/// `GET /admin/api/efforts`: the reasoning efforts each chat model takes, for the console's
-/// effort selectors, to everyone signed in (users included). Routers set their own per route and
-/// are left out, as are aliases of routers.
+/// Reasoning efforts
+///
+/// The reasoning efforts each chat model takes, by its price catalog entry: those every one of
+/// its deployments accepts. Aliases are listed with their target's; auto routers, which set
+/// their own per route, are left out. For everyone signed in to the console.
+#[utoipa::path(get, path = "/efforts", operation_id = "model_efforts", tag = "Model hub",
+    responses((status = 200, description = "Model name to its efforts, in order.", body = std::collections::BTreeMap<String, Vec<crate::model::ReasoningEffort>>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+// Aliases of auto routers are left out with the routers.
 pub(crate) async fn efforts(State(state): State<AppState>) -> Json<BTreeMap<String, Vec<ReasoningEffort>>> {
     Json(efforts_by_model(&state.registry.snapshot()))
 }

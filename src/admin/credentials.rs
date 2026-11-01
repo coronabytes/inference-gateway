@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use uuid::Uuid;
 
 use super::{R, csv, search_text};
@@ -27,15 +27,26 @@ use crate::{
 pub(crate) struct CredentialView {
     id: Uuid,
     name: String,
+    #[schema(value_type = crate::model::ProviderKind)]
     provider: String,
     settings: CredentialSettings,
     secrets_set: BTreeMap<&'static str, bool>,
     /// Vertex: who the stored key file authenticates as. Not secret.
     #[serde(skip_serializing_if = "Option::is_none")]
-    service_account: Option<Value>,
+    #[schema(nullable = false)]
+    service_account: Option<ServiceAccountView>,
     deployments: i64,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+/// Who a Vertex credential's key file authenticates as.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ServiceAccountView {
+    client_email: String,
+    /// The service account's own project.
+    #[schema(required)]
+    project_id: Option<String>,
 }
 
 fn credential_view(state: &AppState, c: CredentialRow, deployments: i64) -> CredentialView {
@@ -50,7 +61,7 @@ fn credential_view(state: &AppState, c: CredentialRow, deployments: i64) -> Cred
             .google_service_account
             .as_deref()
             .and_then(|j| crate::google::ServiceAccount::parse(j).ok())
-            .map(|sa| json!({ "client_email": sa.client_email, "project_id": sa.project_id })),
+            .map(|sa| ServiceAccountView { client_email: sa.client_email, project_id: sa.project_id }),
         deployments,
         created_at: c.created_at,
         updated_at: c.updated_at,
@@ -234,6 +245,12 @@ pub(crate) struct CredentialQuery {
     provider: Option<String>,
 }
 
+/// List credentials
+///
+/// With which secrets are set; never their values.
+#[utoipa::path(get, path = "/credentials", tag = "Credentials", params(CredentialQuery),
+    responses((status = 200, description = "The credentials.", body = Vec<CredentialView>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn list_credentials(State(state): State<AppState>, Query(q): Query<CredentialQuery>) -> R<Json<Vec<CredentialView>>> {
     let search = search_text(q.q.as_deref());
     let providers: Option<Vec<String>> = csv(q.provider.as_deref()).map(|p| p.into_iter().map(String::from).collect());
@@ -250,6 +267,16 @@ pub(super) async fn list_credentials(State(state): State<AppState>, Query(q): Qu
     ))
 }
 
+/// Create credential
+///
+/// Secrets are encrypted and never returned.
+#[utoipa::path(post, path = "/credentials", tag = "Credentials", request_body = CredentialInput,
+    responses(
+        (status = 201, description = "The new credential.", body = CredentialView),
+        (status = 400, description = "Invalid credential.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "The name is taken.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn create_credential(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -279,6 +306,17 @@ pub(super) async fn create_credential(
     Ok((StatusCode::CREATED, Json(view)))
 }
 
+/// Update credential
+///
+/// Omitted secrets keep their stored value; empty strings clear them.
+#[utoipa::path(put, path = "/credentials/{id}", tag = "Credentials", params(("id" = Uuid, Path)),
+    request_body = CredentialInput,
+    responses(
+        (status = 200, description = "The credential.", body = CredentialView),
+        (status = 400, description = "Invalid credential.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such credential.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn update_credential(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -332,6 +370,16 @@ pub(super) async fn update_credential(
     Ok(Json(view))
 }
 
+/// Delete credential
+///
+/// Only when no deployment uses it.
+#[utoipa::path(delete, path = "/credentials/{id}", tag = "Credentials", params(("id" = Uuid, Path)),
+    responses(
+        (status = 204, description = "Deleted."),
+        (status = 404, description = "No such credential.", body = crate::error::AdminErrorBody),
+        (status = 409, description = "Deployments use it.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn delete_credential(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -360,8 +408,19 @@ pub(super) async fn delete_credential(
     }
 }
 
-/// The deployments on an Azure credential's resource, read from Azure Resource Manager with its
-/// Entra ID app, for the console to fill in a new deployment.
+/// List Foundry deployments
+///
+/// The deployments on an Azure credential's resource, with their model and the rate limits of
+/// their quota, read from Azure Resource Manager. Only for credentials that use Entra ID; the
+/// app needs read access to the resource (Cognitive Services User includes it).
+#[utoipa::path(get, path = "/credentials/{id}/foundry-deployments", tag = "Credentials", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The resource and its deployments.", body = crate::entra::FoundryDeployments),
+        (status = 400, description = "Not an Azure credential with Entra ID.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such credential.", body = crate::error::AdminErrorBody),
+        (status = 502, description = "Entra ID or Azure Resource Manager refused or failed.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn foundry_deployments(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<crate::entra::FoundryDeployments>> {
     let row = db::get_credential(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     if row.provider != ProviderKind::Azure.as_str() {
@@ -376,13 +435,33 @@ pub(super) async fn foundry_deployments(State(state): State<AppState>, Path(id):
     Ok(Json(found))
 }
 
-/// The AWS regions the gateway's SDK knows, for the console's Bedrock region list.
+/// List AWS regions
+///
+/// The regions of the AWS SDK this gateway was built with (commercial, European Sovereign
+/// Cloud, GovCloud and China), with their names, for a Bedrock credential's region. Empty if
+/// the build could not read them.
+#[utoipa::path(get, path = "/aws-regions", tag = "Credentials",
+    responses((status = 200, description = "The regions.", body = Vec<crate::aws::AwsRegion>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn aws_regions() -> Json<&'static [crate::aws::AwsRegion]> {
     Json(crate::aws::regions())
 }
 
-/// The models and inference profiles a Bedrock credential can call, with its account's quotas,
-/// for the console to fill in a new deployment. Listings it may not read are noted, not failed.
+/// List Bedrock models
+///
+/// The foundation models and inference profiles a Bedrock credential can call in its region,
+/// with the per-minute request and token quotas of its account, read with the AWS SDK. Needs
+/// `bedrock:ListFoundationModels`, `bedrock:ListInferenceProfiles` and
+/// `servicequotas:ListServiceQuotas`; a listing the credential may not read is described in
+/// `models_error` or `quotas_error` instead of failing the request.
+#[utoipa::path(get, path = "/credentials/{id}/bedrock-models", tag = "Credentials", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "The models, and what could not be read.", body = crate::aws::models::BedrockModels),
+        (status = 400, description = "Not a Bedrock credential, or one with a Bedrock API key.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such credential.", body = crate::error::AdminErrorBody),
+        (status = 502, description = "No AWS region or credentials could be found.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn bedrock_models(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<crate::aws::models::BedrockModels>> {
     let row = db::get_credential(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     if row.provider != ProviderKind::Bedrock.as_str() {
