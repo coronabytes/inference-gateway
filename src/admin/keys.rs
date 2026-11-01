@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::{LIST_BUDGET_LOOKUPS, R, page, project_filter, search_text, tag_filter, valid_model_name, yes};
+use super::{LIST_BUDGET_LOOKUPS, R, after_change, page, project_filter, search_text, tag_filter, valid_model_name, yes};
 use crate::{
     admin::auth::Access,
     audit::{self, Actor},
@@ -385,9 +385,8 @@ pub(super) async fn create_key(
         updated_at: now,
     };
     db::insert_key(&state.db, &k).await?;
-    broadcast_reload(&state, "key created").await;
-    tracing::info!(key = %k.id, name = %k.name, scope = k.scope.as_str(), "virtual key created");
-    audit::Event::new("key", "create").on(k.id, &k.name).details(audit::snapshot(&k)).record(&state, &actor).await;
+    let event = audit::Event::new("key", "create").on(k.id, &k.name).details(audit::snapshot(&k));
+    after_change(&state, &actor, "key created", k.id, Some(event)).await;
     // The plaintext key is returned exactly once and never stored.
     Ok((StatusCode::CREATED, Json(KeyCreated { key: secret, record: k })))
 }
@@ -447,11 +446,9 @@ pub(super) async fn update_key(
         k.metadata = m;
     }
     db::update_key(&state.db, &k).await?;
-    broadcast_reload(&state, "key updated").await;
     let changes = audit::changes(&before, &k);
-    if !changes.is_empty() {
-        audit::Event::new("key", "update").on(id, &k.name).details(changes.into()).record(&state, &actor).await;
-    }
+    let event = (!changes.is_empty()).then(|| audit::Event::new("key", "update").on(id, &k.name).details(changes.into()));
+    after_change(&state, &actor, "key updated", id, event).await;
     Ok(Json(k))
 }
 
@@ -470,9 +467,8 @@ pub(super) async fn delete_key(
     if !db::delete_key(&state.db, id).await? {
         return Err(AdminError::not_found());
     }
-    broadcast_reload(&state, "key deleted").await;
-    tracing::info!(key = %id, "virtual key deleted");
-    audit::Event::new("key", "delete").on(id, k.name).details(json!({ "key_prefix": k.key_prefix })).record(&state, &actor).await;
+    let event = audit::Event::new("key", "delete").on(id, k.name).details(json!({ "key_prefix": k.key_prefix }));
+    after_change(&state, &actor, "key deleted", id, Some(event)).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -498,10 +494,8 @@ pub(super) async fn regenerate_key(
     if !db::rotate_key(&state.db, id, &hash, &prefix).await? {
         return Err(AdminError::not_found());
     }
-    broadcast_reload(&state, "key regenerated").await;
-    tracing::info!(key = %id, "virtual key regenerated");
     let details = json!({ "key_prefix": { "from": k.key_prefix, "to": prefix } });
-    audit::Event::new("key", "regenerate").on(id, k.name).details(details).record(&state, &actor).await;
+    after_change(&state, &actor, "key regenerated", id, Some(audit::Event::new("key", "regenerate").on(id, k.name).details(details))).await;
     // As on create, the plaintext key is returned exactly once and never stored.
     Ok(Json(KeyRegenerated { key: secret, key_prefix: prefix }))
 }

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::R;
+use super::{R, after_change};
 use crate::{
     audit::{self, Actor},
     db,
@@ -342,9 +342,7 @@ pub(crate) async fn delete_guardrail(
     if !db::delete_guardrail(&state.db, id).await? {
         return Err(AdminError::not_found());
     }
-    broadcast_reload(&state, "guardrail deleted").await;
-    tracing::info!(guardrail = %id, "guardrail deleted");
-    audit::Event::new("guardrail", "delete").on(id, name).record(&state, &actor).await;
+    after_change(&state, &actor, "guardrail deleted", id, Some(audit::Event::new("guardrail", "delete").on(id, name))).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

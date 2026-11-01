@@ -11,14 +11,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{R, deployments::follow_rename, search_text, valid_model_name, yes};
+use super::{R, after_change, deployments::follow_rename, search_text, valid_model_name, yes};
 use crate::{
     audit::{self, Actor},
     db,
     error::AdminError,
     model::{AliasRow, DeploymentRow, RouterRow},
     state::AppState,
-    sync::broadcast_reload,
 };
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -166,10 +165,9 @@ pub(super) async fn create_alias(
     check_alias(&mut i, None, &deployments, &routers, &aliases)?;
     let row = alias_row(Uuid::now_v7(), i, Utc::now());
     db::upsert_alias(&state.db, &row).await?;
-    broadcast_reload(&state, "alias created").await;
-    tracing::info!(alias = %row.id, model = %row.model_name, "alias created");
     let view = alias_view(row, &deployments, &routers);
-    audit::Event::new("alias", "create").on(view.id, &view.model_name).details(audit::snapshot(&view)).record(&state, &actor).await;
+    let event = audit::Event::new("alias", "create").on(view.id, &view.model_name).details(audit::snapshot(&view));
+    after_change(&state, &actor, "alias created", view.id, Some(event)).await;
     Ok((StatusCode::CREATED, Json(view)))
 }
 
@@ -200,13 +198,10 @@ pub(super) async fn update_alias(
     if existing.model_name != row.model_name {
         follow_rename(&state, &existing.model_name, &row.model_name).await?;
     }
-    broadcast_reload(&state, "alias updated").await;
-    tracing::info!(alias = %id, "alias updated");
     let view = alias_view(row, &deployments, &routers);
     let changes = audit::changes(&alias_view(existing, &deployments, &routers), &view);
-    if !changes.is_empty() {
-        audit::Event::new("alias", "update").on(id, &view.model_name).details(changes.into()).record(&state, &actor).await;
-    }
+    let event = (!changes.is_empty()).then(|| audit::Event::new("alias", "update").on(id, &view.model_name).details(changes.into()));
+    after_change(&state, &actor, "alias updated", id, event).await;
     Ok(Json(view))
 }
 
@@ -219,9 +214,7 @@ pub(super) async fn delete_alias(State(state): State<AppState>, Extension(actor)
     if !db::delete_alias(&state.db, id).await? {
         return Err(AdminError::not_found());
     }
-    broadcast_reload(&state, "alias deleted").await;
-    tracing::info!(alias = %id, "alias deleted");
-    audit::Event::new("alias", "delete").on(id, existing.model_name).record(&state, &actor).await;
+    after_change(&state, &actor, "alias deleted", id, Some(audit::Event::new("alias", "delete").on(id, existing.model_name))).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::{R, aliases::keep_aliases, csv_ids, project_filter, search_text, tag_filter, valid_model_name, yes};
+use super::{R, after_change, aliases::keep_aliases, csv_ids, project_filter, search_text, tag_filter, valid_model_name, yes};
 use crate::{
     audit::{self, Actor},
     db,
@@ -445,10 +445,9 @@ pub(super) async fn create_deployment(
     let cred_name = validate(&state, None, &i).await?;
     let row = to_row(Uuid::now_v7(), i, Utc::now());
     db::upsert_deployment(&state.db, &row).await?;
-    broadcast_reload(&state, "deployment created").await;
-    tracing::info!(deployment = %row.id, model = %row.model_name, "deployment created");
     let view = view(row, Some(cred_name), None);
-    audit::Event::new("deployment", "create").on(view.id, &view.model_name).details(audit::snapshot(&view)).record(&state, &actor).await;
+    let event = audit::Event::new("deployment", "create").on(view.id, &view.model_name).details(audit::snapshot(&view));
+    after_change(&state, &actor, "deployment created", view.id, Some(event)).await;
     Ok((StatusCode::CREATED, Json(view)))
 }
 
@@ -586,10 +585,9 @@ pub(super) async fn delete_deployment(
         return Err(AdminError::not_found());
     }
     keep_aliases(&state, id, &existing.model_name).await?;
-    broadcast_reload(&state, "deployment deleted").await;
-    tracing::info!(deployment = %id, "deployment deleted");
     let details = json!({ "upstream_model": existing.upstream_model, "provider": existing.provider });
-    audit::Event::new("deployment", "delete").on(id, existing.model_name).details(details).record(&state, &actor).await;
+    let event = audit::Event::new("deployment", "delete").on(id, existing.model_name).details(details);
+    after_change(&state, &actor, "deployment deleted", id, Some(event)).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

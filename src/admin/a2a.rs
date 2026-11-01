@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    R,
+    R, after_change,
     mcp::{check_auth, check_name, check_projects, check_url, secret_destination},
 };
 use crate::{
@@ -23,7 +23,6 @@ use crate::{
     model::normalize_tags,
     oauth::OAuthConfig,
     state::AppState,
-    sync::broadcast_reload,
 };
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -196,10 +195,9 @@ pub(crate) async fn create_a2a_agent(
 ) -> R<(StatusCode, Json<A2aAgentView>)> {
     let row = row(&state, i, None).await?;
     db::insert_a2a_agent(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("an A2A agent"))?;
-    broadcast_reload(&state, "A2A agent created").await;
-    tracing::info!(a2a_agent = %row.id, name = %row.name, "A2A agent created");
     let v = view(row);
-    audit::Event::new("a2a_agent", "create").on(v.id, &v.name).details(audit::snapshot(&v)).record(&state, &actor).await;
+    let event = audit::Event::new("a2a_agent", "create").on(v.id, &v.name).details(audit::snapshot(&v));
+    after_change(&state, &actor, "A2A agent created", v.id, Some(event)).await;
     Ok((StatusCode::CREATED, Json(v)))
 }
 
@@ -234,8 +232,6 @@ pub(crate) async fn update_a2a_agent(
         (&row.auth, row.oauth.as_deref()),
     )
     .await?;
-    broadcast_reload(&state, "A2A agent updated").await;
-    tracing::info!(a2a_agent = %id, "A2A agent updated");
     let v = view(row);
     let mut changes = audit::changes(&before, &v);
     if secret_changed {
@@ -244,9 +240,8 @@ pub(crate) async fn update_a2a_agent(
     if dropped > 0 {
         changes.insert("sign_ins".into(), format!("{dropped} removed").into());
     }
-    if !changes.is_empty() {
-        audit::Event::new("a2a_agent", "update").on(id, &v.name).details(changes.into()).record(&state, &actor).await;
-    }
+    let event = (!changes.is_empty()).then(|| audit::Event::new("a2a_agent", "update").on(id, &v.name).details(changes.into()));
+    after_change(&state, &actor, "A2A agent updated", id, event).await;
     Ok(Json(v))
 }
 
@@ -266,9 +261,7 @@ pub(crate) async fn delete_a2a_agent(
     if !db::delete_a2a_agent(&state.db, id).await? {
         return Err(AdminError::not_found());
     }
-    broadcast_reload(&state, "A2A agent deleted").await;
-    tracing::info!(a2a_agent = %id, "A2A agent deleted");
-    audit::Event::new("a2a_agent", "delete").on(id, name).record(&state, &actor).await;
+    after_change(&state, &actor, "A2A agent deleted", id, Some(audit::Event::new("a2a_agent", "delete").on(id, name))).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

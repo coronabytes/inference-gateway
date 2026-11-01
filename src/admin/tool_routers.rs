@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::Json as SqlJson;
 use uuid::Uuid;
 
-use super::{R, mcp::check_name};
+use super::{R, after_change, mcp::check_name};
 use crate::{
     audit::{self, Actor},
     db,
@@ -22,7 +22,6 @@ use crate::{
     },
     model::Mode,
     state::AppState,
-    sync::broadcast_reload,
 };
 
 /// Routes per router, at most: each is a question in one decision call.
@@ -200,10 +199,9 @@ pub(crate) async fn create_tool_router(
 ) -> R<(StatusCode, Json<ToolRouterView>)> {
     let row = row(&state, i, None).await?;
     db::insert_tool_router(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("a tool router"))?;
-    broadcast_reload(&state, "tool router created").await;
-    tracing::info!(tool_router = %row.id, name = %row.name, "tool router created");
     let v = view(row);
-    audit::Event::new("tool_router", "create").on(v.id, &v.name).details(audit::snapshot(&v)).record(&state, &actor).await;
+    let event = audit::Event::new("tool_router", "create").on(v.id, &v.name).details(audit::snapshot(&v));
+    after_change(&state, &actor, "tool router created", v.id, Some(event)).await;
     Ok((StatusCode::CREATED, Json(v)))
 }
 
@@ -227,13 +225,10 @@ pub(crate) async fn update_tool_router(
     let before = view(existing.clone());
     let row = row(&state, i, Some(&existing)).await?;
     db::update_tool_router(&state.db, &row).await.map_err(AdminError::conflict_on_duplicate("a tool router"))?;
-    broadcast_reload(&state, "tool router updated").await;
-    tracing::info!(tool_router = %id, "tool router updated");
     let v = view(row);
     let changes = audit::changes(&before, &v);
-    if !changes.is_empty() {
-        audit::Event::new("tool_router", "update").on(id, &v.name).details(changes.into()).record(&state, &actor).await;
-    }
+    let event = (!changes.is_empty()).then(|| audit::Event::new("tool_router", "update").on(id, &v.name).details(changes.into()));
+    after_change(&state, &actor, "tool router updated", id, event).await;
     Ok(Json(v))
 }
 
@@ -253,9 +248,7 @@ pub(crate) async fn delete_tool_router(
     if !db::delete_tool_router(&state.db, id).await? {
         return Err(AdminError::not_found());
     }
-    broadcast_reload(&state, "tool router deleted").await;
-    tracing::info!(tool_router = %id, "tool router deleted");
-    audit::Event::new("tool_router", "delete").on(id, name).record(&state, &actor).await;
+    after_change(&state, &actor, "tool router deleted", id, Some(audit::Event::new("tool_router", "delete").on(id, name))).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -11,14 +11,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{R, deployments::follow_rename, search_text, tag_filter, valid_model_name, yes};
+use super::{R, after_change, deployments::follow_rename, search_text, tag_filter, valid_model_name, yes};
 use crate::{
     audit::{self, Actor},
     db,
     error::AdminError,
     model::{AliasRow, DeploymentRow, Mode, Route, RouterRow, normalize_tags},
     state::AppState,
-    sync::broadcast_reload,
 };
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -245,10 +244,9 @@ pub(super) async fn create_router(
     validate_router(&state, None, &mut i).await?;
     let row = router_row(Uuid::now_v7(), i, Utc::now());
     db::upsert_router(&state.db, &row).await?;
-    broadcast_reload(&state, "router created").await;
-    tracing::info!(router = %row.id, model = %row.model_name, "router created");
     let view = router_view(row);
-    audit::Event::new("router", "create").on(view.id, &view.model_name).details(audit::snapshot(&view)).record(&state, &actor).await;
+    let event = audit::Event::new("router", "create").on(view.id, &view.model_name).details(audit::snapshot(&view));
+    after_change(&state, &actor, "router created", view.id, Some(event)).await;
     Ok((StatusCode::CREATED, Json(view)))
 }
 
@@ -274,13 +272,10 @@ pub(super) async fn update_router(
     if existing.model_name != row.model_name {
         follow_rename(&state, &existing.model_name, &row.model_name).await?;
     }
-    broadcast_reload(&state, "router updated").await;
-    tracing::info!(router = %id, "router updated");
     let view = router_view(row);
     let changes = audit::changes(&router_view(existing), &view);
-    if !changes.is_empty() {
-        audit::Event::new("router", "update").on(id, &view.model_name).details(changes.into()).record(&state, &actor).await;
-    }
+    let event = (!changes.is_empty()).then(|| audit::Event::new("router", "update").on(id, &view.model_name).details(changes.into()));
+    after_change(&state, &actor, "router updated", id, event).await;
     Ok(Json(view))
 }
 
@@ -297,8 +292,6 @@ pub(super) async fn delete_router(
     if !db::delete_router(&state.db, id).await? {
         return Err(AdminError::not_found());
     }
-    broadcast_reload(&state, "router deleted").await;
-    tracing::info!(router = %id, "router deleted");
-    audit::Event::new("router", "delete").on(id, existing.model_name).record(&state, &actor).await;
+    after_change(&state, &actor, "router deleted", id, Some(audit::Event::new("router", "delete").on(id, existing.model_name))).await;
     Ok(StatusCode::NO_CONTENT)
 }
