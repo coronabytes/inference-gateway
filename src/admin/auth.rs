@@ -367,6 +367,8 @@ const USER_ROUTES: &[(Method, &str)] = &[
     (Method::GET, "/keys/{id}/bodies"),
     (Method::DELETE, "/keys/{id}/bodies"),
     (Method::GET, "/usage/keys"),
+    (Method::GET, "/keys/{id}/rates"),
+    (Method::GET, "/keys/{id}/spend"),
     (Method::GET, "/playground/options"),
     (Method::POST, "/playground/{api}"),
     (Method::POST, "/playground/a2a/{agent}"),

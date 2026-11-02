@@ -221,6 +221,12 @@ export type NamedItem = S["NamedItem"];
 /** A model a key's allowed models may name (`GET /models/options`). */
 export type ModelOption = S["ModelOption"];
 
+/** A key's busiest minute per hour over the last week, and the p95 (`GET /keys/{id}/rates`). */
+export type KeyRates = S["KeyRates"];
+
+/** A key's spend per budget period, with total and average (`GET /keys/{id}/spend`). */
+export type KeySpend = S["KeySpend"];
+
 /** What the playground offers for a key (`GET /playground/options`). */
 export type PlaygroundOptions = S["PlaygroundOptions"];
 

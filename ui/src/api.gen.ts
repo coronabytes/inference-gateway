@@ -1024,6 +1024,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/keys/{id}/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Key rates
+         * @description The key's requests and tokens per minute over the last 7 days, for setting its limits.
+         */
+        get: operations["key_rates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/keys/{id}/regenerate": {
         parameters: {
             query?: never;
@@ -1058,6 +1078,27 @@ export interface paths {
          * @description Starts the key's current budget period over.
          */
         post: operations["reset_spend"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/keys/{id}/spend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Key spend
+         * @description The key's spend per day, week or month, as its budget counts it, with the total and the
+         *     average per period.
+         */
+        get: operations["key_spend"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1259,8 +1300,8 @@ export interface paths {
         };
         /**
          * Model names
-         * @description The models a key in `project` may be limited to, by name: deployments, auto routers and
-         *     aliases, whatever their tags.
+         * @description The models a key in `project` holding `tags` may be limited to, by name: deployments, auto
+         *     routers and aliases.
          */
         get: operations["model_options"];
         put?: never;
@@ -3601,6 +3642,24 @@ export interface components {
              */
             prompt_logging?: boolean;
         };
+        /**
+         * @description A key's busiest minute in each hour of the last 7 days, and the 95th percentiles over the
+         *     minutes it had traffic: what its requests and tokens per minute limits are measured against.
+         */
+        KeyRates: {
+            /** @description One point per hour, oldest first. */
+            series: components["schemas"]["RatePoint"][];
+            /**
+             * Format: int64
+             * @description Requests per minute; None without traffic.
+             */
+            rpm_p95: number | null;
+            /**
+             * Format: int64
+             * @description Tokens per minute; None without traffic.
+             */
+            tpm_p95: number | null;
+        };
         /** @description A key's new secret, shown this once. The old one stops working. */
         KeyRegenerated: {
             key: string;
@@ -3611,6 +3670,19 @@ export interface components {
          * @enum {string}
          */
         KeyScope: "inference" | "admin" | "all" | "project";
+        /** @description A key's spend per budget period, since it was created. */
+        KeySpend: {
+            period: components["schemas"]["BudgetPeriod"];
+            /** @description One point per period, oldest first; the last is the current one. */
+            series: components["schemas"]["SpendPoint"][];
+            /** Format: double */
+            total_usd: number;
+            /**
+             * Format: double
+             * @description Average over the finished periods; None before the first one ends.
+             */
+            avg_usd: number | null;
+        };
         KeyUsageRow: {
             /** Format: uuid */
             key_id: string | null;
@@ -4213,6 +4285,20 @@ export interface components {
         ProviderAnswer: Record<string, unknown>;
         /** @enum {string} */
         ProviderKind: "openai" | "azure" | "bedrock" | "anthropic" | "typesafe" | "mistral" | "vertex" | "gemini";
+        RatePoint: {
+            /**
+             * Format: int64
+             * @description Start of the hour (Unix seconds).
+             */
+            ts: number;
+            /**
+             * Format: int64
+             * @description The hour's busiest minute: its requests and its tokens (not necessarily the same minute).
+             */
+            rpm: number;
+            /** Format: int64 */
+            tpm: number;
+        };
         /** @description What readiness depends on, and whether each is there. */
         Ready: {
             postgres: boolean;
@@ -4583,6 +4669,15 @@ export interface components {
          * @enum {string}
          */
         Source: "input" | "output";
+        SpendPoint: {
+            /**
+             * Format: int64
+             * @description Start of the period (Unix seconds).
+             */
+            ts: number;
+            /** Format: double */
+            cost_usd: number;
+        };
         /** @description The single sign-on button on the sign-in screen. */
         SsoButton: {
             display_name: string;
@@ -7099,6 +7194,37 @@ export interface operations {
             };
         };
     };
+    key_rates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Hourly peaks and percentiles. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeyRates"];
+                };
+            };
+            /** @description No such key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
     regenerate_key: {
         parameters: {
             query?: never;
@@ -7147,6 +7273,49 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    key_spend: {
+        parameters: {
+            query?: {
+                /** @description The budget period to sum by: `day` (the default, the last 30), `week` (the last 12) or `month` (the last 12). */
+                period?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Spend per period. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeySpend"];
+                };
+            };
+            /** @description Invalid period. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+            /** @description No such key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
             };
         };
     };
@@ -7539,6 +7708,8 @@ export interface operations {
                  *     outside projects.
                  */
                 project?: string;
+                /** @description The key's tags, as `eu,azure`: models none of whose deployments they reach are left out. */
+                tags?: string;
             };
             header?: never;
             path?: never;

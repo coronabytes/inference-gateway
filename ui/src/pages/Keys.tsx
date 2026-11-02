@@ -23,7 +23,6 @@ import {
   MenuButton,
   MultiSelect,
   PageActions,
-  Segmented,
   Select,
   Tabs,
   TextInput,
@@ -33,6 +32,7 @@ import {
 } from "../components/controls";
 import { GuardrailList, TagList, TagPicker } from "../components/Tags";
 import { KeySignIns, takeSignInResult } from "./KeySignIns";
+import { KeyRateChart, KeySpendChart } from "./KeyUsage";
 import {
   Badge,
   BudgetMeter,
@@ -569,6 +569,7 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
           user={user}
           defaultProject={(editing.mode === "create" && editing.project) || filteredProject}
           initial={editing.mode === "edit" ? toInput(editing.key) : undefined}
+          keyId={editing.mode === "edit" ? editing.key.id : undefined}
           onClose={() => setEditing(null)}
           onDelete={
             editing.mode === "edit"
@@ -655,6 +656,7 @@ function KeyForm({
   user,
   defaultProject,
   initial,
+  keyId,
   onSave,
   onDelete,
   onDeleteStoredPrompts,
@@ -672,6 +674,8 @@ function KeyForm({
   /** A new key's project. */
   defaultProject: string | null;
   initial?: KeyInput;
+  /** The key being edited, whose usage the Limits tab shows. */
+  keyId?: string;
   onSave: (k: KeyInput) => Promise<void>;
   /** Offered when editing: closes the dialog and asks for confirmation. */
   onDelete?: () => void;
@@ -683,8 +687,7 @@ function KeyForm({
   const [scope, setScope] = useState<KeyScope>(initial?.scope ?? "inference");
   const [project, setProject] = useState(initial ? (initial.project_id ?? "") : (defaultProject ?? (user ? (projects[0]?.id ?? "") : "")));
   const [allowedTags, setAllowedTags] = useState<string[]>(initial?.allowed_tags ?? []);
-  // Picked models replace tags: the key calls just those models, whatever their tags.
-  const [pickModels, setPickModels] = useState(!!initial?.allowed_models?.length);
+  // Picked models narrow the key to those names (none: all); its tags still choose among their deployments (an EU one, say).
   const [allowedModels, setAllowedModels] = useState<string[]>(initial?.allowed_models ?? []);
   const [guardrailIds, setGuardrailIds] = useState<string[]>(initial?.guardrail_ids ?? []);
   const [webSearch, setWebSearch] = useState(initial?.web_search ?? true);
@@ -707,6 +710,10 @@ function KeyForm({
 
   // Tags, limits and budget only apply to inference calls; an admin-only key saves without them.
   const inference = callsModels(scope);
+  // The form's tab; an admin-only key has General alone.
+  const [tab, setTab] = useState<"general" | "access" | "limits" | "logging">("general");
+  const shown = inference ? tab : "general";
+  const panel = (t: typeof tab) => (t === shown ? "form" : "form inactive");
   const projectGuardrails = guardrails
     .filter((g) => projects.find((p) => p.id === project)?.guardrail_ids.includes(g.id))
     .map((g) => g.name);
@@ -726,15 +733,21 @@ function KeyForm({
   }[loggingPolicy];
   const amount = optNum(budget);
   const budgetMissing = inference && period !== "" && amount == null;
-  // The models a key in the chosen project may be limited to; picks it no longer offers stay listed, to be removed.
-  const models = useAdminData<ModelOption[]>(inference && pickModels ? `/models/options${project ? `?project=${project}` : ""}` : null);
+  // The models a key in the chosen project with these tags may be limited to; picks it no longer offers stay listed, to be removed.
+  const modelQuery = new URLSearchParams({
+    ...(project && { project }),
+    ...(allowedTags.length && { tags: allowedTags.join(",") }),
+  }).toString();
+  const models = useAdminData<ModelOption[]>(inference ? `/models/options${modelQuery ? `?${modelQuery}` : ""}` : null);
+  // How many prompts and responses the key has stored, for the Logging tab's delete button.
+  const bodies = useAdminData<{ stored: number }>(keyId && onDeleteStoredPrompts ? `/keys/${keyId}/bodies` : null);
+  const stored = bodies.data?.stored;
   const modelOptions = [
     ...(models.data ?? []).map((m) => ({ value: m.name, label: m.name, note: m.router ? "router" : undefined })),
     ...allowedModels
       .filter((m) => models.data && !models.data.some((o) => o.name === m))
       .map((m) => ({ value: m, label: m, note: "unavailable" })),
   ];
-  const modelsMissing = inference && pickModels && allowedModels.length === 0;
 
   const submit = async () => {
     setBusy(true);
@@ -743,8 +756,8 @@ function KeyForm({
         name,
         scope,
         project_id: project || null,
-        allowed_models: inference && pickModels ? allowedModels : [],
-        allowed_tags: inference && !pickModels ? allowedTags : [],
+        allowed_models: inference ? allowedModels : [],
+        allowed_tags: inference ? allowedTags : [],
         rpm_limit: inference ? optInt(rpm) : null,
         tpm_limit: inference ? optInt(tpm) : null,
         max_budget_usd: inference && period ? amount : null,
@@ -769,6 +782,21 @@ function KeyForm({
     <Modal
       title={initial ? "Edit key" : "New key"}
       onClose={onClose}
+      tabs={
+        inference && (
+          <Tabs
+            label="Key settings"
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: "general", label: "General" },
+              { value: "access", label: "Access" },
+              { value: "limits", label: "Limits" },
+              { value: "logging", label: "Logging" },
+            ]}
+          />
+        )
+      }
       footer={
         <>
           {onDelete && (
@@ -776,99 +804,73 @@ function KeyForm({
               Delete
             </Button>
           )}
-          {onDeleteStoredPrompts && (
-            <Button variant="ghost" onClick={onDeleteStoredPrompts}>
-              Delete stored prompts
-            </Button>
-          )}
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={busy || !name.trim() || budgetMissing || modelsMissing} onClick={submit}>
+          <Button variant="primary" disabled={busy || !name.trim() || budgetMissing} onClick={submit}>
             {initial ? "Save" : "Create key"}
           </Button>
         </>
       }
     >
       <ErrorBanner
-        error={error ?? models.error}
+        error={error ?? models.error ?? bodies.error}
         onDismiss={() => {
           setError(null);
           models.setError(null);
+          bodies.setError(null);
         }}
       />
-      <div className="form">
-        <TextInput
-          caption="Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-          placeholder="e.g. team-search-prod"
-          required
-        />
-        {projects.length > 0 && (
-          <Select
-            caption="Project"
-            hint="Groups the key on the Access page. While the project is inactive, the key is refused."
-            value={project}
-            onChange={changeProject}
-            options={[
-              ...(user ? [] : [{ value: "", label: "None" }]),
-              ...projects.map((p) => ({ value: p.id, label: p.name, note: p.enabled ? undefined : "inactive" })),
-            ]}
+      {/* Every panel is there, the inactive ones hidden, so the dialog keeps the tallest one's size. */}
+      <div className="tab-panels">
+        <div className={panel("general")}>
+          <TextInput
+            caption="Name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            placeholder="e.g. team-search-prod"
+            required
           />
-        )}
-        <Select
-          caption="Scope"
-          hint={SCOPE_HINT[scope]}
-          value={scope}
-          onChange={(s) => setScope(s as KeyScope)}
-          options={scopesFor(!!project).map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
-        />
+          {projects.length > 0 && (
+            <Select
+              caption="Project"
+              hint="Groups the key on the Access page. While the project is inactive, the key is refused."
+              value={project}
+              onChange={changeProject}
+              options={[
+                ...(user ? [] : [{ value: "", label: "None" }]),
+                ...projects.map((p) => ({ value: p.id, label: p.name, note: p.enabled ? undefined : "inactive" })),
+              ]}
+            />
+          )}
+          <Select
+            caption="Scope"
+            hint={SCOPE_HINT[scope]}
+            value={scope}
+            onChange={(s) => setScope(s as KeyScope)}
+            options={scopesFor(!!project).map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
+          />
+          <TextInput caption="Expires" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
+        </div>
         {inference && (
-          <>
-            <fieldset>
-              {/* The section's title is a pill: what limits the key's access, tags or models picked one by one. */}
-              <legend className="with-tabs">
-                <Segmented
-                  caption="Access"
-                  label="Limit access by"
-                  hint={
-                    pickModels
-                      ? "This key calls only the models picked below, whatever their tags. MCP servers and A2A agents are not limited by tags."
-                      : "Tags decide which models, MCP servers and A2A agents this key may use."
-                  }
-                  className="legend-tabs"
-                  value={pickModels ? "models" : "tags"}
-                  onChange={(v) => setPickModels(v === "models")}
-                  options={[
-                    { value: "tags", label: "Tags" },
-                    { value: "models", label: "Models" },
-                  ]}
-                />
-              </legend>
-              {pickModels ? (
-                <MultiSelect
-                  caption="Models"
-                  hint="The deployments, routers and aliases this key may call, whatever their tags. A router routes only to those of its models picked here too. MCP servers and A2A agents are not limited by tags."
-                  values={allowedModels}
-                  onChange={setAllowedModels}
-                  none="None"
-                  required
-                  options={modelOptions}
-                />
-              ) : (
-                <TagPicker
-                  caption="Tags"
-                  hint={
-                    allowedTags.length
-                      ? "This key can use deployments, routers, MCP servers and A2A agents without tags, and those whose tags are all selected here."
-                      : "No tags selected: this key can use every model, MCP server and A2A agent, except those limited to other projects."
-                  }
-                  options={tags}
-                  value={allowedTags}
-                  onChange={setAllowedTags}
-                />
-              )}
-            </fieldset>
+          <div className={panel("access")}>
+            <MultiSelect
+              caption="Models"
+              hint="The deployments, routers and aliases this key may call; only those its tags reach are offered. A router routes only to those of its models picked here too. All: every model its tags reach."
+              values={allowedModels}
+              onChange={setAllowedModels}
+              options={modelOptions}
+            />
+            <TagPicker
+              caption="Tags"
+              hint={
+                allowedTags.length
+                  ? "This key can use deployments, routers, MCP servers and A2A agents without tags, and those whose tags are all selected here: with eu, only the EU deployments of each model."
+                  : "No tags selected: this key can use every deployment, MCP server and A2A agent, except those limited to other projects."
+              }
+              options={tags}
+              value={allowedTags}
+              onChange={setAllowedTags}
+            />
             {guardrails.length > 0 && (
               <MultiSelect
                 caption="Guardrails"
@@ -883,80 +885,96 @@ function KeyForm({
                 options={guardrails.map((g) => ({ value: g.id, label: g.name, note: g.description }))}
               />
             )}
+            <Toggle
+              caption="Web search"
+              hint={
+                projectForbidsSearch
+                  ? "The key's project forbids web search, so none of its keys can turn it on."
+                  : "Whether requests may have the model search the web, billed per search at the deployment's price. Off, they are refused."
+              }
+              checked={webSearch && !projectForbidsSearch}
+              onChange={setWebSearch}
+              disabled={projectForbidsSearch}
+            />
+          </div>
+        )}
+        {inference && (
+          <div className={panel("limits")}>
             <div className="row">
-              <Toggle
-                caption="Web search"
-                hint={
-                  projectForbidsSearch
-                    ? "The key's project forbids web search, so none of its keys can turn it on."
-                    : "Whether requests may have the model search the web, billed per search at the deployment's price. Off, they are refused."
-                }
-                checked={webSearch && !projectForbidsSearch}
-                onChange={setWebSearch}
-                disabled={projectForbidsSearch}
+              <TextInput
+                caption="Requests / minute"
+                inputMode="numeric"
+                value={rpm}
+                onChange={(e) => setRpm(e.target.value)}
+                placeholder="unlimited"
               />
-              <Toggle
-                caption="Prompt logging"
-                hint={loggingHint}
-                checked={logged}
-                onChange={setPromptLogging}
-                disabled={loggingPolicy !== "allow"}
+              <TextInput
+                caption="Tokens / minute"
+                inputMode="numeric"
+                value={tpm}
+                onChange={(e) => setTpm(e.target.value)}
+                placeholder="unlimited"
               />
             </div>
+            {keyId && <KeyRateChart keyId={keyId} />}
+            <div className="row">
+              <Select
+                caption="Budget"
+                hint={period ? "Resets at the start of each UTC day, week (Monday) or month." : undefined}
+                value={period}
+                onChange={(p) => setPeriod(p as BudgetPeriod | "")}
+                options={[
+                  { value: "", label: "Unlimited" },
+                  { value: "day", label: "Per day" },
+                  { value: "week", label: "Per week" },
+                  { value: "month", label: "Per month" },
+                ]}
+              />
+              {/* Always there, so the form keeps its shape; it takes the focus once a period is picked. */}
+              <TextInput
+                key={period ? "budget" : "unlimited"}
+                caption="Amount (USD)"
+                inputMode="decimal"
+                value={period ? budget : ""}
+                onChange={(e) => setBudget(e.target.value)}
+                placeholder={period ? "required" : "unlimited"}
+                disabled={!period}
+                required={!!period}
+                autoFocus={!!period && !initial}
+              />
+            </div>
+            {/* Unlimited: what it spends per day. */}
+            {keyId && <KeySpendChart keyId={keyId} period={period || "day"} />}
+          </div>
+        )}
+        {inference && (
+          <div className={panel("logging")}>
+            <Toggle
+              caption="Prompt logging"
+              hint={loggingHint}
+              checked={logged}
+              onChange={setPromptLogging}
+              disabled={loggingPolicy !== "allow"}
+            />
             {loggingPolicy === "allow" && promptLogging && !initial?.prompt_logging && (
               <Banner tone="warning">
                 This key's prompts and responses will be stored, unencrypted, until logging is turned off. Use it for debugging, not for
                 production traffic.
               </Banner>
             )}
-            <fieldset>
-              <legend>Limits</legend>
-              <div className="row">
-                <TextInput
-                  caption="Requests / minute"
-                  inputMode="numeric"
-                  value={rpm}
-                  onChange={(e) => setRpm(e.target.value)}
-                  placeholder="unlimited"
-                />
-                <TextInput
-                  caption="Tokens / minute"
-                  inputMode="numeric"
-                  value={tpm}
-                  onChange={(e) => setTpm(e.target.value)}
-                  placeholder="unlimited"
-                />
+            {onDeleteStoredPrompts && (
+              <div>
+                <Button variant="danger" onClick={onDeleteStoredPrompts} disabled={stored === 0}>
+                  {stored == null
+                    ? "Delete stored prompts"
+                    : stored === 0
+                      ? "No stored prompts"
+                      : `Delete ${stored.toLocaleString()} stored prompt${stored === 1 ? "" : "s"}`}
+                </Button>
               </div>
-              <div className="row">
-                <Select
-                  caption="Budget"
-                  hint={period ? "Resets at the start of each UTC day, week (Monday) or month." : undefined}
-                  value={period}
-                  onChange={(p) => setPeriod(p as BudgetPeriod | "")}
-                  options={[
-                    { value: "", label: "Unlimited" },
-                    { value: "day", label: "Per day" },
-                    { value: "week", label: "Per week" },
-                    { value: "month", label: "Per month" },
-                  ]}
-                />
-                {/* Always there, so the form keeps its shape; it takes the focus once a period is picked. */}
-                <TextInput
-                  key={period ? "budget" : "unlimited"}
-                  caption="Amount (USD)"
-                  inputMode="decimal"
-                  value={period ? budget : ""}
-                  onChange={(e) => setBudget(e.target.value)}
-                  placeholder={period ? "required" : "unlimited"}
-                  disabled={!period}
-                  required={!!period}
-                  autoFocus={!!period && !initial}
-                />
-              </div>
-            </fieldset>
-          </>
+            )}
+          </div>
         )}
-        <TextInput caption="Expires" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
       </div>
     </Modal>
   );

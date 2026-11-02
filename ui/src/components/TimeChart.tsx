@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { timeLabel } from "../format";
 
 export interface Series {
@@ -12,6 +12,8 @@ interface Props {
   kind: "line" | "bars";
   title: string;
   subtitle?: string;
+  /** Beside the title: a small `Segmented` that switches what the chart shows. */
+  controls?: ReactNode;
   timestamps: number[];
   stepSecs: number;
   series: Series[];
@@ -39,7 +41,7 @@ function barPath(x: number, y: number, w: number, h: number, round: boolean): st
   return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
 }
 
-export function TimeChart({ kind, title, subtitle, timestamps, stepSecs, series, format, height = 200 }: Props) {
+export function TimeChart({ kind, title, subtitle, controls, timestamps, stepSecs, series, format, height = 200 }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
   const [hover, setHover] = useState<number | null>(null);
@@ -104,6 +106,7 @@ export function TimeChart({ kind, title, subtitle, timestamps, stepSecs, series,
     <figure className="chart">
       <figcaption>
         <div className="chart-title">{title}</div>
+        {controls}
         {subtitle && <div className="chart-subtitle">{subtitle}</div>}
         {series.length > 1 && (
           <ul className="legend">

@@ -330,6 +330,8 @@ pub(crate) struct ModelOptionsQuery {
     /// The key's project: models limited to other projects are left out. Omitted for a key
     /// outside projects.
     project: Option<Uuid>,
+    /// The key's tags, as `eu,azure`: models none of whose deployments they reach are left out.
+    tags: Option<String>,
 }
 
 /// A model a key's `allowed_models` may name.
@@ -342,8 +344,8 @@ pub(crate) struct ModelOption {
 
 /// Model names
 ///
-/// The models a key in `project` may be limited to, by name: deployments, auto routers and
-/// aliases, whatever their tags.
+/// The models a key in `project` holding `tags` may be limited to, by name: deployments, auto
+/// routers and aliases.
 #[utoipa::path(get, path = "/models/options", tag = "Virtual keys", params(ModelOptionsQuery),
     responses(
         (status = 200, description = "The models.", body = Vec<ModelOption>),
@@ -359,8 +361,10 @@ pub(super) async fn model_options(
         return Err(AdminError::not_found());
     }
     let snap = state.registry.snapshot();
-    // What a key in the project without tags or allowed models may call.
-    let probe = VirtualKey { project_id: q.project, ..Default::default() };
+    let tags = q.tags.as_deref().unwrap_or("").split(',').map(String::from).collect();
+    let allowed_tags = normalize_tags(tags).map_err(AdminError::bad_request)?;
+    // What a key in the project with these tags and no allowed models may call.
+    let probe = VirtualKey { project_id: q.project, allowed_tags, ..Default::default() };
     let models = crate::api::models::names(&snap, &probe)
         .into_iter()
         .map(|name| ModelOption { name: name.clone(), router: snap.routers.contains_key(snap.resolve(name)) })

@@ -57,12 +57,15 @@ export function Modal({
   onClose,
   children,
   footer,
+  tabs,
   size,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** `Tabs` under the title, which stay in view like the footer while the content scrolls. */
+  tabs?: ReactNode;
   /** Wider than the default 520px: `medium` 600px, for single URLs on a line; `wide` 820px. */
   size?: "medium" | "wide";
 }) {
@@ -106,6 +109,7 @@ export function Modal({
             ×
           </button>
         </div>
+        {tabs && <div className="modal-tabs">{tabs}</div>}
         <div className="modal-body" ref={body}>
           {children}
         </div>
