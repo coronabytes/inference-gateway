@@ -36,7 +36,7 @@ ARG GATEWAY_VERSION=dev
 RUN cargo build --release --locked && cp target/release/inference-gateway /gateway
 
 # --- runtime: distroless static, non-root, no shell ----------------------------
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 COPY --from=build /gateway /gateway
 COPY --from=ui /ui/dist /ui
 COPY LICENSE /LICENSE
