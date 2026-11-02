@@ -1,6 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, setListParam, type AutoRouter, type AutoRouterListItem, type Credential, type Deployment, type Mode, type ModelAlias, type NamedItem, type TagInfo } from "../api";
-import { Banner, Button, MenuButton, MultiSelect, Select, SplitButton, Tabs, TextInput, useDebounced, useHashTab } from "../components/controls";
+import {
+  api,
+  setListParam,
+  type AutoRouter,
+  type AutoRouterListItem,
+  type Credential,
+  type Deployment,
+  type Mode,
+  type ModelAlias,
+  type NamedItem,
+  type TagInfo,
+} from "../api";
+import {
+  Banner,
+  Button,
+  MenuButton,
+  MultiSelect,
+  Select,
+  SplitButton,
+  Tabs,
+  TextInput,
+  useDebounced,
+  useHashTab,
+} from "../components/controls";
 import { PRICE_FIELDS, deploymentPrices, priceDifferences, type DeploymentPrices } from "../pricing";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, TokenPrices, type ConfirmRequest } from "../components/ui";
 import { compact, ms } from "../format";
@@ -34,7 +56,16 @@ interface PriceCheck {
 /** A listed deployment as its update takes it: without the fields the server reports but does not
  *  take back, which it refuses as unknown. */
 function deploymentInput(d: Deployment) {
-  const { id: _id, credential_name: _c, cooldown_secs: _cd, health: _h, reasoning_efforts: _e, created_at: _ca, updated_at: _u, ...input } = d;
+  const {
+    id: _id,
+    credential_name: _c,
+    cooldown_secs: _cd,
+    health: _h,
+    reasoning_efforts: _e,
+    created_at: _ca,
+    updated_at: _u,
+    ...input
+  } = d;
   return input;
 }
 
@@ -55,7 +86,9 @@ const pricesOf = (d: Deployment): DeploymentPrices => ({
 function describeDrift(d: Deployment, drift: PriceDrift): string {
   const current = pricesOf(d);
   const show = (v: number | null) => (v === null ? "none" : String(v));
-  return drift.fields.map((k) => `${PRICE_FIELDS.find((f) => f.key === k)!.label} ${show(current[k])} → ${show(drift.expected[k])}`).join(", ");
+  return drift.fields
+    .map((k) => `${PRICE_FIELDS.find((f) => f.key === k)!.label} ${show(current[k])} → ${show(drift.expected[k])}`)
+    .join(", ");
 }
 
 /** Adaptive routing gives the deployment noticeably less than its weight. */
@@ -137,7 +170,8 @@ export function Models() {
   const aliasQuery = new URLSearchParams();
   if (search) aliasQuery.set("q", search);
   // Null when the filters leave none of them.
-  const listed = (shown: boolean, path: string, q: URLSearchParams) => (shown ? `${path}${q.size ? `?${q.toString().replace(/%2C/g, ",")}` : ""}` : null);
+  const listed = (shown: boolean, path: string, q: URLSearchParams) =>
+    shown ? `${path}${q.size ? `?${q.toString().replace(/%2C/g, ",")}` : ""}` : null;
   const depPath = listed(modeFilter === "all" || MODES.some((m) => m.value === modeFilter), "/deployments", depQuery);
   const routerPath = listed(noOwnFilters && (modeFilter === "all" || modeFilter === "router"), "/routers", routerQuery);
   const aliasPath = listed(
@@ -165,7 +199,11 @@ export function Models() {
   // What the filters and the deployment editor offer: not reloaded as the filters change.
   const loadContext = useCallback(async () => {
     try {
-      const [c, p, t] = await Promise.all([api<Credential[]>("/credentials"), api<NamedItem[]>("/projects/options"), api<TagInfo[]>("/tags")]);
+      const [c, p, t] = await Promise.all([
+        api<Credential[]>("/credentials"),
+        api<NamedItem[]>("/projects/options"),
+        api<TagInfo[]>("/tags"),
+      ]);
       setCreds(c);
       setProjects(p);
       setTags(t);
@@ -189,7 +227,11 @@ export function Models() {
   }, [loadList, tab]);
 
   const loadAll = async (): Promise<AllModels> => {
-    const [d, r, a] = await Promise.all([api<Deployment[]>("/deployments"), api<AutoRouterListItem[]>("/routers"), api<ModelAlias[]>("/aliases")]);
+    const [d, r, a] = await Promise.all([
+      api<Deployment[]>("/deployments"),
+      api<AutoRouterListItem[]>("/routers"),
+      api<ModelAlias[]>("/aliases"),
+    ]);
     const every = { deps: d, routers: r, aliases: a };
     setAll(every);
     return every;
@@ -249,7 +291,10 @@ export function Models() {
   /** Take the catalog's prices for one deployment, and remember its catalog entry. */
   const acceptPrice = (d: Deployment, drift: PriceDrift) =>
     act(async () => {
-      await api(`/deployments/${d.id}`, { method: "PUT", json: { ...deploymentInput(d), ...drift.expected, base_model: d.base_model ?? drift.key } });
+      await api(`/deployments/${d.id}`, {
+        method: "PUT",
+        json: { ...deploymentInput(d), ...drift.expected, base_model: d.base_model ?? drift.key },
+      });
       setPriceCheck((pc) => {
         if (!pc) return pc;
         const next = new Map(pc.drift);
@@ -381,7 +426,12 @@ export function Models() {
             <>
               <Select
                 caption="Mode"
-                options={[{ value: "all", label: "All" }, ...MODES, { value: "router", label: "Router" }, { value: "alias", label: "Alias" }]}
+                options={[
+                  { value: "all", label: "All" },
+                  ...MODES,
+                  { value: "router", label: "Router" },
+                  { value: "alias", label: "Alias" },
+                ]}
                 value={modeFilter}
                 onChange={(m) => setModeFilter(m as Mode | "router" | "alias" | "all")}
               />
@@ -405,7 +455,13 @@ export function Models() {
                   onChange={setProjectFilter}
                 />
               )}
-              <TextInput caption="Model" type="search" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="filter by name" />
+              <TextInput
+                caption="Model"
+                type="search"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="filter by name"
+              />
               {filtering && (
                 <span className="muted small">
                   {shownCount} {shownCount === 1 ? "model matches" : "models match"}
@@ -433,7 +489,12 @@ export function Models() {
                 disabled: !hasModels,
                 title: "Another model name for an existing model",
               },
-              { label: checking ? "Checking prices…" : "Check prices", onClick: checkPrices, disabled: checking || !hasModels, title: "Compare prices with the price catalog" },
+              {
+                label: checking ? "Checking prices…" : "Check prices",
+                onClick: checkPrices,
+                disabled: checking || !hasModels,
+                title: "Compare prices with the price catalog",
+              },
             ]}
           >
             Add deployment
@@ -467,7 +528,8 @@ export function Models() {
       )}
       {creds?.length === 0 && (
         <Banner tone="warning">
-          Deployments authenticate with a stored credential. <a href="#/models/credentials">Create a credential</a> first, then add deployments that use it.
+          Deployments authenticate with a stored credential. <a href="#/models/credentials">Create a credential</a> first, then add
+          deployments that use it.
         </Banner>
       )}
       {creds && !hasModels && <div className="empty-card">No models yet. Add a deployment to start routing traffic.</div>}
@@ -507,7 +569,10 @@ export function Models() {
               const drift = priceCheck?.drift.get(d.id);
               return (
                 <li key={d.id} className="list-item">
-                  <div className="dep-upstream" title={d.base_model ? `${d.upstream_model} (base model ${d.base_model})` : d.upstream_model}>
+                  <div
+                    className="dep-upstream"
+                    title={d.base_model ? `${d.upstream_model} (base model ${d.base_model})` : d.upstream_model}
+                  >
                     <TagList tags={d.tags} projects={projectNames(d.project_ids, projects)} />
                     <div className="mono clip">{d.upstream_model}</div>
                     {d.base_model && d.base_model !== d.upstream_model && <div className="muted small clip">{d.base_model}</div>}
@@ -545,7 +610,11 @@ export function Models() {
                         output={d.mode !== "embedding" ? d.output_cost_per_mtok : undefined}
                         long={
                           d.long_context_threshold != null
-                            ? { threshold: d.long_context_threshold, input: d.long_input_cost_per_mtok, output: d.long_output_cost_per_mtok }
+                            ? {
+                                threshold: d.long_context_threshold,
+                                input: d.long_input_cost_per_mtok,
+                                output: d.long_output_cost_per_mtok,
+                              }
                             : undefined
                         }
                       />
@@ -560,9 +629,15 @@ export function Models() {
                           {d.mode === "rerank"
                             ? `${drift.expected.cost_per_k_searches ?? 0}`
                             : `${drift.expected.input_cost_per_mtok} · ${drift.expected.output_cost_per_mtok}`}
-                          {d.mode === "chat" && drift.fields.includes("cost_per_k_searches") && `, ${drift.expected.cost_per_k_searches ?? 0} per 1K web searches`}
+                          {d.mode === "chat" &&
+                            drift.fields.includes("cost_per_k_searches") &&
+                            `, ${drift.expected.cost_per_k_searches ?? 0} per 1K web searches`}
                         </span>
-                        <Button className="accept" onClick={() => acceptPrice(d, drift)} aria-label={`Accept catalog prices for ${d.upstream_model}`}>
+                        <Button
+                          className="accept"
+                          onClick={() => acceptPrice(d, drift)}
+                          aria-label={`Accept catalog prices for ${d.upstream_model}`}
+                        >
                           Accept
                         </Button>
                       </div>

@@ -21,7 +21,11 @@ const GROUPS: { title: string; items: Item[] }[] = [
   {
     title: "Routing",
     items: [
-      { key: "max_attempts", caption: "Attempts per request", hint: "Deployments tried per request on rate limits, server errors and timeouts, 1 to 10." },
+      {
+        key: "max_attempts",
+        caption: "Attempts per request",
+        hint: "Deployments tried per request on rate limits, server errors and timeouts, 1 to 10.",
+      },
       { key: "cooldown_secs", caption: "Cooldown after a failure (s)", hint: "How long a failing deployment is skipped." },
       {
         key: "reload_secs",
@@ -74,7 +78,11 @@ const GROUPS: { title: string; items: Item[] }[] = [
     items: [
       { key: "max_body_mb", caption: "Request body (MB)", hint: "The largest request body." },
       { key: "header_timeout_secs", caption: "Header timeout (s)", hint: "Time a client has to send its request headers." },
-      { key: "body_timeout_secs", caption: "Body timeout (s)", hint: "Time a client has to send its whole request body. Responses are not limited." },
+      {
+        key: "body_timeout_secs",
+        caption: "Body timeout (s)",
+        hint: "Time a client has to send its whole request body. Responses are not limited.",
+      },
       { key: "max_connections", caption: "Client connections", hint: "Open client connections on each replica; more wait in the queue." },
     ],
   },
@@ -146,7 +154,11 @@ const GROUPS: { title: string; items: Item[] }[] = [
 const isToggle = (i: Item): i is Extract<Item, { toggle: true }> => "toggle" in i;
 const isChoice = (i: Item): i is Extract<Item, { choices: unknown }> => "choices" in i;
 const isNumber = (i: Item): i is Extract<Item, { key: NumberKey }> => !isToggle(i) && !isChoice(i);
-const NUMBER_KEYS = new Set<string>(GROUPS.flatMap((g) => g.items).filter(isNumber).map((i) => i.key));
+const NUMBER_KEYS = new Set<string>(
+  GROUPS.flatMap((g) => g.items)
+    .filter(isNumber)
+    .map((i) => i.key),
+);
 
 /** Numbers as typed, so a field can be emptied while editing. */
 type Draft = { [K in keyof Settings]: Settings[K] extends number ? string : Settings[K] };
@@ -201,9 +213,13 @@ function SettingsForm({ view, onSaved }: { view: GatewaySettingsView; onSaved: (
     <section className="card form">
       <h3>Gateway settings</h3>
       <p className="muted small">
-        Saved in Postgres and applied on every replica within seconds, without a restart. Timeouts and the body limit apply to client connections opened
-        after the change.{" "}
-        {view.updated_at ? <span title={dateTime(view.updated_at)}>Last saved {relative(view.updated_at)}.</span> : "All settings are at their defaults."}
+        Saved in Postgres and applied on every replica within seconds, without a restart. Timeouts and the body limit apply to client
+        connections opened after the change.{" "}
+        {view.updated_at ? (
+          <span title={dateTime(view.updated_at)}>Last saved {relative(view.updated_at)}.</span>
+        ) : (
+          "All settings are at their defaults."
+        )}
       </p>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {GROUPS.map((g) => (
@@ -225,7 +241,13 @@ function SettingsForm({ view, onSaved }: { view: GatewaySettingsView; onSaved: (
                 );
               }
               return isToggle(i) ? (
-                <Toggle key={i.key} caption={i.caption} hint={hint} checked={draft[i.key]} onChange={(v: boolean) => setDraft({ ...draft, [i.key]: v })} />
+                <Toggle
+                  key={i.key}
+                  caption={i.caption}
+                  hint={hint}
+                  checked={draft[i.key]}
+                  onChange={(v: boolean) => setDraft({ ...draft, [i.key]: v })}
+                />
               ) : (
                 <TextInput
                   key={i.key}

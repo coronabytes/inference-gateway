@@ -49,8 +49,8 @@ export function confirmResetSpend(p: Project, confirm: (r: ConfirmRequest) => vo
     title: "Reset project spend",
     message: (
       <>
-        Start the current budget period of <strong>{p.name}</strong> over? Spend so far no longer counts against the project's budget. Its keys' own budgets
-        are not affected.
+        Start the current budget period of <strong>{p.name}</strong> over? Spend so far no longer counts against the project's budget. Its
+        keys' own budgets are not affected.
       </>
     ),
     confirmLabel: "Reset",
@@ -157,8 +157,21 @@ export function ProjectForm({
     >
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <div className="form">
-        <TextInput caption="Name" value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. search-team" required />
-        <TextArea caption="Description" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="optional" />
+        <TextInput
+          caption="Name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          placeholder="e.g. search-team"
+          required
+        />
+        <TextArea
+          caption="Description"
+          rows={3}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="optional"
+        />
         <div className="row">
           <Select
             caption="Budget"
@@ -173,7 +186,14 @@ export function ProjectForm({
             ]}
           />
           {period ? (
-            <TextInput caption="Amount (USD)" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="required" required />
+            <TextInput
+              caption="Amount (USD)"
+              inputMode="decimal"
+              value={budget}
+              onChange={(e) => setBudget(e.target.value)}
+              placeholder="required"
+              required
+            />
           ) : (
             <div />
           )}
@@ -207,8 +227,8 @@ export function ProjectForm({
         />
         {promptLogging === "force" && initial?.prompt_logging !== "force" && (
           <Banner tone="warning">
-            Every request of every key in this project will have its prompt and response stored, unencrypted, until this is changed. Use it for debugging, not for
-            production traffic.
+            Every request of every key in this project will have its prompt and response stored, unencrypted, until this is changed. Use it
+            for debugging, not for production traffic.
           </Banner>
         )}
       </div>

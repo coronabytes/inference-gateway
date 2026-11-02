@@ -4,29 +4,21 @@
   "license": "AGPL-3.0-only",
   "version": "1.0.0",
   "type": "module",
+  "workspaces": [
+    "tools/gen-api"
+  ],
   "scripts": {
-    "predev": "node scripts/fetch-scalar.mjs",
-    "dev": "vite",
-    "prebuild": "node scripts/fetch-scalar.mjs",
-    "build": "vite build",
-    "typecheck": "tsc --noEmit",
-    "preview": "vite preview",
-    "lint": "biome lint",
-    "test": "vitest run",
-    "gen:api": "node tools/gen-api/node_modules/openapi-typescript/bin/cli.js openapi.json --empty-objects-unknown --output src/api.gen.ts"
+    "dev": "bun scripts/dev.ts",
+    "build": "bun scripts/build.ts",
+    "gen:api": "bun run --bun --cwd tools/gen-api openapi-typescript ../../openapi.json --empty-objects-unknown --output ../../src/api.gen.ts"
   },
   "dependencies": {
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.4",
+    "@types/bun": "1.4.4",
     "@types/react": "19.3.0",
-    "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "6.1.2",
-    "gen-api": "file:tools/gen-api",
-    "typescript": "7.0.2",
-    "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "@types/react-dom": "19.3.0"
   }
 }

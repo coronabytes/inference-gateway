@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { deploymentPrices, perMillion, priceDifferences, suggestModelName, upstreamFromKey } from "./pricing";
 
 describe("catalog prices", () => {

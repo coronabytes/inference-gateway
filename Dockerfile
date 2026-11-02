@@ -3,12 +3,13 @@
 # proposes the bumps.
 
 # --- admin UI -----------------------------------------------------------------
-FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS ui
+FROM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS ui
 WORKDIR /ui
-COPY ui/package.json ui/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
+COPY ui/tools/gen-api/package.json tools/gen-api/
+RUN bun install --frozen-lockfile --production
 COPY ui/ ./
-RUN npm run build
+RUN bun run build
 
 # --- gateway (static musl binary) ---------------------------------------------
 FROM rust:1.99-alpine@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb505fa5bb93c479693d87 AS build

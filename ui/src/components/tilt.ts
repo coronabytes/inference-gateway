@@ -14,8 +14,7 @@ export type Mat3 = number[];
 export function multiply(a: Mat3, b: Mat3): Mat3 {
   const out: Mat3 = [];
   for (let col = 0; col < 3; col++)
-    for (let row = 0; row < 3; row++)
-      out.push(a[row] * b[col * 3] + a[3 + row] * b[col * 3 + 1] + a[6 + row] * b[col * 3 + 2]);
+    for (let row = 0; row < 3; row++) out.push(a[row] * b[col * 3] + a[3 + row] * b[col * 3 + 1] + a[6 + row] * b[col * 3 + 2]);
   return out;
 }
 

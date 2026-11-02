@@ -15,12 +15,7 @@ export function Floating({ children }: { children: ReactNode }) {
  * as wide as the anchor (exactly as wide with `match`), and no taller than the room it has
  * (`.floating` in styles.css). Scrolling, resizing and the popup's own size changes move it along.
  */
-export function useFloating(
-  open: boolean,
-  anchor: RefObject<HTMLElement | null>,
-  popup: RefObject<HTMLElement | null>,
-  match = false,
-) {
+export function useFloating(open: boolean, anchor: RefObject<HTMLElement | null>, popup: RefObject<HTMLElement | null>, match = false) {
   useLayoutEffect(() => {
     if (!open) return;
     const place = () => {

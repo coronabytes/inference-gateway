@@ -18,9 +18,9 @@ export interface Sheet {
 export const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 // Characters XML 1.0 does not allow, which would make Excel refuse the file.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
 const INVALID_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g;
-const esc = (s: string) => s.replace(INVALID_XML, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const esc = (s: string) =>
+  s.replace(INVALID_XML, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /** A column's letters: 0 → A, 26 → AA. */
 function column(i: number): string {
@@ -39,8 +39,12 @@ function cell(v: Cell, ref: string, header: boolean): string {
 }
 
 function sheetXml(s: Sheet): string {
-  const cols = s.widths?.length ? `<cols>${s.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols>` : "";
-  const rows = s.rows.map((r, y) => `<row r="${y + 1}">${r.map((v, x) => cell(v, `${column(x)}${y + 1}`, y === 0)).join("")}</row>`).join("");
+  const cols = s.widths?.length
+    ? `<cols>${s.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols>`
+    : "";
+  const rows = s.rows
+    .map((r, y) => `<row r="${y + 1}">${r.map((v, x) => cell(v, `${column(x)}${y + 1}`, y === 0)).join("")}</row>`)
+    .join("");
   return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
@@ -52,7 +56,11 @@ function sheetXml(s: Sheet): string {
 function sheetNames(sheets: Sheet[]): string[] {
   const used = new Set<string>();
   return sheets.map((s, i) => {
-    let name = s.name.replace(/[[\]:*?/\\]/g, " ").trim().slice(0, 31) || `Sheet${i + 1}`;
+    let name =
+      s.name
+        .replace(/[[\]:*?/\\]/g, " ")
+        .trim()
+        .slice(0, 31) || `Sheet${i + 1}`;
     while (used.has(name.toLowerCase())) name = `${name.slice(0, 28)} ${i + 1}`;
     used.add(name.toLowerCase());
     return name;
@@ -71,10 +79,18 @@ export function xlsx(sheets: Sheet[]): Blob {
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>' +
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
         '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
-        sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("") +
+        sheets
+          .map(
+            (_, i) =>
+              `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+          )
+          .join("") +
         "</Types>",
     ],
-    ["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships ${ns}><Relationship Id="rId1" Type="${doc}/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    [
+      "_rels/.rels",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships ${ns}><Relationship Id="rId1" Type="${doc}/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    ],
     [
       "xl/workbook.xml",
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${doc}"><sheets>` +

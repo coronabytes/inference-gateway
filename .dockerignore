@@ -1,5 +1,6 @@
 target
 ui/node_modules
+ui/tools/gen-api/node_modules
 ui/dist
 ui/public/docs/scalar.js
 .git

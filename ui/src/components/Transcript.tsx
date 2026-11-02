@@ -21,7 +21,9 @@ const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.s
 
 /** A placeholder for what is never stored (an image, a file, an encrypted blob). */
 function omitted(v: unknown): string | null {
-  return isObj(v) && "x_gateway_omitted" in v ? `[${String(v.x_gateway_omitted)}, ${compact(Number(v.bytes ?? 0))} bytes, not stored]` : null;
+  return isObj(v) && "x_gateway_omitted" in v
+    ? `[${String(v.x_gateway_omitted)}, ${compact(Number(v.bytes ?? 0))} bytes, not stored]`
+    : null;
 }
 
 /** The parts of a message's content, in any of the three APIs' shapes. */
@@ -32,15 +34,33 @@ function parts(content: unknown): Part[] {
   return content.flatMap((p): Part[] => {
     if (!isObj(p)) return [{ kind: "text", text: str(p) }];
     const type = String(p.type ?? "");
-    if (typeof p.text === "string" && ["text", "input_text", "output_text", "summary_text"].includes(type)) return [{ kind: "text", text: p.text }];
+    if (typeof p.text === "string" && ["text", "input_text", "output_text", "summary_text"].includes(type))
+      return [{ kind: "text", text: p.text }];
     if (type === "thinking") return [{ kind: "reasoning", text: str(p.thinking) }];
     if (type === "tool_use" || type === "server_tool_use") return [{ kind: "tool_call", name: String(p.name), args: str(p.input) }];
-    if (type === "tool_result") return [{ kind: "tool_result", text: parts(p.content).map((x) => ("text" in x ? x.text : str(x))).join("\n"), error: !!p.is_error }];
+    if (type === "tool_result")
+      return [
+        {
+          kind: "tool_result",
+          text: parts(p.content)
+            .map((x) => ("text" in x ? x.text : str(x)))
+            .join("\n"),
+          error: !!p.is_error,
+        },
+      ];
     if (type === "web_search_tool_result" && Array.isArray(p.content)) {
-      return [{ kind: "search", query: "", results: p.content.filter(isObj).map((r) => ({ url: String(r.url ?? ""), title: r.title as string | undefined })) }];
+      return [
+        {
+          kind: "search",
+          query: "",
+          results: p.content.filter(isObj).map((r) => ({ url: String(r.url ?? ""), title: r.title as string | undefined })),
+        },
+      ];
     }
     for (const k of ["image_url", "source", "file", "file_data", "image", "input_audio"]) {
-      const o = omitted(isObj(p[k]) && "url" in (p[k] as Obj) ? (p[k] as Obj).url : isObj(p[k]) && "data" in (p[k] as Obj) ? (p[k] as Obj).data : p[k]);
+      const o = omitted(
+        isObj(p[k]) && "url" in (p[k] as Obj) ? (p[k] as Obj).url : isObj(p[k]) && "data" in (p[k] as Obj) ? (p[k] as Obj).data : p[k],
+      );
       if (o) return [{ kind: "text", text: o }];
     }
     return [{ kind: "json", label: type || "part", value: p }];
@@ -63,7 +83,10 @@ function requestTurns(apiName: string, req: unknown): Turn[] | null {
           ps.push({ kind: "tool_call", name: String(f.name ?? ""), args: str(f.arguments) });
         }
       }
-      turns.push({ role: m.role === "tool" ? "tool" : String(m.role ?? ""), parts: m.role === "tool" ? [{ kind: "tool_result", text: ps.map((p) => ("text" in p ? p.text : "")).join("\n") }] : ps });
+      turns.push({
+        role: m.role === "tool" ? "tool" : String(m.role ?? ""),
+        parts: m.role === "tool" ? [{ kind: "tool_result", text: ps.map((p) => ("text" in p ? p.text : "")).join("\n") }] : ps,
+      });
     }
     return turns;
   }
@@ -71,7 +94,8 @@ function requestTurns(apiName: string, req: unknown): Turn[] | null {
     if (typeof req.input === "string") return [...turns, { role: "user", parts: [{ kind: "text", text: req.input }] }];
     if (!Array.isArray(req.input)) return null;
     for (const it of req.input.filter(isObj)) {
-      if (it.type === "function_call") turns.push({ role: "assistant", parts: [{ kind: "tool_call", name: String(it.name), args: str(it.arguments) }] });
+      if (it.type === "function_call")
+        turns.push({ role: "assistant", parts: [{ kind: "tool_call", name: String(it.name), args: str(it.arguments) }] });
       else if (it.type === "function_call_output") turns.push({ role: "tool", parts: [{ kind: "tool_result", text: str(it.output) }] });
       else turns.push({ role: String(it.role ?? it.type ?? ""), parts: parts(it.content) });
     }
@@ -96,7 +120,14 @@ function responseTurns(apiName: string, res: unknown): Turn[] | null {
       }
       const cites = Array.isArray(m.annotations) ? m.annotations.filter(isObj) : [];
       if (cites.length) {
-        ps.push({ kind: "search", label: "Cited", query: "", results: cites.map((a) => (isObj(a.url_citation) ? a.url_citation : a)).map((u) => ({ url: String(u.url ?? ""), title: u.title as string | undefined })) });
+        ps.push({
+          kind: "search",
+          label: "Cited",
+          query: "",
+          results: cites
+            .map((a) => (isObj(a.url_citation) ? a.url_citation : a))
+            .map((u) => ({ url: String(u.url ?? ""), title: u.title as string | undefined })),
+        });
       }
       return { role: "assistant", parts: ps };
     });
@@ -106,7 +137,13 @@ function responseTurns(apiName: string, res: unknown): Turn[] | null {
     const ps: Part[] = [];
     for (const it of res.output.filter(isObj)) {
       if (it.type === "message") ps.push(...parts(it.content));
-      else if (it.type === "reasoning") ps.push({ kind: "reasoning", text: parts(it.summary).map((p) => ("text" in p ? p.text : "")).join("\n") });
+      else if (it.type === "reasoning")
+        ps.push({
+          kind: "reasoning",
+          text: parts(it.summary)
+            .map((p) => ("text" in p ? p.text : ""))
+            .join("\n"),
+        });
       else if (it.type === "function_call") ps.push({ kind: "tool_call", name: String(it.name), args: str(it.arguments) });
       else if (it.type === "web_search_call") {
         const action = isObj(it.action) ? it.action : {};
@@ -134,7 +171,11 @@ function notSent(res: unknown): Part[] | null {
     const google = isObj(b.google) ? b.google : {};
     if (type === "server_tool_use") out.push({ kind: "search", query: str(input.query ?? input), results: [] });
     else if (type.endsWith("_tool_result") && Array.isArray(b.content)) {
-      out.push({ kind: "search", query: "", results: b.content.filter(isObj).map((r) => ({ url: String(r.url ?? ""), title: r.title as string | undefined })) });
+      out.push({
+        kind: "search",
+        query: "",
+        results: b.content.filter(isObj).map((r) => ({ url: String(r.url ?? ""), title: r.title as string | undefined })),
+      });
     } else if (type === "web_search_call") {
       const sources = Array.isArray(action.sources) ? action.sources.filter(isObj) : [];
       out.push({ kind: "search", query: str(action.query), results: sources.map((s) => ({ url: String(s.url ?? "") })) });
@@ -143,7 +184,13 @@ function notSent(res: unknown): Part[] | null {
     } else out.push({ kind: "json", label: type || "server tool", value: b });
   }
   const cites = (annotations ?? []).filter(isObj).map((a) => (isObj(a.url_citation) ? a.url_citation : a));
-  if (cites.length) out.push({ kind: "search", label: "Cited", query: "", results: cites.map((c) => ({ url: String(c.url ?? ""), title: c.title as string | undefined })) });
+  if (cites.length)
+    out.push({
+      kind: "search",
+      label: "Cited",
+      query: "",
+      results: cites.map((c) => ({ url: String(c.url ?? ""), title: c.title as string | undefined })),
+    });
   return out;
 }
 
@@ -307,7 +354,11 @@ export function Bodies({ id, api: apiName }: { id: string; api: string }) {
           value={view}
           onChange={setView}
         />
-        {view === "json" ? <pre className="raw">{JSON.stringify(data.request, null, 2)}</pre> : <Document turns={requestTurns(apiName, request)} value={request} />}
+        {view === "json" ? (
+          <pre className="raw">{JSON.stringify(data.request, null, 2)}</pre>
+        ) : (
+          <Document turns={requestTurns(apiName, request)} value={request} />
+        )}
       </section>
       {data.guardrails && data.guardrails.length > 0 && (
         <section>
@@ -336,7 +387,9 @@ export function Bodies({ id, api: apiName }: { id: string; api: string }) {
         {!raw && notSent(data.response) && (
           <div className="bodies-not-sent">
             <h4>From the provider, not sent to the client</h4>
-            <p className="muted small">The provider searched the web or cited sources; translated to the client's API, the answer had no place for these.</p>
+            <p className="muted small">
+              The provider searched the web or cited sources; translated to the client's API, the answer had no place for these.
+            </p>
             <Document turns={[{ role: "provider", parts: notSent(data.response)! }]} value={null} />
           </div>
         )}

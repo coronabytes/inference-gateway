@@ -44,8 +44,8 @@ export function Connect({ id }: { id: string }) {
         {request && (
           <>
             <p>
-              <strong>{name}</strong> asks to use the gateway's MCP servers at <span className="mono">{request.resource}</span>, as the key you pick. Its tool
-              calls count against that key's limits and budget, and show in the request log.
+              <strong>{name}</strong> asks to use the gateway's MCP servers at <span className="mono">{request.resource}</span>, as the key
+              you pick. Its tool calls count against that key's limits and budget, and show in the request log.
             </p>
             <dl className="connect-facts">
               <dt>App</dt>
@@ -61,13 +61,14 @@ export function Connect({ id }: { id: string }) {
             </dl>
             {request.redirect_local && (
               <Banner tone="warning">
-                It returns to a program on your computer ({request.redirect_host}). Any program there could claim to be {name}: approve only if you
-                started this sign-in yourself, just now.
+                It returns to a program on your computer ({request.redirect_host}). Any program there could claim to be {name}: approve only
+                if you started this sign-in yourself, just now.
               </Banner>
             )}
             {request.redirect_elsewhere && (
               <Banner tone="warning">
-                It returns to {request.redirect_host}, not to {request.client_host}, which vouches for the app. Approve only if you trust both.
+                It returns to {request.redirect_host}, not to {request.client_host}, which vouches for the app. Approve only if you trust
+                both.
               </Banner>
             )}
             {keys && keys.length === 0 ? (

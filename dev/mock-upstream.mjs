@@ -2,7 +2,7 @@
 // Responses and Anthropic Messages (streaming and not), System One decisions, OpenAI
 // embeddings, and rerank (Cohere v2, and Bedrock's Rerank API). No real model is called.
 //
-//   node dev/mock-upstream.mjs            # listens on :9999
+//   bun dev/mock-upstream.mjs            # listens on :9999
 //
 // Model names control behaviour: anything containing "fail" returns 503 (to exercise
 // failover/cooldown); requests with tools get a tool call back. A streamed Messages request

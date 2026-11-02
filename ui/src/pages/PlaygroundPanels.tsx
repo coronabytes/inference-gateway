@@ -14,7 +14,12 @@ interface Meta {
 }
 
 /** POST to the admin playground as a key, with `labels`; returns the JSON body and timing. */
-async function run(path: string, keyId: string, body: unknown, labels: Labels = {}): Promise<{ data: any; latency: number; requestId?: string }> {
+async function run(
+  path: string,
+  keyId: string,
+  body: unknown,
+  labels: Labels = {},
+): Promise<{ data: any; latency: number; requestId?: string }> {
   const started = performance.now();
   const res = await adminFetch(`/playground/${path}?key_id=${encodeURIComponent(keyId)}`, body, undefined, labelHeaders(labels));
   const data = await res.json().catch(() => ({}));
@@ -129,7 +134,13 @@ export function EmbeddingPanel({ keyId, keyName, model, labels }: PanelProps) {
       <div className="card form">
         <TextArea caption="Inputs, one per line" rows={6} value={text} onChange={(e) => setText(e.target.value)} />
         <div className="row">
-          <TextInput caption="Dimensions" inputMode="numeric" value={dimensions} onChange={(e) => setDimensions(e.target.value)} placeholder="model default" />
+          <TextInput
+            caption="Dimensions"
+            inputMode="numeric"
+            value={dimensions}
+            onChange={(e) => setDimensions(e.target.value)}
+            placeholder="model default"
+          />
           <div className="panel-actions">
             <CurlButton request={() => ({ path: "/v1/embeddings", body: body(), labels })} keyName={keyName} disabled={!inputs.length} />
             <Button variant="primary" onClick={submit} disabled={busy || !inputs.length}>
@@ -222,7 +233,12 @@ export function RerankPanel({ keyId, keyName, model, labels }: PanelProps) {
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ documents: string[]; ranked: { index: number; score: number }[]; searches?: number; meta: Meta } | null>(null);
+  const [result, setResult] = useState<{
+    documents: string[];
+    ranked: { index: number; score: number }[];
+    searches?: number;
+    meta: Meta;
+  } | null>(null);
 
   const documents = text
     .split("\n")
@@ -268,7 +284,10 @@ export function RerankPanel({ keyId, keyName, model, labels }: PanelProps) {
         {!result && !error && <div className="muted">The documents, most relevant first, appear here.</div>}
         {result && (
           <>
-            <MetaLine meta={result.meta} extra={result.searches != null ? `${result.searches} search${result.searches === 1 ? "" : "es"}` : undefined} />
+            <MetaLine
+              meta={result.meta}
+              extra={result.searches != null ? `${result.searches} search${result.searches === 1 ? "" : "es"}` : undefined}
+            />
             <div className="answers rerank-results">
               {result.ranked.map((r, i) => (
                 <Bar key={r.index} label={`#${r.index + 1} ${result.documents[r.index]}`} p={r.score} strong={i === 0} />

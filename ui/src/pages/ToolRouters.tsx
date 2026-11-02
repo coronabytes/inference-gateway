@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { api, type Deployment, type McpServer, type McpServerTestResult, type ToolRoute, type ToolRouter, type ToolRouterInput } from "../api";
+import {
+  api,
+  type Deployment,
+  type McpServer,
+  type McpServerTestResult,
+  type ToolRoute,
+  type ToolRouter,
+  type ToolRouterInput,
+} from "../api";
 import { Banner, Button, MenuButton, MultiSelect, PageActions, Select, TextArea, TextInput, Toggle } from "../components/controls";
 import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TrashIcon, type ConfirmRequest } from "../components/ui";
 import { dateTime } from "../format";
@@ -17,12 +25,18 @@ const toInput = (r: ToolRouter): ToolRouterInput => ({
   enabled: r.enabled,
 });
 
-const DEFAULT_QUESTION = "Will answering the conversation's latest request need these tools? Answer true only if the answer would use them.";
+const DEFAULT_QUESTION =
+  "Will answering the conversation's latest request need these tools? Answer true only if the answer would use them.";
 
 /** Tool routers: a name requests use like an MCP server's, whose decision model picks which routes'
  *  tools each request gets. */
 export function ToolRouters() {
-  const { data, error, setError, reload: load } = useAdminData<[ToolRouter[], McpServer[], Deployment[]]>(["/tool-routers", "/mcp-servers", "/deployments"]);
+  const {
+    data,
+    error,
+    setError,
+    reload: load,
+  } = useAdminData<[ToolRouter[], McpServer[], Deployment[]]>(["/tool-routers", "/mcp-servers", "/deployments"]);
   const [rows, servers, deployments] = data ?? [[], [], []];
   const decisionModels = [...new Set(deployments.filter((x) => x.mode === "decision").map((x) => x.model_name))].sort();
   const [editing, setEditing] = useState<ToolRouter | "new" | null>(null);
@@ -58,8 +72,8 @@ export function ToolRouters() {
     <div className="page">
       <div className="page-head">
         <p className="muted small">
-          A model request names a router like an MCP server, as <span className="mono">{`{"type": "mcp", "server_label": "{name}"}`}</span>. For each request,
-          its decision model picks which routes' tools the model gets.
+          A model request names a router like an MCP server, as <span className="mono">{`{"type": "mcp", "server_label": "{name}"}`}</span>.
+          For each request, its decision model picks which routes' tools the model gets.
         </p>
         <PageActions actions={[{ label: "New tool router", onClick: () => setEditing("new"), primary: true }]} />
       </div>
@@ -95,7 +109,11 @@ export function ToolRouters() {
                 <td>
                   {r.routes.map((x) => (
                     <div key={x.name} title={x.description}>
-                      {x.name} <span className="muted small mono">{serverName(x.server_id)}{x.tools?.length ? `: ${x.tools.join(", ")}` : ""}</span>
+                      {x.name}{" "}
+                      <span className="muted small mono">
+                        {serverName(x.server_id)}
+                        {x.tools?.length ? `: ${x.tools.join(", ")}` : ""}
+                      </span>
                     </div>
                   ))}
                 </td>
@@ -193,7 +211,9 @@ function ToolRouterForm({
   const [description, setDescription] = useState(from?.description ?? "");
   const [decisionModel, setDecisionModel] = useState(from?.decision_model ?? decisionModels[0] ?? "");
   const [instructions, setInstructions] = useState(from?.instructions ?? "");
-  const [routes, setRoutes] = useState<ToolRoute[]>(from?.routes ?? [{ name: "", description: "", server_id: servers[0]?.id ?? "", tools: [] }]);
+  const [routes, setRoutes] = useState<ToolRoute[]>(
+    from?.routes ?? [{ name: "", description: "", server_id: servers[0]?.id ?? "", tools: [] }],
+  );
   const [threshold, setThreshold] = useState(String(from?.threshold ?? 0.5));
   const [maxRoutes, setMaxRoutes] = useState(from?.max_routes ? String(from.max_routes) : "");
   const [enabled, setEnabled] = useState(from?.enabled ?? true);
@@ -271,7 +291,8 @@ function ToolRouterForm({
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {(!decisionModels.length || !servers.length) && (
         <Banner tone="warning">
-          A tool router needs a decision model and MCP servers. Add a <a href="#/models/deployments">decision model deployment</a> and MCP servers first.
+          A tool router needs a decision model and MCP servers. Add a <a href="#/models/deployments">decision model deployment</a> and MCP
+          servers first.
         </Banner>
       )}
       <div className="form">
@@ -294,7 +315,9 @@ function ToolRouterForm({
             onChange={setDecisionModel}
             empty="No decision models"
             options={[
-              ...(decisionModel && !decisionModels.includes(decisionModel) ? [{ value: decisionModel, label: `${decisionModel} (missing)` }] : []),
+              ...(decisionModel && !decisionModels.includes(decisionModel)
+                ? [{ value: decisionModel, label: `${decisionModel} (missing)` }]
+                : []),
               ...decisionModels.map((d) => ({ value: d, label: d })),
             ]}
           />
@@ -336,7 +359,11 @@ function ToolRouterForm({
                     empty="No MCP servers"
                     options={servers.map((s) => ({ value: s.id, label: s.name, note: s.enabled ? undefined : "disabled" }))}
                   />
-                  <IconButton label={`Remove route ${i + 1}`} title="Remove" onClick={() => setRoutes((rs) => rs.filter((_, j) => j !== i))}>
+                  <IconButton
+                    label={`Remove route ${i + 1}`}
+                    title="Remove"
+                    onClick={() => setRoutes((rs) => rs.filter((_, j) => j !== i))}
+                  >
                     <TrashIcon />
                   </IconButton>
                   <MultiSelect
@@ -364,7 +391,11 @@ function ToolRouterForm({
               );
             })}
           </div>
-          {duplicateName && <p className="small" role="alert">Each route needs its own name.</p>}
+          {duplicateName && (
+            <p className="small" role="alert">
+              Each route needs its own name.
+            </p>
+          )}
           <Button
             variant="ghost"
             disabled={!servers.length || routes.length >= 64}

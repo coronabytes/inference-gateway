@@ -101,14 +101,21 @@ function Instances() {
                       <td className="num">{i.keys}</td>
                       <td>
                         {dateTime(i.registry_loaded_at)}
-                        {i.registry_errors > 0 && <> <Badge tone="warning">{i.registry_errors} misconfigured</Badge></>}
+                        {i.registry_errors > 0 && (
+                          <>
+                            {" "}
+                            <Badge tone="warning">{i.registry_errors} misconfigured</Badge>
+                          </>
+                        )}
                       </td>
                       <td className="when">{relative(i.last_seen)}</td>
                     </tr>
                   ))}
                 {data.instances.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="empty">No heartbeats in Valkey.</td>
+                    <td colSpan={7} className="empty">
+                      No heartbeats in Valkey.
+                    </td>
                   </tr>
                 )}
               </tbody>

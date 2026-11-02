@@ -52,8 +52,8 @@ impl Config {
                 .map_err(|e| format!("GATEWAY_PREVIOUS_ENCRYPTION_KEY: {e}"))?;
         }
 
-        // Debug builds serve no console unless asked to: in development it runs on Vite's dev
-        // server (`npm run dev` in ui/), and a stale ui/dist would only get in the way.
+        // Debug builds serve no console unless asked to: in development it runs on its own dev
+        // server (`bun run dev` in ui/), and a stale ui/dist would only get in the way.
         let ui_dir = opt("GATEWAY_UI", !cfg!(debug_assertions))?.then(ui_dir);
 
         let instance_id = instance_id().to_string();

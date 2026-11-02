@@ -1,10 +1,38 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
-import { api, type Hub, type HubDeployment, type HubModel, type HubPrices, type HubStats, type ModelMetadata, type NamedItem } from "../api";
+import {
+  api,
+  type Hub,
+  type HubDeployment,
+  type HubModel,
+  type HubPrices,
+  type HubStats,
+  type ModelMetadata,
+  type NamedItem,
+} from "../api";
 import { Banner, Button, MenuButton, MultiSelect, Segmented, Select, TextArea, TextInput, useDebounced } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TagList } from "../components/Tags";
 import { VendorIcon, VendorLogo } from "../components/VendorLogo";
-import { AliasIcon, BracesIcon, ChatIcon, DecisionIcon, DocumentIcon, EmbeddingIcon, ErrorBanner, GlobeIcon, IconButton, ImageIcon, ListIcon, Modal, PlayIcon, ReasoningIcon, RerankIcon, RouterIcon, TilesIcon, TokenPrices } from "../components/ui";
+import {
+  AliasIcon,
+  BracesIcon,
+  ChatIcon,
+  DecisionIcon,
+  DocumentIcon,
+  EmbeddingIcon,
+  ErrorBanner,
+  GlobeIcon,
+  IconButton,
+  ImageIcon,
+  ListIcon,
+  Modal,
+  PlayIcon,
+  ReasoningIcon,
+  RerankIcon,
+  RouterIcon,
+  TilesIcon,
+  TokenPrices,
+} from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
 import { xlsx, type Cell } from "../xlsx";
@@ -122,7 +150,9 @@ function priceOptions(m: HubModel): PriceOption[] {
     o.firstChoice ||= d.first_choice;
     byPrice.set(id, o);
   }
-  return [...byPrice.values()].sort((a, b) => Number(b.firstChoice) - Number(a.firstChoice) || a.prices.input - b.prices.input || a.prices.output - b.prices.output);
+  return [...byPrice.values()].sort(
+    (a, b) => Number(b.firstChoice) - Number(a.firstChoice) || a.prices.input - b.prices.input || a.prices.output - b.prices.output,
+  );
 }
 
 /** Rerank models bill searches; chat models may bill the web searches they run. */
@@ -167,7 +197,22 @@ const NO_VENDOR = " none";
 const displayName = (m: HubModel) => m.metadata.display_name?.trim() || m.name;
 
 /** Vendors offered in the editor; others can be typed. */
-const VENDORS = ["Alibaba", "Amazon", "Anthropic", "Cohere", "DeepSeek", "Google", "Meta", "Microsoft", "Mistral AI", "Moonshot AI", "OpenAI", "TypeSafe", "xAI", "Zhipu AI"];
+const VENDORS = [
+  "Alibaba",
+  "Amazon",
+  "Anthropic",
+  "Cohere",
+  "DeepSeek",
+  "Google",
+  "Meta",
+  "Microsoft",
+  "Mistral AI",
+  "Moonshot AI",
+  "OpenAI",
+  "TypeSafe",
+  "xAI",
+  "Zhipu AI",
+];
 
 const STATUS_TEXT: Record<NonNullable<Hub["key"]>["status"], string> = {
   active: "",
@@ -199,7 +244,11 @@ function initialView(): View {
 }
 
 /** A file name's part for a key: "Team A (prod)" → "team-a-prod". */
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "key";
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "key";
 
 /** Opens the playground on `model`, as `key` if it may call the model, else as another key that may. */
 function openPlayground(model: string, key: string) {
@@ -306,7 +355,28 @@ export function ModelHub() {
   const exportXlsx = () => {
     if (!hub) return;
     const modelRows: Cell[][] = [
-      ["Model", "Display name", "Vendor", "Description", "Kind", "Mode", "Context (tokens)", "Max output (tokens)", "Input min", "Input max", "Output min", "Output max", "Per 1K searches min", "Per 1K searches max", "Price permutations", "Deployments", "Capabilities", "Tags", "Routes to", "Retires"],
+      [
+        "Model",
+        "Display name",
+        "Vendor",
+        "Description",
+        "Kind",
+        "Mode",
+        "Context (tokens)",
+        "Max output (tokens)",
+        "Input min",
+        "Input max",
+        "Output min",
+        "Output max",
+        "Per 1K searches min",
+        "Per 1K searches max",
+        "Price permutations",
+        "Deployments",
+        "Capabilities",
+        "Tags",
+        "Routes to",
+        "Retires",
+      ],
       ...visible.map((m) => {
         const ps = m.deployments.map((d) => d.prices);
         const lo = (f: (p: HubPrices) => number) => (ps.length ? Math.min(...ps.map(f)) : null);
@@ -336,7 +406,29 @@ export function ModelHub() {
       }),
     ];
     const priceRows: Cell[][] = [
-      ["Model", "Display name", "Vendor", "Deployed as", "Provider", "Upstream model", "Priority", "Weight", "First choice", "Context (tokens)", "Max output (tokens)", "Input", "Output", "Cache read", "Cache write", "Long context above", "Long input", "Long output", "Long cache read", "Long cache write", "Per 1K searches"],
+      [
+        "Model",
+        "Display name",
+        "Vendor",
+        "Deployed as",
+        "Provider",
+        "Upstream model",
+        "Priority",
+        "Weight",
+        "First choice",
+        "Context (tokens)",
+        "Max output (tokens)",
+        "Input",
+        "Output",
+        "Cache read",
+        "Cache write",
+        "Long context above",
+        "Long input",
+        "Long output",
+        "Long cache read",
+        "Long cache write",
+        "Per 1K searches",
+      ],
       ...visible.flatMap((m) =>
         m.deployments.map((d): Cell[] => [
           m.name,
@@ -365,7 +457,12 @@ export function ModelHub() {
     ];
     const guardrailRows: Cell[][] = [
       ["Guardrail", "Provider", "Applied", "Description"],
-      ...hub.guardrails.map((g) => [g.name, GUARDRAIL_LABEL[g.provider] ?? g.provider, g.applied === "on request" ? "on request (x-gateway-guardrails)" : `every request (${g.applied})`, g.description]),
+      ...hub.guardrails.map((g) => [
+        g.name,
+        GUARDRAIL_LABEL[g.provider] ?? g.provider,
+        g.applied === "on request" ? "on request (x-gateway-guardrails)" : `every request (${g.applied})`,
+        g.description,
+      ]),
     ];
     const sheets = [
       { name: "Models", rows: modelRows, widths: [28, 24, 16, 48, 8, 10, 14, 16, 10, 10, 10, 10, 12, 12, 10, 12, 36, 20, 28, 12] },
@@ -411,7 +508,9 @@ export function ModelHub() {
           />
           <MultiSelect
             caption="Mode"
-            options={modeOptions().filter((m) => knownModes.has(m.value)).map(({ value, label, icon }) => ({ value, label, icon }))}
+            options={modeOptions()
+              .filter((m) => knownModes.has(m.value))
+              .map(({ value, label, icon }) => ({ value, label, icon }))}
             values={modes}
             onChange={setModeFilter}
           />
@@ -436,9 +535,7 @@ export function ModelHub() {
           />
           <TextInput caption="Model" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="name or description" />
           {hub && (
-            <span className="muted small">
-              {visible.length === total ? `${total} models` : `${visible.length} of ${total} models`}
-            </span>
+            <span className="muted small">{visible.length === total ? `${total} models` : `${visible.length} of ${total} models`}</span>
           )}
         </div>
         <div className="page-actions">
@@ -457,7 +554,11 @@ export function ModelHub() {
             items={[
               { label: "JSON", onClick: exportJson, disabled: !hub },
               { label: "Excel (.xlsx)", onClick: exportXlsx, disabled: !hub },
-              { label: "Show curl", title: "The hub with this key and these filters, as a curl command for the admin API.", onClick: () => setCurl(hubRequest()) },
+              {
+                label: "Show curl",
+                title: "The hub with this key and these filters, as a curl command for the admin API.",
+                onClick: () => setCurl(hubRequest()),
+              },
             ]}
           >
             Export
@@ -493,7 +594,9 @@ export function ModelHub() {
             <strong>{key.name}</strong>
             {key.project && <> · project {key.project}</>}
             {" · "}
-            {key.allowed_models.length ? `${key.allowed_models.length} allowed model${key.allowed_models.length === 1 ? "" : "s"}` : "any model"}
+            {key.allowed_models.length
+              ? `${key.allowed_models.length} allowed model${key.allowed_models.length === 1 ? "" : "s"}`
+              : "any model"}
             {" · "}
             {key.allowed_tags.length ? <>tags {key.allowed_tags.join(", ")}</> : "no tag restriction"}
           </p>
@@ -503,7 +606,11 @@ export function ModelHub() {
               <span className="muted">Guardrails on every request</span>
               <span className="tags">
                 {enforced.map((g) => (
-                  <span key={g.id} className={`tag guardrail${g.applied === "project" ? " inherited" : ""}`} title={`${GUARDRAIL_LABEL[g.provider]}, set on the ${g.applied}${g.description ? `: ${g.description}` : ""}`}>
+                  <span
+                    key={g.id}
+                    className={`tag guardrail${g.applied === "project" ? " inherited" : ""}`}
+                    title={`${GUARDRAIL_LABEL[g.provider]}, set on the ${g.applied}${g.description ? `: ${g.description}` : ""}`}
+                  >
                     {g.name}
                   </span>
                 ))}
@@ -699,12 +806,20 @@ function HourBar({ stats }: { stats?: HubStats }) {
   const hours = stats?.hours ?? NO_HOURS;
   const time = (i: number) => new Date(now - (hours.length - 1 - i) * hour).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
-    <span className="status-bar" role="img" aria-label={stats?.requests ? `${stats.errors} of ${stats.requests} requests failed in the last 24 hours` : "No requests in the last 24 hours"}>
+    <span
+      className="status-bar"
+      role="img"
+      aria-label={
+        stats?.requests ? `${stats.errors} of ${stats.requests} requests failed in the last 24 hours` : "No requests in the last 24 hours"
+      }
+    >
       {hours.map(([requests, errors], i) => (
         <span
           key={i}
           className={`status-hour ${hourTone(requests, errors)}`}
-          title={requests ? `${time(i)}: ${requests.toLocaleString()} requests, ${errors.toLocaleString()} failed` : `${time(i)}: no requests`}
+          title={
+            requests ? `${time(i)}: ${requests.toLocaleString()} requests, ${errors.toLocaleString()} failed` : `${time(i)}: no requests`
+          }
         />
       ))}
     </span>
@@ -752,7 +867,13 @@ function ModelStats({ model: m, speedSlot }: { model: HubModel; speedSlot?: bool
 function LogoButton({ model: m, onEdit }: { model: HubModel; onEdit: () => void }) {
   const vendor = m.vendor ?? "";
   return (
-    <button type="button" className="logo-edit" aria-label={`Edit ${displayName(m)}`} title={vendor ? `${vendor}: edit the model` : "Edit the model"} onClick={onEdit}>
+    <button
+      type="button"
+      className="logo-edit"
+      aria-label={`Edit ${displayName(m)}`}
+      title={vendor ? `${vendor}: edit the model` : "Edit the model"}
+      onClick={onEdit}
+    >
       <VendorLogo vendor={vendor} fallback={m.name} />
     </button>
   );
@@ -802,24 +923,28 @@ function ModelTile({
       {m.metadata.description && <p className="hub-tile-description">{m.metadata.description}</p>}
       <div className="hub-tile-facts small">
         {m.max_input_tokens != null && m.max_input_tokens === m.max_output_tokens ? (
-          <span title={`${m.max_input_tokens.toLocaleString()} input and output tokens`}>{compact(m.max_input_tokens)} context &amp; output</span>
-        ) : (m.max_input_tokens != null || m.max_output_tokens != null) && (
-          <span>
-            {[
-              m.max_input_tokens != null && (
-                <span key="in" title={`${m.max_input_tokens.toLocaleString()} input tokens`}>
-                  {compact(m.max_input_tokens)} context
-                </span>
-              ),
-              m.max_output_tokens != null && (
-                <span key="out" title={`${m.max_output_tokens.toLocaleString()} output tokens`}>
-                  {compact(m.max_output_tokens)} output
-                </span>
-              ),
-            ]
-              .filter(Boolean)
-              .flatMap((s, i) => (i ? [" · ", s] : [s]))}
+          <span title={`${m.max_input_tokens.toLocaleString()} input and output tokens`}>
+            {compact(m.max_input_tokens)} context &amp; output
           </span>
+        ) : (
+          (m.max_input_tokens != null || m.max_output_tokens != null) && (
+            <span>
+              {[
+                m.max_input_tokens != null && (
+                  <span key="in" title={`${m.max_input_tokens.toLocaleString()} input tokens`}>
+                    {compact(m.max_input_tokens)} context
+                  </span>
+                ),
+                m.max_output_tokens != null && (
+                  <span key="out" title={`${m.max_output_tokens.toLocaleString()} output tokens`}>
+                    {compact(m.max_output_tokens)} output
+                  </span>
+                ),
+              ]
+                .filter(Boolean)
+                .flatMap((s, i) => (i ? [" · ", s] : [s]))}
+            </span>
+          )
         )}
         <TagList tags={m.tags} />
       </div>
@@ -829,7 +954,11 @@ function ModelTile({
           <>
             <HourBar stats={s} />
             <span className="hub-tile-stats mono small" title="Success rate, median latency and output speed in the last 24 hours">
-              {[percent(s.requests - s.errors, s.requests), s.p50_latency_ms != null && ms(s.p50_latency_ms), m.mode === "chat" && speed(s.tokens_per_second)]
+              {[
+                percent(s.requests - s.errors, s.requests),
+                s.p50_latency_ms != null && ms(s.p50_latency_ms),
+                m.mode === "chat" && speed(s.tokens_per_second),
+              ]
                 .filter(Boolean)
                 .join(" · ")}
             </span>
@@ -912,7 +1041,11 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
               {/* Long-context prices in the same columns, on a row of their own after their threshold. */}
               {chat && d.prices.long_context_threshold != null && (
                 <tr className="long-prices">
-                  <td colSpan={router ? 6 : 5} className="num muted small" title={`Above ${d.prices.long_context_threshold.toLocaleString()} input tokens`}>
+                  <td
+                    colSpan={router ? 6 : 5}
+                    className="num muted small"
+                    title={`Above ${d.prices.long_context_threshold.toLocaleString()} input tokens`}
+                  >
                     &gt; {compact(d.prices.long_context_threshold)}
                   </td>
                   <td className="num">{price(d.prices.long_input)}</td>
@@ -931,7 +1064,17 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
 }
 
 /** A model's display name, vendor and description. Other metadata fields are kept as they are. */
-function MetadataForm({ model, vendors, onClose, onSaved }: { model: HubModel; vendors: string[]; onClose: () => void; onSaved: () => Promise<void> }) {
+function MetadataForm({
+  model,
+  vendors,
+  onClose,
+  onSaved,
+}: {
+  model: HubModel;
+  vendors: string[];
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
   const [name, setName] = useState(model.metadata.display_name ?? "");
   // Without one yet, a guess from the model's names; the form shows it before it is saved.
   const [vendor, setVendor] = useState(model.metadata.vendor ?? model.vendor ?? "");

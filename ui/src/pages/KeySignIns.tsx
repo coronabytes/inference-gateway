@@ -14,8 +14,21 @@ const KIND_LABEL = { mcp: "MCP server", a2a: "A2A agent" } as const;
  * the browser to the server's sign-in; it comes back to the Access page, or to the playground with
  * the key chosen (`back`).
  */
-export function KeySignIns({ keyItem: k, back, onClose }: { keyItem: Pick<VirtualKey, "id" | "name">; back?: "playground"; onClose: () => void }) {
-  const { data, error, setError, reload: load } = useAdminData<[KeyConnection[], ClientGrant[]]>([`/keys/${k.id}/connections`, `/keys/${k.id}/apps`]);
+export function KeySignIns({
+  keyItem: k,
+  back,
+  onClose,
+}: {
+  keyItem: Pick<VirtualKey, "id" | "name">;
+  back?: "playground";
+  onClose: () => void;
+}) {
+  const {
+    data,
+    error,
+    setError,
+    reload: load,
+  } = useAdminData<[KeyConnection[], ClientGrant[]]>([`/keys/${k.id}/connections`, `/keys/${k.id}/apps`]);
   // The upstreams the key signs in to, and the MCP clients signed in to the gateway as this key.
   const [rows, apps] = data ?? [null, null];
   const [busy, setBusy] = useState<string | null>(null);
@@ -26,7 +39,9 @@ export function KeySignIns({ keyItem: k, back, onClose }: { keyItem: Pick<Virtua
   const signIn = async (c: KeyConnection) => {
     setBusy(c.upstream_id);
     try {
-      const { authorization_url } = await api<{ authorization_url: string }>(`${path(c)}${back ? `?back=${back}` : ""}`, { method: "POST" });
+      const { authorization_url } = await api<{ authorization_url: string }>(`${path(c)}${back ? `?back=${back}` : ""}`, {
+        method: "POST",
+      });
       window.location.assign(authorization_url);
     } catch (e) {
       setError((e as Error).message);
@@ -76,9 +91,9 @@ export function KeySignIns({ keyItem: k, back, onClose }: { keyItem: Pick<Virtua
     <Modal title={`Sign-ins of ${k.name}`} size="wide" onClose={onClose} footer={<Button onClick={onClose}>Close</Button>}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="muted small">
-        These MCP servers and A2A agents act for whoever signed in: each key signs in once, or each tenant or user of the key where the server keeps a sign-in per
-        tenant or user. The gateway calls them with that account for the requests. The key's
-        clients never see its tokens.
+        These MCP servers and A2A agents act for whoever signed in: each key signs in once, or each tenant or user of the key where the
+        server keeps a sign-in per tenant or user. The gateway calls them with that account for the requests. The key's clients never see
+        its tokens.
       </p>
       <div className="table-wrap">
         <table>
@@ -150,7 +165,8 @@ export function KeySignIns({ keyItem: k, back, onClose }: { keyItem: Pick<Virtua
       </div>
       <h4 className="dialog-subhead">Apps signed in as this key</h4>
       <p className="muted small">
-        MCP clients, such as Claude or ChatGPT, that someone approved to use the gateway's MCP servers as this key. Its limits and budget apply to them.
+        MCP clients, such as Claude or ChatGPT, that someone approved to use the gateway's MCP servers as this key. Its limits and budget
+        apply to them.
       </p>
       <div className="table-wrap">
         <table>
@@ -288,8 +304,8 @@ function UpstreamSignIns({
     >
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="muted small">
-        The {KIND_LABEL[c.kind]} keeps a sign-in per {by.join(" and ")}, told apart by the labels of the key's requests. Those who have not signed in get a sign-in
-        link with the request's error, or from <code>POST /v1/oauth/sign-ins</code>.
+        The {KIND_LABEL[c.kind]} keeps a sign-in per {by.join(" and ")}, told apart by the labels of the key's requests. Those who have not
+        signed in get a sign-in link with the request's error, or from <code>POST /v1/oauth/sign-ins</code>.
       </p>
       <div className="filters">
         <LabelFilter value={filter} onChange={setFilter} hint="Sign-ins with all of these labels." />
@@ -339,8 +355,17 @@ function UpstreamSignIns({
       )}
       <h4 className="dialog-subhead">Sign in as a {by.join(" and ")}</h4>
       <div className="filters">
-        <LabelEditor value={signInAs} onChange={setSignInAs} hint={`The ${by.join(" and ")} to sign in for, such as ${by.map((l) => `${l}=…`).join(",")}. You sign in yourself, as that ${by.at(-1)}.`} />
-        <Button variant="primary" disabled={busy !== null || missing.length > 0} title={missing.length ? `Add the label ${missing.join(" and ")}` : undefined} onClick={signIn}>
+        <LabelEditor
+          value={signInAs}
+          onChange={setSignInAs}
+          hint={`The ${by.join(" and ")} to sign in for, such as ${by.map((l) => `${l}=…`).join(",")}. You sign in yourself, as that ${by.at(-1)}.`}
+        />
+        <Button
+          variant="primary"
+          disabled={busy !== null || missing.length > 0}
+          title={missing.length ? `Add the label ${missing.join(" and ")}` : undefined}
+          onClick={signIn}
+        >
           {busy === "sign-in" ? "Opening…" : "Sign in"}
         </Button>
       </div>

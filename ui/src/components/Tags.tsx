@@ -44,7 +44,9 @@ export function TagList({ tags, projects = [], empty }: { tags: string[]; projec
         </span>
       ))}
       {tags.map((t) => (
-        <span key={t} className="tag">{t}</span>
+        <span key={t} className="tag">
+          {t}
+        </span>
       ))}
     </span>
   );
