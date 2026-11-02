@@ -238,9 +238,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-bedrock"
-version = "1.165.0"
+version = "1.166.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "086d90d6919e0d36b1ed5d83b3773e15a98f8cfa6d30b264936b0f7f1215dec6"
+checksum = "6a2046512ecd16913d858634bfa07fe2769b794f852989940f2d5fcab7877968"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -263,9 +263,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-bedrockagentruntime"
-version = "1.150.0"
+version = "1.151.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac6fdd5c3558b021468b395dc65f594b952e728e892cdb288be80dc78abdee67"
+checksum = "ee5d3b4152c863a40f3f5aec10d8c559840255a9973f68711bacee94f9df9cc1"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -289,9 +289,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-bedrockruntime"
-version = "1.152.0"
+version = "1.153.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd3ff1fc9e5e8a2ac61bcc6ac82b13a57d431d6804d4461f9570a3b788b9549a"
+checksum = "89b8aeb4b1b6d5f9d377264cff21b4e4d773e66ee3c5582b4099a8fbc702bdb3"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -317,9 +317,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-servicequotas"
-version = "1.120.0"
+version = "1.121.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c09c145bc38a0b94c382d70b5c98d4564dfdefbb1dda809e8a2cf08393cee18"
+checksum = "ed60d2bb61f4df956ab1514fe416c138408a534cfcf45f761738ac9151d0beca"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -591,9 +591,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-schema"
-version = "1.1.0"
+version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bec8dae1015a6d959a5faf86fbdf77486cfe19e4ccb6ee009d8a46efc45028a4"
+checksum = "9543fc722ed4865ab29fb66bd7ed0bef7b029d265ba8c587144511e30006d431"
 dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
@@ -3108,9 +3108,9 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7acd809e80afa754c63f586955699d8990efe1c4b6613183ee5f027a11fbc8b5"
+checksum = "db7f3d75b5a3301746bff39a767bf4c5c42506b08513527308b3875bfb64a031"
 dependencies = [
  "arc-swap",
  "arcstr",
