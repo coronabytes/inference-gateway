@@ -342,6 +342,7 @@ impl Access {
 const USER_ROUTES: &[(Method, &str)] = &[
     (Method::GET, "/keys"),
     (Method::GET, "/keys/options"),
+    (Method::GET, "/models/options"),
     (Method::POST, "/keys"),
     (Method::PUT, "/keys/{id}"),
     (Method::DELETE, "/keys/{id}"),

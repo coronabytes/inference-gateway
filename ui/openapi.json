@@ -4717,6 +4717,64 @@
         ]
       }
     },
+    "/admin/api/models/options": {
+      "get": {
+        "tags": [
+          "Virtual keys"
+        ],
+        "summary": "Model names",
+        "description": "The models a key in `project` may be limited to, by name: deployments, auto routers and\naliases, whatever their tags.",
+        "operationId": "model_options",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "description": "The key's project: models limited to other projects are left out. Omitted for a key\noutside projects.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The models.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ModelOption"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A project the caller does not see.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/oauth/discover": {
       "post": {
         "tags": [
@@ -12793,6 +12851,23 @@
         },
         "additionalProperties": false
       },
+      "ModelOption": {
+        "type": "object",
+        "description": "A model a key's `allowed_models` may name.",
+        "required": [
+          "name",
+          "router"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "router": {
+            "type": "boolean",
+            "description": "An auto router, which routes only to those of its models the key may call as well."
+          }
+        }
+      },
       "ModelsAnswer": {
         "oneOf": [
           {
@@ -14893,7 +14968,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Model names (deployments, auto routers, aliases) this key may call; empty means any."
           },
           "allowed_tags": {
             "type": "array",

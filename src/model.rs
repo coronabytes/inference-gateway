@@ -1030,7 +1030,7 @@ impl KeyScope {
     }
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, utoipa::ToSchema)]
 pub struct VirtualKey {
     pub id: Uuid,
     pub name: String,
@@ -1044,6 +1044,7 @@ pub struct VirtualKey {
     pub project_id: Option<Uuid>,
     /// False while the key's project is inactive; the key is then refused like a disabled one.
     pub project_active: bool,
+    /// Model names (deployments, auto routers, aliases) this key may call; empty means any.
     pub allowed_models: Vec<String>,
     /// Deployment tags this key holds; empty means no tag restriction.
     pub allowed_tags: Vec<String>,

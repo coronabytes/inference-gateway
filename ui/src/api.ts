@@ -210,6 +210,9 @@ export type TagInfo = S["TagUsage"];
 /** A key or project as a picker offers it (`GET /keys/options`, `GET /projects/options`). */
 export type NamedItem = S["NamedItem"];
 
+/** A model a key's allowed models may name (`GET /models/options`). */
+export type ModelOption = S["ModelOption"];
+
 /** What the playground offers for a key (`GET /playground/options`). */
 export type PlaygroundOptions = S["PlaygroundOptions"];
 
