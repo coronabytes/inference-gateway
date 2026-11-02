@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use axum::{
     Extension, Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
 };
 use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{R, label_filter};
-use crate::{admin::auth::Access, db, error::AdminError, state::AppState};
+use crate::{admin::auth::Access, budget::BudgetPeriod, db, error::AdminError, state::AppState};
 
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -235,9 +235,203 @@ pub(super) async fn key_usage(
     Ok(Json(db::key_usage_since(&state.db, since, access.projects()).await?))
 }
 
+/// A key's busiest minute in each hour of the last 7 days, and the 95th percentiles over the
+/// minutes it had traffic: what its requests and tokens per minute limits are measured against.
+#[derive(Serialize, utoipa::ToSchema, Debug, PartialEq)]
+pub(crate) struct KeyRates {
+    /// One point per hour, oldest first.
+    series: Vec<RatePoint>,
+    /// Requests per minute; None without traffic.
+    #[schema(required)]
+    rpm_p95: Option<i64>,
+    /// Tokens per minute; None without traffic.
+    #[schema(required)]
+    tpm_p95: Option<i64>,
+}
+
+#[derive(Serialize, utoipa::ToSchema, Debug, PartialEq)]
+pub(crate) struct RatePoint {
+    /// Start of the hour (Unix seconds).
+    ts: i64,
+    /// The hour's busiest minute: its requests and its tokens (not necessarily the same minute).
+    rpm: i64,
+    tpm: i64,
+}
+
+/// The 95th percentile by nearest rank.
+fn p95(mut values: Vec<i64>) -> Option<i64> {
+    values.sort_unstable();
+    let rank = (values.len() as f64 * 0.95).ceil() as usize;
+    values.get(rank.checked_sub(1)?).copied()
+}
+
+fn hourly_rates(minutes: &[db::KeyMinute], stamps: &[i64]) -> KeyRates {
+    let mut peaks: HashMap<i64, (i64, i64)> = HashMap::new();
+    for m in minutes {
+        let p = peaks.entry(m.minute - m.minute.rem_euclid(3600)).or_default();
+        *p = (p.0.max(m.requests), p.1.max(m.tokens));
+    }
+    KeyRates {
+        series: stamps
+            .iter()
+            .map(|&ts| {
+                let (rpm, tpm) = peaks.get(&ts).copied().unwrap_or_default();
+                RatePoint { ts, rpm, tpm }
+            })
+            .collect(),
+        rpm_p95: p95(minutes.iter().map(|m| m.requests).collect()),
+        tpm_p95: p95(minutes.iter().map(|m| m.tokens).collect()),
+    }
+}
+
+/// Key rates
+///
+/// The key's requests and tokens per minute over the last 7 days, for setting its limits.
+#[utoipa::path(get, path = "/keys/{id}/rates", tag = "Usage", params(("id" = Uuid, Path)),
+    responses(
+        (status = 200, description = "Hourly peaks and percentiles.", body = KeyRates),
+        (status = 404, description = "No such key.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn key_rates(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Path(id): Path<Uuid>,
+) -> R<Json<KeyRates>> {
+    let k = db::get_key(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
+    super::keys::check_sees_key(&access, &k)?;
+    let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
+    let now = Utc::now().timestamp();
+    let first = now - now.rem_euclid(3600) - 167 * 3600;
+    let stamps: Vec<i64> = (0..168).map(|i| first + i * 3600).collect();
+    let since = DateTime::from_timestamp(first, 0).unwrap_or_default();
+    let minutes = db::key_minutes(&state.db, id, since).await?;
+    Ok(Json(hourly_rates(&minutes, &stamps)))
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct SpendQuery {
+    /// The budget period to sum by: `day` (the default, the last 30), `week` (the last 12) or `month` (the last 12).
+    period: Option<String>,
+}
+
+/// A key's spend per budget period, since it was created.
+#[derive(Serialize, utoipa::ToSchema, Debug, PartialEq)]
+pub(crate) struct KeySpend {
+    period: BudgetPeriod,
+    /// One point per period, oldest first; the last is the current one.
+    series: Vec<SpendPoint>,
+    total_usd: f64,
+    /// Average over the finished periods; None before the first one ends.
+    #[schema(required)]
+    avg_usd: Option<f64>,
+}
+
+#[derive(Serialize, utoipa::ToSchema, Debug, PartialEq)]
+pub(crate) struct SpendPoint {
+    /// Start of the period (Unix seconds).
+    ts: i64,
+    cost_usd: f64,
+}
+
+/// The periods up to the current one, at most `count`, that end after `created`.
+fn spend_periods(period: BudgetPeriod, now: DateTime<Utc>, created: DateTime<Utc>, count: usize) -> Vec<i64> {
+    let mut w = period.window(now);
+    let mut starts = Vec::new();
+    while starts.len() < count && w.end > created {
+        starts.push(w.start.timestamp());
+        w = period.window(w.start - chrono::Duration::seconds(1));
+    }
+    starts.reverse();
+    starts
+}
+
+fn spend_by_period(period: BudgetPeriod, starts: &[i64], days: &[(i64, f64)]) -> KeySpend {
+    let mut sums: HashMap<i64, f64> = HashMap::new();
+    for &(day, cost) in days {
+        let start = period.window(DateTime::from_timestamp(day, 0).unwrap_or_default()).start.timestamp();
+        *sums.entry(start).or_default() += cost;
+    }
+    let series: Vec<SpendPoint> = starts.iter().map(|&ts| SpendPoint { ts, cost_usd: sums.get(&ts).copied().unwrap_or(0.0) }).collect();
+    let finished = &series[..series.len().saturating_sub(1)];
+    KeySpend {
+        period,
+        total_usd: series.iter().map(|p| p.cost_usd).sum(),
+        avg_usd: (!finished.is_empty()).then(|| finished.iter().map(|p| p.cost_usd).sum::<f64>() / finished.len() as f64),
+        series,
+    }
+}
+
+/// Key spend
+///
+/// The key's spend per day, week or month, as its budget counts it, with the total and the
+/// average per period.
+#[utoipa::path(get, path = "/keys/{id}/spend", tag = "Usage", params(("id" = Uuid, Path), SpendQuery),
+    responses(
+        (status = 200, description = "Spend per period.", body = KeySpend),
+        (status = 400, description = "Invalid period.", body = crate::error::AdminErrorBody),
+        (status = 404, description = "No such key.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn key_spend(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<SpendQuery>,
+) -> R<Json<KeySpend>> {
+    let period = match q.period.as_deref() {
+        None => BudgetPeriod::Day,
+        Some(p) => BudgetPeriod::parse(p).ok_or_else(|| AdminError::bad_request("period must be day, week or month"))?,
+    };
+    let k = db::get_key(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
+    super::keys::check_sees_key(&access, &k)?;
+    let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
+    let count = if period == BudgetPeriod::Day { 30 } else { 12 };
+    let starts = spend_periods(period, Utc::now(), k.created_at, count);
+    let since = starts.first().and_then(|&s| DateTime::from_timestamp(s, 0)).unwrap_or_else(Utc::now);
+    let days = db::key_daily_spend(&state.db, id, since).await?;
+    Ok(Json(spend_by_period(period, &starts, &days)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_rates_peak_per_hour() {
+        let m = |minute: i64, requests: i64, tokens: i64| db::KeyMinute { minute, requests, tokens };
+        // Two busy minutes in the first hour, one in the third.
+        let minutes = [m(60, 3, 100), m(120, 5, 40), m(7260, 2, 900)];
+        let r = hourly_rates(&minutes, &[0, 3600, 7200]);
+        let points: Vec<_> = r.series.iter().map(|p| (p.ts, p.rpm, p.tpm)).collect();
+        assert_eq!(points, [(0, 5, 100), (3600, 0, 0), (7200, 2, 900)]);
+        assert_eq!((r.rpm_p95, r.tpm_p95), (Some(5), Some(900)));
+        assert_eq!(hourly_rates(&[], &[0]).rpm_p95, None);
+        // Nearest rank: of 1..=20, the 19th.
+        assert_eq!(p95((1..=20).collect()), Some(19));
+        assert_eq!(p95(vec![7]), Some(7));
+    }
+
+    #[test]
+    fn key_spend_per_period() {
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        let ts = |s: &str| at(s).timestamp();
+        // Wednesday 2026-10-28; the key is from Saturday 2026-10-10.
+        let now = at("2026-10-28T12:00:00Z");
+        let created = at("2026-10-10T09:00:00Z");
+        let weeks = spend_periods(BudgetPeriod::Week, now, created, 12);
+        assert_eq!(weeks, [ts("2026-10-05T00:00:00Z"), ts("2026-10-12T00:00:00Z"), ts("2026-10-19T00:00:00Z"), ts("2026-10-26T00:00:00Z")]);
+        assert_eq!(spend_periods(BudgetPeriod::Day, now, created, 3).len(), 3);
+        let days = [(ts("2026-10-10T00:00:00Z"), 1.0), (ts("2026-10-11T00:00:00Z"), 2.0), (ts("2026-10-27T00:00:00Z"), 4.0)];
+        let s = spend_by_period(BudgetPeriod::Week, &weeks, &days);
+        let costs: Vec<f64> = s.series.iter().map(|p| p.cost_usd).collect();
+        assert_eq!(costs, [3.0, 0.0, 0.0, 4.0]);
+        assert_eq!(s.total_usd, 7.0);
+        // The current week is left out of the average.
+        assert_eq!(s.avg_usd, Some(1.0));
+        assert_eq!(spend_by_period(BudgetPeriod::Week, &weeks[3..], &days).avg_usd, None);
+    }
 
     #[test]
     fn metric_series_fill_empty_buckets() {

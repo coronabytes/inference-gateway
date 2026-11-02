@@ -803,6 +803,15 @@ button.tag-toggle[data-label] {
   color: var(--text-muted);
   font-size: 12px;
 }
+/* A chart's switch (TimeChart `controls`), sized to sit beside its title. */
+.chart figcaption .segmented {
+  align-self: center;
+  padding: 1px;
+}
+.chart figcaption .segmented button {
+  padding: 1px 10px;
+  font-size: 12.5px;
+}
 .legend {
   display: flex;
   gap: 14px;
@@ -1187,8 +1196,28 @@ tr.clickable:focus-visible {
   margin: 0;
   padding: 12px 20px 18px;
 }
-.modal.scrolls > .modal-head {
+.modal.scrolls > .modal-head:not(:has(+ .modal-tabs)) {
   border-bottom: 1px solid var(--border);
+}
+/* A dialog's tabs, under its title; their own bottom border separates them from the content. */
+.modal-tabs {
+  flex: none;
+  padding: 0 20px;
+  margin-bottom: 8px;
+}
+.modal-tabs > .tabs {
+  margin-bottom: 0;
+}
+/* A tabbed dialog's panels share one cell, so it keeps the tallest panel's size whichever tab shows. */
+.tab-panels {
+  display: grid;
+}
+.tab-panels > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.tab-panels > .inactive {
+  visibility: hidden;
 }
 .modal.scrolls > .modal-foot {
   border-top: 1px solid var(--border);
@@ -1276,25 +1305,6 @@ legend {
 }
 fieldset p {
   margin: 0;
-}
-/* A section title that is a small Segmented (`legend-tabs`): its caption names the section, its tabs switch what it shows. */
-legend.with-tabs {
-  display: flex;
-  align-items: center;
-  padding: 0;
-}
-.segmented.legend-tabs > .control-caption {
-  margin: 0 4px 0 8px;
-}
-.segmented.legend-tabs {
-  padding: 1px;
-}
-.segmented.legend-tabs button {
-  padding: 1px 10px;
-  font-size: 12.5px;
-}
-.segmented.legend-tabs button:not(.active) {
-  font-weight: 400;
 }
 /* Section: a collapsible fieldset, closed by default; its summary line hides once it is open. */
 details.section {
@@ -2372,7 +2382,7 @@ td.num > .stat-pairs {
 .key-access .tags {
   margin-top: 4px;
 }
-/* The models a key is limited to, instead of tags. */
+/* The models a key is limited to, above its tags. */
 .key-access .key-models {
   margin-top: 4px;
   font-size: 12px;

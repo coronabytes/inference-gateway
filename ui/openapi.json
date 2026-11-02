@@ -3884,6 +3884,60 @@
         ]
       }
     },
+    "/admin/api/keys/{id}/rates": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Key rates",
+        "description": "The key's requests and tokens per minute over the last 7 days, for setting its limits.",
+        "operationId": "key_rates",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hourly peaks and percentiles.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyRates"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/keys/{id}/regenerate": {
       "post": {
         "tags": [
@@ -3960,6 +4014,79 @@
         "responses": {
           "204": {
             "description": "Reset."
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
+    "/admin/api/keys/{id}/spend": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Key spend",
+        "description": "The key's spend per day, week or month, as its budget counts it, with the total and the\naverage per period.",
+        "operationId": "key_spend",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "description": "The budget period to sum by: `day` (the default, the last 30), `week` (the last 12) or `month` (the last 12).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spend per period.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeySpend"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid period.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -4723,7 +4850,7 @@
           "Virtual keys"
         ],
         "summary": "Model names",
-        "description": "The models a key in `project` may be limited to, by name: deployments, auto routers and\naliases, whatever their tags.",
+        "description": "The models a key in `project` holding `tags` may be limited to, by name: deployments, auto\nrouters and aliases.",
         "operationId": "model_options",
         "parameters": [
           {
@@ -4734,6 +4861,15 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "description": "The key's tags, as `eu,azure`: models none of whose deployments they reach are left out.",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -11831,6 +11967,40 @@
         },
         "additionalProperties": false
       },
+      "KeyRates": {
+        "type": "object",
+        "description": "A key's busiest minute in each hour of the last 7 days, and the 95th percentiles over the\nminutes it had traffic: what its requests and tokens per minute limits are measured against.",
+        "required": [
+          "series",
+          "rpm_p95",
+          "tpm_p95"
+        ],
+        "properties": {
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RatePoint"
+            },
+            "description": "One point per hour, oldest first."
+          },
+          "rpm_p95": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Requests per minute; None without traffic."
+          },
+          "tpm_p95": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Tokens per minute; None without traffic."
+          }
+        }
+      },
       "KeyRegenerated": {
         "type": "object",
         "description": "A key's new secret, shown this once. The old one stops working.",
@@ -11856,6 +12026,40 @@
           "all",
           "project"
         ]
+      },
+      "KeySpend": {
+        "type": "object",
+        "description": "A key's spend per budget period, since it was created.",
+        "required": [
+          "period",
+          "series",
+          "total_usd",
+          "avg_usd"
+        ],
+        "properties": {
+          "period": {
+            "$ref": "#/components/schemas/BudgetPeriod"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpendPoint"
+            },
+            "description": "One point per period, oldest first; the last is the current one."
+          },
+          "total_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "avg_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Average over the finished periods; None before the first one ends."
+          }
+        }
       },
       "KeyUsageRow": {
         "type": "object",
@@ -13605,6 +13809,30 @@
           "gemini"
         ]
       },
+      "RatePoint": {
+        "type": "object",
+        "required": [
+          "ts",
+          "rpm",
+          "tpm"
+        ],
+        "properties": {
+          "ts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start of the hour (Unix seconds)."
+          },
+          "rpm": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The hour's busiest minute: its requests and its tokens (not necessarily the same minute)."
+          },
+          "tpm": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "Ready": {
         "type": "object",
         "description": "What readiness depends on, and whether each is there.",
@@ -14460,6 +14688,24 @@
           "input",
           "output"
         ]
+      },
+      "SpendPoint": {
+        "type": "object",
+        "required": [
+          "ts",
+          "cost_usd"
+        ],
+        "properties": {
+          "ts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start of the period (Unix seconds)."
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          }
+        }
       },
       "SsoButton": {
         "type": "object",

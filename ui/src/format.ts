@@ -43,7 +43,8 @@ export function pct(n: number | null | undefined): string {
 export function timeLabel(tsSecs: number, stepSecs: number): string {
   const d = new Date(tsSecs * 1000);
   if (stepSecs < 3600) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  // Daily buckets are UTC days.
+  // Daily and longer buckets are UTC days; monthly ones are named by their month.
+  if (stepSecs >= 28 * 86_400) return d.toLocaleDateString([], { month: "short", year: "2-digit", timeZone: "UTC" });
   if (stepSecs >= 86_400) return d.toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" });
   return d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
 }

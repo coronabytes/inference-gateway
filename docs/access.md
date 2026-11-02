@@ -6,6 +6,7 @@ Create a **virtual key** per app or team under **Access → Keys & projects**. T
 
 - **Rate limits:** requests and tokens per minute, enforced across all replicas.
 - **Budgets:** an amount in USD per day, week (from Monday) or month (from the 1st), in UTC. Once spent, requests are refused with `429` and a message saying when the budget resets. Spend can be reset from the console.
+- To help set both, the **Limits** tab of a key's form shows its busiest minute per hour over the last 7 days, with the 95th percentile over the minutes it had traffic, and its spend per day, week or month (whichever its budget uses, per day when it has none), with the total and the average per finished period.
 - **Expiry:** a date after which the key stops working.
 - **Models and tags:** which models the key may use (see [Tags](#tags)).
 - **Guardrails:** [guardrails](guardrails.md) every request of the key goes through.
@@ -44,6 +45,7 @@ Tags are labels you put on deployments, auto routers, [MCP servers](mcp.md) and 
 - This is checked per deployment. If a model has one deployment tagged `eu` and another tagged `us`, an `eu` key is only ever served by the EU deployment.
 - Models a key cannot use answer `403` and are left out of its `GET /v1/models`.
 - Auto routers follow the same rule, and only choose among the routes the key may use.
+- A key can also be limited to **models** picked one by one (Models in the key's form). Its tags still apply: a key limited to `gpt-5` with the tag `eu` is only ever served by the EU deployments of `gpt-5`.
 
 ## Dedicated deployments
 

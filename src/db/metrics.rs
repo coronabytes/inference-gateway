@@ -223,6 +223,48 @@ pub async fn model_speeds(
     .await
 }
 
+/// One minute of a key's traffic, counted as its rate limits count it.
+#[derive(Debug)]
+pub struct KeyMinute {
+    /// Start of the minute (Unix seconds).
+    pub minute: i64,
+    pub requests: i64,
+    /// Input (cache reads and writes included) and output tokens.
+    pub tokens: i64,
+}
+
+/// A key's requests and tokens per minute since `since`, for the minutes it had traffic. The
+/// calls of a routed request count through the router's entry, as for its limits.
+pub async fn key_minutes(pool: &PgPool, key_id: Uuid, since: DateTime<Utc>) -> sqlx::Result<Vec<KeyMinute>> {
+    sqlx::query_as!(
+        KeyMinute,
+        r#"SELECT (floor(extract(epoch FROM ts) / 60) * 60)::bigint AS "minute!", count(*) AS "requests!",
+                  coalesce(sum(input_tokens + cache_read_tokens + cache_write_tokens + output_tokens), 0)::bigint AS "tokens!"
+           FROM request_logs
+           WHERE key_id = $1 AND ts >= $2 AND parent_id IS NULL
+           GROUP BY 1"#,
+        key_id,
+        since,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// A key's spend per UTC day since `since`, for the days it spent anything, counted as its budget counts it.
+pub async fn key_daily_spend(pool: &PgPool, key_id: Uuid, since: DateTime<Utc>) -> sqlx::Result<Vec<(i64, f64)>> {
+    let rows = sqlx::query!(
+        r#"SELECT (floor(extract(epoch FROM ts) / 86400) * 86400)::bigint AS "day!", coalesce(sum(cost_usd), 0) AS "cost_usd!"
+           FROM request_logs
+           WHERE key_id = $1 AND ts >= $2 AND parent_id IS NULL
+           GROUP BY 1"#,
+        key_id,
+        since,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.day, r.cost_usd)).collect())
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct KeyUsageRow {
     #[schema(required)]

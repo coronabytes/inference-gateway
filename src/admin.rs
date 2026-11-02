@@ -103,6 +103,8 @@ pub fn router(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         .routes(routes!(logs::log_bodies))
         .routes(routes!(logs::audit_log))
         .routes(routes!(metrics::key_usage))
+        .routes(routes!(metrics::key_rates))
+        .routes(routes!(metrics::key_spend))
         .routes(routes!(settings::cluster))
         .routes(routes!(settings::get_settings, settings::put_settings))
         .routes(routes!(playground::playground_options))

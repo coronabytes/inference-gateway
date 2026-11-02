@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (floor(extract(epoch FROM ts) / 86400) * 86400)::bigint AS \"day!\", coalesce(sum(cost_usd), 0) AS \"cost_usd!\"\n           FROM request_logs\n           WHERE key_id = $1 AND ts >= $2 AND parent_id IS NULL\n           GROUP BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "day!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "cost_usd!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "4fa6bf738394f64e97894d042eb3dcadf232c33f9d8412a22a555e21294cfdcc"
+}
