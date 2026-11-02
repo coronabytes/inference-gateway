@@ -113,9 +113,16 @@ function makeGalaxy(count: number, sky: number): Float32Array {
     const distance = Math.max(r + 0.3, 0.6 + 2.6 * Math.sqrt(Math.random()));
     data.push(
       ...pos,
-      distance, gauss() * 0.25, Math.asin(Math.random() * 2 - 1) * 0.75, Math.random() * 0.1,
-      ...color, alpha,
-      size, twinkle, Math.random() * Math.PI * 2, kind,
+      distance,
+      gauss() * 0.25,
+      Math.asin(Math.random() * 2 - 1) * 0.75,
+      Math.random() * 0.1,
+      ...color,
+      alpha,
+      size,
+      twinkle,
+      Math.random() * Math.PI * 2,
+      kind,
       ...(motion ?? [0, 0, 0, 0]),
     );
   };
@@ -124,16 +131,47 @@ function makeGalaxy(count: number, sky: number): Float32Array {
   // The bulge: a dense, warm swarm of stars orbiting the core, with some bright ones among them.
   for (let i = 0; i < count * 0.07; i++) {
     const { pos, motion } = inOrbit(0.004 + Math.abs(gauss()) * 0.045);
-    add(pos, pick([[GOLD, 6], [WHITE, 3], [PEACH, 1]]), between(0.4, 0.9), between(0.5, 1.2), 0, PLAIN, motion);
+    add(
+      pos,
+      pick([
+        [GOLD, 6],
+        [WHITE, 3],
+        [PEACH, 1],
+      ]),
+      between(0.4, 0.9),
+      between(0.5, 1.2),
+      0,
+      PLAIN,
+      motion,
+    );
   }
   for (let i = 0; i < 40; i++) {
     const { pos, motion } = inOrbit(0.01 + Math.abs(gauss()) * 0.06);
-    add(pos, pick([[WHITE, 3], [GOLD, 2], [ICE, 2]]), between(0.6, 1), between(1.1, 2.2), between(0.4, 1.4), PLAIN, motion);
+    add(
+      pos,
+      pick([
+        [WHITE, 3],
+        [GOLD, 2],
+        [ICE, 2],
+      ]),
+      between(0.6, 1),
+      between(1.1, 2.2),
+      between(0.4, 1.4),
+      PLAIN,
+      motion,
+    );
   }
 
   // The arms: a fine dust of stars along each.
   for (let i = 0; i < count * 0.42; i++) {
-    const color = pick([[CYAN, 3], [BLUE, 3], [ICE, 2], [ORANGE, 1.4], [PEACH, 0.8], [WHITE, 0.4]]);
+    const color = pick([
+      [CYAN, 3],
+      [BLUE, 3],
+      [ICE, 2],
+      [ORANGE, 1.4],
+      [PEACH, 0.8],
+      [WHITE, 0.4],
+    ]);
     add(scatter(), color, between(0.35, 0.9), between(0.3, 0.8), 0, PLAIN, onArm(i % 2, 1));
   }
 
@@ -143,25 +181,67 @@ function makeGalaxy(count: number, sky: number): Float32Array {
     const r = 0.05 + Math.random() ** 0.8 * 1.0;
     const a = Math.random() * Math.PI * 2;
     const warp = 0.12 * r * r * Math.sin(a);
-    add([r * Math.cos(a), r * Math.sin(a), warp + gauss() * (0.015 + 0.04 * r)], pick([[BLUE, 2], [ICE, 2], [ORANGE, 1]]), between(0.06, 0.2), between(0.35, 0.7));
+    add(
+      [r * Math.cos(a), r * Math.sin(a), warp + gauss() * (0.015 + 0.04 * r)],
+      pick([
+        [BLUE, 2],
+        [ICE, 2],
+        [ORANGE, 1],
+      ]),
+      between(0.06, 0.2),
+      between(0.35, 0.7),
+    );
   }
 
   // Beads of bright young stars strung along the arms, alone or in small knots that travel together.
   for (let c = 0; c < count / 34; c++) {
     const place = onArm(c % 2, 0.7);
     const [x, y, z] = scatter();
-    const knot = pick([[1, 8], [2, 2], [3, 1]]);
+    const knot = pick([
+      [1, 8],
+      [2, 2],
+      [3, 1],
+    ]);
     for (let i = 0; i < knot; i++) {
-      const color = pick([[ICE, 5.5], [WHITE, 2], [BLUE, 1], [PEACH, 1], [ORANGE, 0.5]]);
+      const color = pick([
+        [ICE, 5.5],
+        [WHITE, 2],
+        [BLUE, 1],
+        [PEACH, 1],
+        [ORANGE, 0.5],
+      ]);
       const spread = i ? 0.8 : 0;
       const member: Motion = [place[0], place[1] + gauss() * 0.008 * Math.min(i, 1), place[2], place[3]];
-      add([x + gauss() * spread, y + gauss() * spread, z + gauss() * spread * 0.6], color, between(0.6, 1), pick([[between(1.2, 2), 3], [between(2, 3.4), 2]]), between(0.4, 1.8), PLAIN, member);
+      add(
+        [x + gauss() * spread, y + gauss() * spread, z + gauss() * spread * 0.6],
+        color,
+        between(0.6, 1),
+        pick([
+          [between(1.2, 2), 3],
+          [between(2, 3.4), 2],
+        ]),
+        between(0.4, 1.8),
+        PLAIN,
+        member,
+      );
     }
   }
 
   // A few giants with diffraction spikes.
   for (let i = 0; i < Math.max(6, count / 1400); i++) {
-    add(scatter(), pick([[ICE, 3], [WHITE, 2], [PEACH, 1]]), between(0.85, 1), between(2.4, 3.4), between(0.3, 0.9), SPIKED, onArm(i % 2, 0.5));
+    add(
+      scatter(),
+      pick([
+        [ICE, 3],
+        [WHITE, 2],
+        [PEACH, 1],
+      ]),
+      between(0.85, 1),
+      between(2.4, 3.4),
+      between(0.3, 0.9),
+      SPIKED,
+      onArm(i % 2, 0.5),
+    );
   }
 
   // The sky: faint stars far away in every direction, which only move when the view turns.
@@ -169,7 +249,18 @@ function makeGalaxy(count: number, sky: number): Float32Array {
     const u = Math.random() * 2 - 1;
     const phi = Math.random() * Math.PI * 2;
     const ring = Math.sqrt(1 - u * u);
-    add([ring * Math.cos(phi), ring * Math.sin(phi), u], pick([[ICE, 3], [WHITE, 2], [PEACH, 1]]), between(0.15, 0.6), between(0.35, 0.9), 0, SKY);
+    add(
+      [ring * Math.cos(phi), ring * Math.sin(phi), u],
+      pick([
+        [ICE, 3],
+        [WHITE, 2],
+        [PEACH, 1],
+      ]),
+      between(0.15, 0.6),
+      between(0.35, 0.9),
+      0,
+      SKY,
+    );
   }
   return new Float32Array(data);
 }
@@ -347,7 +438,10 @@ void main() {
 function compile(gl: WebGLRenderingContext, vertex: string, fragment: string): WebGLProgram | null {
   const program = gl.createProgram();
   if (!program) return null;
-  for (const [type, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragment]] as const) {
+  for (const [type, source] of [
+    [gl.VERTEX_SHADER, vertex],
+    [gl.FRAGMENT_SHADER, fragment],
+  ] as const) {
     const shader = gl.createShader(type);
     if (!shader) return null;
     gl.shaderSource(shader, source);
@@ -382,7 +476,18 @@ export function Galaxy({ className, backdrop = false }: { className?: string; ba
     const stars = compile(gl, STAR_VERTEX, STAR_FRAGMENT);
     const glow = compile(gl, GLOW_VERTEX, GLOW_FRAGMENT);
     if (!stars || !glow) return;
-    const starUniforms = uniforms(gl, stars, ["uView", "uSpin", "uTime", "uIntro", "uViewport", "uCenter", "uScale", "uPx", "uFocal", "uMaxPoint"]);
+    const starUniforms = uniforms(gl, stars, [
+      "uView",
+      "uSpin",
+      "uTime",
+      "uIntro",
+      "uViewport",
+      "uCenter",
+      "uScale",
+      "uPx",
+      "uFocal",
+      "uMaxPoint",
+    ]);
     const glowUniforms = uniforms(gl, glow, ["uViewport", "uCenter", "uScale", "uGlow"]);
     const starBuffer = gl.createBuffer();
     const glowBuffer = gl.createBuffer();
@@ -443,7 +548,6 @@ export function Galaxy({ className, backdrop = false }: { className?: string; ba
 
       gl.clear(gl.COLOR_BUFFER_BIT);
 
-      // biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook.
       gl.useProgram(glow);
       gl.uniform2fv(glowUniforms.uViewport, viewport);
       gl.uniform2fv(glowUniforms.uCenter, center);
@@ -458,7 +562,6 @@ export function Galaxy({ className, backdrop = false }: { className?: string; ba
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.disableVertexAttribArray(corner);
 
-      // biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook.
       gl.useProgram(stars);
       gl.uniformMatrix3fv(starUniforms.uView, false, controls.view());
       gl.uniform1f(starUniforms.uSpin, SPIN_START + (still ? 0 : SPIN_SPEED * time));
@@ -471,7 +574,13 @@ export function Galaxy({ className, backdrop = false }: { className?: string; ba
       gl.uniform1f(starUniforms.uFocal, Math.max(width, height) * dpr * 0.9);
       gl.uniform1f(starUniforms.uMaxPoint, maxPoint);
       gl.bindBuffer(gl.ARRAY_BUFFER, starBuffer);
-      const layout: [string, number, number][] = [["aPos", 3, 0], ["aStart", 4, 3], ["aColor", 4, 7], ["aMisc", 4, 11], ["aArm", 4, 15]];
+      const layout: [string, number, number][] = [
+        ["aPos", 3, 0],
+        ["aStart", 4, 3],
+        ["aColor", 4, 7],
+        ["aMisc", 4, 11],
+        ["aArm", 4, 15],
+      ];
       const enabled: number[] = [];
       for (const [name, size, offset] of layout) {
         const at = gl.getAttribLocation(stars, name);

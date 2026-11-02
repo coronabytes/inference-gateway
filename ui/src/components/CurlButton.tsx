@@ -20,7 +20,12 @@ const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** The request as a curl command for this gateway; the key is left to `$GATEWAY_API_KEY`. */
 export function curlCommand({ path, body, labels = {}, headers: extra, stream }: CurlRequest) {
-  const headers = { Authorization: "Bearer $GATEWAY_API_KEY", ...(body !== undefined && { "Content-Type": "application/json" }), ...labelHeaders(labels), ...extra };
+  const headers = {
+    Authorization: "Bearer $GATEWAY_API_KEY",
+    ...(body !== undefined && { "Content-Type": "application/json" }),
+    ...labelHeaders(labels),
+    ...extra,
+  };
   const url = `${location.origin}${path}`;
   return [
     // A query string's `&` and `?` would mean something else to the shell.
@@ -33,13 +38,26 @@ export function curlCommand({ path, body, labels = {}, headers: extra, stream }:
 
 /** For reading: long base64 runs (attached files) cut short, with their size. */
 const abridged = (curl: string) =>
-  curl.replace(/[A-Za-z0-9+/]{200,}={0,2}/g, (b64) => `${b64.slice(0, 32)}…(${bytes((b64.length * 3) / 4 - (b64.match(/=*$/)?.[0].length ?? 0))})`);
+  curl.replace(
+    /[A-Za-z0-9+/]{200,}={0,2}/g,
+    (b64) => `${b64.slice(0, 32)}…(${bytes((b64.length * 3) / 4 - (b64.match(/=*$/)?.[0].length ?? 0))})`,
+  );
 
 /**
  * Show curl: opens a dialog with the request `request()` returns (read when clicked) as a curl
  * command, and a Copy button. `keyName` is the virtual key whose secret `$GATEWAY_API_KEY` stands for.
  */
-export function CurlButton({ request, keyName, disabled, title }: { request: () => CurlRequest | null; keyName?: string; disabled?: boolean; title?: string }) {
+export function CurlButton({
+  request,
+  keyName,
+  disabled,
+  title,
+}: {
+  request: () => CurlRequest | null;
+  keyName?: string;
+  disabled?: boolean;
+  title?: string;
+}) {
   const [shown, setShown] = useState<CurlRequest | null>(null);
   return (
     <>
@@ -55,7 +73,17 @@ export function CurlButton({ request, keyName, disabled, title }: { request: () 
  * The dialog of `CurlButton`, for opening it from elsewhere, such as a menu. `note` replaces the
  * line on which key `$GATEWAY_API_KEY` stands for.
  */
-export function CurlDialog({ request, keyName, note, onClose }: { request: CurlRequest; keyName?: string; note?: ReactNode; onClose: () => void }) {
+export function CurlDialog({
+  request,
+  keyName,
+  note,
+  onClose,
+}: {
+  request: CurlRequest;
+  keyName?: string;
+  note?: ReactNode;
+  onClose: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const curl = curlCommand(request);
 
@@ -79,7 +107,19 @@ export function CurlDialog({ request, keyName, note, onClose }: { request: CurlR
       }
     >
       <p className="muted small">
-        {note ?? <>Set <code>GATEWAY_API_KEY</code> to the secret of {keyName ? <>key <strong>{keyName}</strong></> : "the virtual key"}.</>}
+        {note ?? (
+          <>
+            Set <code>GATEWAY_API_KEY</code> to the secret of{" "}
+            {keyName ? (
+              <>
+                key <strong>{keyName}</strong>
+              </>
+            ) : (
+              "the virtual key"
+            )}
+            .
+          </>
+        )}
         {curl !== abridged(curl) && " Attached files are shortened here; Copy copies them in full."}
       </p>
       <pre className="raw curl">{abridged(curl)}</pre>

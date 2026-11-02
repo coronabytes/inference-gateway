@@ -156,7 +156,12 @@ export function catalogScope(provider: string, mode: string): { providers: strin
     gemini: ["gemini"],
     vertex: ["vertex_ai", "vertex_ai-language-models", "vertex_ai-anthropic_models", "vertex_ai-embedding-models", "vertex_ai-text-models"],
   };
-  const modes: Record<string, string[]> = { chat: ["chat", "responses"], embedding: ["embedding"], decision: ["evaluation"], rerank: ["rerank"] };
+  const modes: Record<string, string[]> = {
+    chat: ["chat", "responses"],
+    embedding: ["embedding"],
+    decision: ["evaluation"],
+    rerank: ["rerank"],
+  };
   return { providers: providers[provider] ?? [], modes: modes[mode] ?? [] };
 }
 

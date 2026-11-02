@@ -226,28 +226,28 @@ async fn run() -> Result<(), String> {
     }
 
     if let Some(dir) = ui_dir.as_ref().filter(|d| !d.join("index.html").exists()) {
-        tracing::warn!(dir = %dir.display(), "GATEWAY_UI is on, but there is no console build; run `npm run build` in ui/");
+        tracing::warn!(dir = %dir.display(), "GATEWAY_UI is on, but there is no console build; run `bun run build` in ui/");
     }
     if let Some(dir) = ui_dir.filter(|d| d.join("index.html").exists()) {
         tracing::info!(dir = %dir.display(), "serving admin UI");
-        // Vite names everything under assets/ after its content hash, so those files can be cached
-        // for good. index.html (and anything else at the root) is revalidated on every load, so a
-        // rebuild shows up on a plain reload instead of needing a hard refresh.
-        let assets: Router = Router::new().fallback_service(ServeDir::new(dir.join("assets"))).layer(SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            |res: &Response| {
+        // The console build names everything under assets/ after its content hash, so those files
+        // can be cached for good. index.html (and anything else at the root) is revalidated on every
+        // load, so a rebuild shows up on a plain reload instead of needing a hard refresh. The build
+        // puts a brotli-compressed copy next to each text file, which goes to browsers that take it.
+        let assets: Router = Router::new().fallback_service(ServeDir::new(dir.join("assets")).precompressed_br()).layer(
+            SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, |res: &Response| {
                 // Only hits are immutable; a 404 for a hash that is not there yet must not stick.
                 res.status().is_success().then(|| HeaderValue::from_static("public, max-age=31536000, immutable"))
-            },
-        ));
+            }),
+        );
         let index: Router = Router::new()
-            .fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html"))))
+            .fallback_service(ServeDir::new(&dir).precompressed_br().fallback(ServeFile::new(dir.join("index.html")).precompressed_br()))
             .layer(cache_control("no-cache"));
         app = app.nest_service("/assets", assets).fallback_service(index);
     } else if cfg!(debug_assertions) {
-        // Development without a console build: the console is on Vite's dev server, so the
+        // Development without a console build: the console is on its own dev server, so the
         // gateway's own address opens the API reference, served from the console's sources.
-        tracing::info!("admin UI not served; run `npm run dev` in ui/ for the console, API reference at /admin/docs/");
+        tracing::info!("admin UI not served; run `bun run dev` in ui/ for the console, API reference at /admin/docs/");
         app = app.route("/", get(|| async { Redirect::to("/admin/docs/") }));
     }
 
@@ -320,7 +320,7 @@ fn routes(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         // The OpenAPI document, and the API reference that renders it (static files in the console's
         // build, from ui/public/docs), for signed-in people and admin keys only. They live under
         // /admin, the only path the session cookie is sent to. They answer 404 while the `api_docs`
-        // setting is off.
+        // setting is off. A console build has the files brotli-compressed as well (see above).
         let docs_dir = state
             .cfg
             .ui_dir
@@ -330,7 +330,7 @@ fn routes(state: Option<&AppState>) -> OpenApiRouter<AppState> {
             .or_else(|| cfg!(debug_assertions).then(|| "ui/public/docs".into()));
         let mut docs = Router::new().route("/openapi.json", get(openapi::document));
         if let Some(dir) = docs_dir {
-            docs = docs.nest_service("/docs", ServeDir::new(dir));
+            docs = docs.nest_service("/docs", ServeDir::new(dir).precompressed_br());
         }
         let docs = docs
             .layer(axum::middleware::from_fn_with_state(state.clone(), admin::auth::require_signed_in))

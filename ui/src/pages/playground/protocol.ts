@@ -39,13 +39,17 @@ function content(apiId: Api, t: Turn) {
     case "chat":
       return [
         ...t.files.map((f) =>
-          isImage(f) ? { type: "image_url", image_url: { url: dataUrl(f) } } : { type: "file", file: { filename: f.name, file_data: dataUrl(f) } },
+          isImage(f)
+            ? { type: "image_url", image_url: { url: dataUrl(f) } }
+            : { type: "file", file: { filename: f.name, file_data: dataUrl(f) } },
         ),
         ...text.map((s) => ({ type: "text", text: s })),
       ];
     case "responses":
       return [
-        ...t.files.map((f) => (isImage(f) ? { type: "input_image", image_url: dataUrl(f) } : { type: "input_file", filename: f.name, file_data: dataUrl(f) })),
+        ...t.files.map((f) =>
+          isImage(f) ? { type: "input_image", image_url: dataUrl(f) } : { type: "input_file", filename: f.name, file_data: dataUrl(f) },
+        ),
         ...text.map((s) => ({ type: "input_text", text: s })),
       ];
     case "messages":
@@ -102,13 +106,21 @@ function cite(r: Result, sources: (Source | undefined)[]) {
 function responsesMcp(o: any): McpView | null {
   if (o?.type === "mcp_list_tools") return { kind: "tools", server: o.server_label, tools: (o.tools ?? []).map((t: any) => t.name) };
   if (o?.type === "mcp_call")
-    return { kind: "call", server: o.server_label, tool: o.name, arguments: o.arguments ?? "", output: o.output ?? undefined, error: o.error ?? undefined };
+    return {
+      kind: "call",
+      server: o.server_label,
+      tool: o.name,
+      arguments: o.arguments ?? "",
+      output: o.output ?? undefined,
+      error: o.error ?? undefined,
+    };
   return null;
 }
 
 /** Anthropic's MCP blocks: `mcp_tool_use` starts a call, the `mcp_tool_result` after it completes it. */
 function messagesMcp(r: Result, b: any) {
-  if (b?.type === "mcp_tool_use") r.mcp.push({ kind: "call", id: b.id, server: b.server_name, tool: b.name, arguments: JSON.stringify(b.input ?? {}) });
+  if (b?.type === "mcp_tool_use")
+    r.mcp.push({ kind: "call", id: b.id, server: b.server_name, tool: b.name, arguments: JSON.stringify(b.input ?? {}) });
   if (b?.type !== "mcp_tool_result") return;
   const call = r.mcp.find((m) => m.kind === "call" && m.id === b.tool_use_id);
   if (call?.kind !== "call") return;
@@ -121,7 +133,13 @@ function messagesMcp(r: Result, b: any) {
 function responsesOutput(output: any[] | undefined, r: Result) {
   const items = output ?? [];
   r.searches = items.filter((o) => o.type === "web_search_call").length || r.searches;
-  cite(r, items.flatMap((o) => o.content ?? []).flatMap((c: any) => c.annotations ?? []).filter((a: any) => a.type === "url_citation"));
+  cite(
+    r,
+    items
+      .flatMap((o) => o.content ?? [])
+      .flatMap((c: any) => c.annotations ?? [])
+      .filter((a: any) => a.type === "url_citation"),
+  );
 }
 
 /** Options sent with every chat request, in the chosen API's own fields. */
@@ -177,7 +195,15 @@ function optionFields(apiId: Api, { effort, webSearch, mcp, schema }: ChatOption
 }
 
 /** Chat requests always stream: every chat API supports it, and replies appear as they are written. */
-export function buildBody(apiId: Api, model: string, system: string, history: Turn[], previousId: string | null, store: boolean, options: ChatOptions) {
+export function buildBody(
+  apiId: Api,
+  model: string,
+  system: string,
+  history: Turn[],
+  previousId: string | null,
+  store: boolean,
+  options: ChatOptions,
+) {
   const sys = system.trim();
   switch (apiId) {
     case "chat":
@@ -186,7 +212,10 @@ export function buildBody(apiId: Api, model: string, system: string, history: Tu
         stream: true,
         stream_options: { include_usage: true },
         ...optionFields(apiId, options),
-        messages: [...(sys ? [{ role: "system", content: sys }] : []), ...history.map((t) => ({ role: t.role, content: content(apiId, t) }))],
+        messages: [
+          ...(sys ? [{ role: "system", content: sys }] : []),
+          ...history.map((t) => ({ role: t.role, content: content(apiId, t) })),
+        ],
       };
     case "responses": {
       // Chained: only the new user turn plus previous_response_id; the gateway holds the rest.
@@ -226,7 +255,10 @@ export function applyEvent(apiId: Api, ev: { event?: string; data: string }, r: 
   switch (apiId) {
     case "chat":
       r.text += v.choices?.[0]?.delta?.content ?? "";
-      cite(r, (v.choices?.[0]?.delta?.annotations ?? []).map((a: any) => a.url_citation));
+      cite(
+        r,
+        (v.choices?.[0]?.delta?.annotations ?? []).map((a: any) => a.url_citation),
+      );
       if (v.usage) Object.assign(r, { input: v.usage.prompt_tokens, output: v.usage.completion_tokens });
       break;
     case "responses":
@@ -265,7 +297,10 @@ export function parseFull(apiId: Api, v: any): Result {
     case "chat": {
       const m = v.choices?.[0]?.message;
       const r: Result = { text: m?.content ?? "", input: v.usage?.prompt_tokens, output: v.usage?.completion_tokens, sources: [], mcp: [] };
-      cite(r, (m?.annotations ?? []).map((a: any) => a.url_citation));
+      cite(
+        r,
+        (m?.annotations ?? []).map((a: any) => a.url_citation),
+      );
       return r;
     }
     case "responses": {
@@ -291,7 +326,10 @@ export function parseFull(apiId: Api, v: any): Result {
         mcp: [],
       };
       for (const b of v.content ?? []) messagesMcp(r, b);
-      cite(r, blocks.flatMap((c: any) => c.citations ?? []));
+      cite(
+        r,
+        blocks.flatMap((c: any) => c.citations ?? []),
+      );
       return r;
     }
   }

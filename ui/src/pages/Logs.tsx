@@ -35,7 +35,13 @@ function ToolList({ tools, onPick }: { tools: string[] | null; onPick: (tool: st
   return (
     <span className="tags">
       {tools.map((t) => (
-        <button key={t} type="button" className="tag label-tag" title={`${t}: show only requests that called this tool`} onClick={() => onPick(t)}>
+        <button
+          key={t}
+          type="button"
+          className="tag label-tag"
+          title={`${t}: show only requests that called this tool`}
+          onClick={() => onPick(t)}
+        >
           {t}
         </button>
       ))}
@@ -50,7 +56,13 @@ function LabelList({ labels, onPick }: { labels: LogRow["labels"]; onPick: (key:
   return (
     <span className="tags">
       {entries.map(([k, v]) => (
-        <button key={k} type="button" className="tag label-tag" title={`${k}=${v}: show only requests with this label`} onClick={() => onPick(k, v)}>
+        <button
+          key={k}
+          type="button"
+          className="tag label-tag"
+          title={`${k}=${v}: show only requests with this label`}
+          onClick={() => onPick(k, v)}
+        >
           {k}={v}
         </button>
       ))}
@@ -108,7 +120,8 @@ function RequestDetails({ r, routed }: { r: LogRow; routed: boolean }) {
                 <span className="muted">deleted</span>
               ) : (
                 <>
-                  <span className="mono">{r.upstream_model}</span> on {r.provider ?? "–"} with <span className="mono">{r.credential_name ?? "–"}</span>
+                  <span className="mono">{r.upstream_model}</span> on {r.provider ?? "–"} with{" "}
+                  <span className="mono">{r.credential_name ?? "–"}</span>
                 </>
               )}
               {r.deployment_id && <div className="mono muted small">{r.deployment_id}</div>}
@@ -117,7 +130,8 @@ function RequestDetails({ r, routed }: { r: LogRow; routed: boolean }) {
           <tr>
             <th>Tokens</th>
             <td>
-              {compact(r.input_tokens)} in, {compact(r.cache_read_tokens)} cache read, {compact(r.cache_write_tokens)} cache write, {compact(r.output_tokens)} out
+              {compact(r.input_tokens)} in, {compact(r.cache_read_tokens)} cache read, {compact(r.cache_write_tokens)} cache write,{" "}
+              {compact(r.output_tokens)} out
             </td>
           </tr>
           {r.searches > 0 && (
@@ -137,8 +151,13 @@ function RequestDetails({ r, routed }: { r: LogRow; routed: boolean }) {
               <th>Guardrails</th>
               <td>
                 {r.guardrails.action} by <span className="mono">{r.guardrails.applied.join(", ")}</span>
-                {r.guardrails.findings.length > 0 && <> · found <span className="mono">{r.guardrails.findings.join(", ")}</span></>} ·{" "}
-                {usd(r.guardrail_cost_usd)} of the cost
+                {r.guardrails.findings.length > 0 && (
+                  <>
+                    {" "}
+                    · found <span className="mono">{r.guardrails.findings.join(", ")}</span>
+                  </>
+                )}{" "}
+                · {usd(r.guardrail_cost_usd)} of the cost
               </td>
             </tr>
           )}
@@ -337,13 +356,19 @@ export function RequestLog() {
                         // Clicking a row shows its details; a second click hides them. Its own
                         // buttons (a label to filter by) keep their action.
                         onClick={(e) => (e.target as HTMLElement).closest("button, a") || setSelected((s) => (s?.id === r.id ? null : r))}
-                        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && e.target === e.currentTarget && (e.preventDefault(), setSelected((s) => (s?.id === r.id ? null : r)))}
+                        onKeyDown={(e) =>
+                          (e.key === "Enter" || e.key === " ") &&
+                          e.target === e.currentTarget &&
+                          (e.preventDefault(), setSelected((s) => (s?.id === r.id ? null : r)))
+                        }
                       >
                         <td className="when" title={dateTime(r.ts)}>
                           {r === p ? relative(r.ts) : <ChildArrowIcon />}
                         </td>
                         <td>
-                          <Badge tone={r.status_code < 400 ? "good" : r.status_code === 429 ? "warning" : "critical"}>{r.status_code}</Badge>
+                          <Badge tone={r.status_code < 400 ? "good" : r.status_code === 429 ? "warning" : "critical"}>
+                            {r.status_code}
+                          </Badge>
                           {r.attempts > 1 && <span className="muted small"> ×{r.attempts}</span>}
                         </td>
                         <td className="mono model">
@@ -368,7 +393,10 @@ export function RequestLog() {
                         {/* Marks in a column of their own, so they line up whatever the cost's width. */}
                         <td className="marks">
                           {r.guardrails && r.guardrails.action !== "passed" && (
-                            <span className={`guardrail-mark ${r.guardrails.action}`} title={`Guardrails ${r.guardrails.action} the prompt; see details`}>
+                            <span
+                              className={`guardrail-mark ${r.guardrails.action}`}
+                              title={`Guardrails ${r.guardrails.action} the prompt; see details`}
+                            >
                               {r.guardrails.action}
                             </span>
                           )}
@@ -387,7 +415,9 @@ export function RequestLog() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={12} className="empty">No requests match these filters.</td>
+                <td colSpan={12} className="empty">
+                  No requests match these filters.
+                </td>
               </tr>
             )}
           </tbody>
@@ -448,7 +478,9 @@ function actionTone(action: string): "good" | "warning" | "critical" | "neutral"
 /** Details that are all `{ from, to }` pairs (an update, a regenerated key) as fields and their change. */
 function fieldChanges(e: AuditEntry): [string, { from: unknown; to: unknown }][] | null {
   const entries = Object.entries(e.details);
-  const pairs = entries.filter((x): x is [string, { from: unknown; to: unknown }] => !!x[1] && typeof x[1] === "object" && "from" in x[1] && "to" in x[1]);
+  const pairs = entries.filter(
+    (x): x is [string, { from: unknown; to: unknown }] => !!x[1] && typeof x[1] === "object" && "from" in x[1] && "to" in x[1],
+  );
   return pairs.length > 0 && pairs.length === entries.length ? pairs : null;
 }
 
@@ -461,7 +493,11 @@ function value(v: unknown): string {
 
 /** One line for the table: the changed fields, otherwise nothing (the details are one click away). */
 function summary(e: AuditEntry): string {
-  return fieldChanges(e)?.map(([k]) => k).join(", ") ?? "";
+  return (
+    fieldChanges(e)
+      ?.map(([k]) => k)
+      .join(", ") ?? ""
+  );
 }
 
 /** The audit log, a tab of the Cluster page. */
@@ -499,7 +535,12 @@ export function AuditLog() {
     <>
       <div className="filters">
         <TimeRange {...time.props} />
-        <Select caption="Type" value={type} onChange={setType} options={[{ value: "", label: "All" }, ...Object.entries(TARGETS).map(([value, label]) => ({ value, label }))]} />
+        <Select
+          caption="Type"
+          value={type}
+          onChange={setType}
+          options={[{ value: "", label: "All" }, ...Object.entries(TARGETS).map(([value, label]) => ({ value, label }))]}
+        />
         <TextInput caption="Name" type="search" placeholder="target or who" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
@@ -523,7 +564,9 @@ export function AuditLog() {
               return (
                 <Fragment key={e.id}>
                   <tr>
-                    <td className="when" title={dateTime(e.ts)}>{relative(e.ts)}</td>
+                    <td className="when" title={dateTime(e.ts)}>
+                      {relative(e.ts)}
+                    </td>
                     <td>
                       {e.actor_name ?? "–"} <span className="muted small">{ACTORS[e.actor_kind] ?? e.actor_kind}</span>
                     </td>

@@ -54,12 +54,7 @@ export function AliasCard({
             )}
           </h3>
           <p className="muted small" title="Requests for the alias are served by this model">
-            serves{" "}
-            {alias.target ? (
-              <span className="mono">{alias.target}</span>
-            ) : (
-              <Badge tone="critical">missing</Badge>
-            )}
+            serves {alias.target ? <span className="mono">{alias.target}</span> : <Badge tone="critical">missing</Badge>}
           </p>
         </div>
         <div className="actions">
@@ -117,7 +112,11 @@ export function AliasForm({
   const [busy, setBusy] = useState(false);
 
   const trimmed = name.trim();
-  const clash = all.some((t) => t.name === trimmed) ? "A deployment or router has this name." : taken.includes(trimmed) ? "Another alias has this name." : null;
+  const clash = all.some((t) => t.name === trimmed)
+    ? "A deployment or router has this name."
+    : taken.includes(trimmed)
+      ? "Another alias has this name."
+      : null;
   const missing = !!from && !from.target && !target;
   const invalid = !MODEL_NAME.test(trimmed) || !!clash || !target;
   const options: SelectOption[] = all.map((t) => ({ value: t.name, label: t.name, note: t.kind }));

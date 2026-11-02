@@ -153,7 +153,16 @@ export function App() {
         // Without storage, a sign-in that leaves the page lands on the metrics; the app can start again.
       }
     }
-    return <Login sso={session.sso} masterKey={session.master_key} dev={session.dev} version={session.version} initialError={loginError} onLogin={refresh} />;
+    return (
+      <Login
+        sso={session.sso}
+        masterKey={session.master_key}
+        dev={session.dev}
+        version={session.version}
+        initialError={loginError}
+        onLogin={refresh}
+      />
+    );
   }
 
   // Back to an MCP client's sign-in that had to wait for the console's own.
@@ -175,51 +184,57 @@ export function App() {
 
   return (
     <SessionContext.Provider value={session}>
-    <div className="shell">
-      {theme === "light" ? <div className="app-sky" aria-hidden="true" /> : <Galaxy className="app-sky" backdrop />}
-      <header className="topbar">
-        <div className="brand">
-          Inference Gateway
-          <span className="version-pill" title="Gateway version">
-            {session.version}
-          </span>
-        </div>
-        <nav>
-          {!idle &&
-            (Object.entries(pages) as [PageId, { label: string }][]).map(([id, { label }]) => (
-              <a key={id} href={`#/${id}`} className={page === id && !connect ? "active" : ""} aria-current={page === id && !connect ? "page" : undefined} data-label={label}>
-                {label}
+      <div className="shell">
+        {theme === "light" ? <div className="app-sky" aria-hidden="true" /> : <Galaxy className="app-sky" backdrop />}
+        <header className="topbar">
+          <div className="brand">
+            Inference Gateway
+            <span className="version-pill" title="Gateway version">
+              {session.version}
+            </span>
+          </div>
+          <nav>
+            {!idle &&
+              (Object.entries(pages) as [PageId, { label: string }][]).map(([id, { label }]) => (
+                <a
+                  key={id}
+                  href={`#/${id}`}
+                  className={page === id && !connect ? "active" : ""}
+                  aria-current={page === id && !connect ? "page" : undefined}
+                  data-label={label}
+                >
+                  {label}
+                </a>
+              ))}
+          </nav>
+          <div className="who">
+            {session.api_docs && (
+              <a className="icon-btn" href="/admin/docs/" target="_blank" rel="noopener" aria-label="API reference" title="API reference">
+                <DocsIcon />
               </a>
-            ))}
-        </nav>
-        <div className="who">
-          {session.api_docs && (
-            <a className="icon-btn" href="/admin/docs/" target="_blank" rel="noopener" aria-label="API reference" title="API reference">
-              <DocsIcon />
-            </a>
-          )}
-          <IconButton label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"} onClick={toggleTheme}>
-            {theme === "light" ? <MoonIcon /> : <SunIcon />}
-          </IconButton>
-          <UserMenu session={session} onSignOut={signOut} onSwitch={switchDev} />
-        </div>
-      </header>
-      <main>
-        <Suspense fallback={null}>
-          {connect ? (
-            <Connect id={connect} />
-          ) : idle ? (
-            <div className="empty-card">
-              You are signed in, but not part of any project yet. Once an admin adds you to one, you manage its keys here and see its
-              playground, request log and metrics.
-            </div>
-          ) : (
-            // A user who follows an admin's link to a page they do not have sees the metrics.
-            (pages[page] ?? PAGES.metrics).el
-          )}
-        </Suspense>
-      </main>
-    </div>
+            )}
+            <IconButton label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"} onClick={toggleTheme}>
+              {theme === "light" ? <MoonIcon /> : <SunIcon />}
+            </IconButton>
+            <UserMenu session={session} onSignOut={signOut} onSwitch={switchDev} />
+          </div>
+        </header>
+        <main>
+          <Suspense fallback={null}>
+            {connect ? (
+              <Connect id={connect} />
+            ) : idle ? (
+              <div className="empty-card">
+                You are signed in, but not part of any project yet. Once an admin adds you to one, you manage its keys here and see its
+                playground, request log and metrics.
+              </div>
+            ) : (
+              // A user who follows an admin's link to a page they do not have sees the metrics.
+              (pages[page] ?? PAGES.metrics).el
+            )}
+          </Suspense>
+        </main>
+      </div>
     </SessionContext.Provider>
   );
 }
@@ -296,13 +311,15 @@ function Login({
           )}
           {!sso && !masterKey && !dev && (
             <p className="login-note">
-              Sign-in is not set up. Set <code>GATEWAY_MASTER_KEY</code> and restart the gateway, then sign in with it to configure single sign-on.
+              Sign-in is not set up. Set <code>GATEWAY_MASTER_KEY</code> and restart the gateway, then sign in with it to configure single
+              sign-on.
             </p>
           )}
           {!masterKey ? null : showKey ? (
             <>
               <p className="login-note">
-                {sso || dev ? "Or use the gateway master key." : "Sign in with the gateway master key."} It is kept only for this browser tab.
+                {sso || dev ? "Or use the gateway master key." : "Sign in with the gateway master key."} It is kept only for this browser
+                tab.
               </p>
               <input
                 type="password"

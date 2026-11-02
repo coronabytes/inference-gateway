@@ -21,7 +21,11 @@ function partsText(parts: any[] | undefined): string {
 }
 
 /** A task state as A2A 0.3 writes it (`input-required`); 1.0 writes `TASK_STATE_INPUT_REQUIRED`. */
-const stateName = (s?: string) => s?.replace(/^TASK_STATE_/, "").toLowerCase().replace(/_/g, "-");
+const stateName = (s?: string) =>
+  s
+    ?.replace(/^TASK_STATE_/, "")
+    .toLowerCase()
+    .replace(/_/g, "-");
 
 /** States in which the task waits for the client: the next message continues it. */
 const WAITING = ["input-required", "auth-required"];
@@ -163,10 +167,15 @@ export function AgentPanel({ keyId, keyName, agent, labels }: { keyId: string; k
     const started = performance.now();
     const reply: Reply = { text: "", artifacts: [] };
     try {
-      const res = await adminFetch(`/playground/a2a/${encodeURIComponent(agent)}?key_id=${encodeURIComponent(keyId)}`, body, controller.signal, {
-        ...labelHeaders(labels),
-        ...headers,
-      });
+      const res = await adminFetch(
+        `/playground/a2a/${encodeURIComponent(agent)}?key_id=${encodeURIComponent(keyId)}`,
+        body,
+        controller.signal,
+        {
+          ...labelHeaders(labels),
+          ...headers,
+        },
+      );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error?.message ?? data?.error ?? `request failed (${res.status})`);
@@ -228,8 +237,8 @@ export function AgentPanel({ keyId, keyName, agent, labels }: { keyId: string; k
                   {card.description && <div>{card.description}</div>}
                   {skills.length > 0 && <div>Skills: {skills.map((s) => s.name ?? s.id).join(", ")}</div>}
                   <div className="agent-note">
-                    Messages go to <code>/a2a/{agent}</code> as key <strong>{keyName ?? "…"}</strong>: logged, counted against its limits and
-                    budget, and charged the agent's price.
+                    Messages go to <code>/a2a/{agent}</code> as key <strong>{keyName ?? "…"}</strong>: logged, counted against its limits
+                    and budget, and charged the agent's price.
                   </div>
                 </>
               ) : (
@@ -253,7 +262,11 @@ export function AgentPanel({ keyId, keyName, agent, labels }: { keyId: string; k
                       </div>
                     ))}
                     {t.reply?.statusText && <div className="a2a-status">{t.reply.statusText}</div>}
-                    {t.pending && !t.reply?.state && <span className="typing" aria-label="Waiting for the agent">…</span>}
+                    {t.pending && !t.reply?.state && (
+                      <span className="typing" aria-label="Waiting for the agent">
+                        …
+                      </span>
+                    )}
                   </>
                 )}
                 {t.error && <div className="bubble-error">{t.error}</div>}

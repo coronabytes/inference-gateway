@@ -29,9 +29,9 @@ export function Admins() {
       <section className="card">
         <h3>Users</h3>
         <p className="muted small">
-          Everyone who signed in with single sign-on. Admins may do everything; users see only the projects added here, and there manage keys and see
-          the playground, request log and metrics. Their role comes from the identity provider at each sign-in. Removing someone ends their sessions;
-          they can sign in again while the single sign-on rules allow it.
+          Everyone who signed in with single sign-on. Admins may do everything; users see only the projects added here, and there manage
+          keys and see the playground, request log and metrics. Their role comes from the identity provider at each sign-in. Removing
+          someone ends their sessions; they can sign in again while the single sign-on rules allow it.
         </p>
         <div className="table-wrap">
           <table>
@@ -69,7 +69,9 @@ export function Admins() {
                       />
                     )}
                   </td>
-                  <td className="when" title={dateTime(a.last_login_at)}>{relative(a.last_login_at)}</td>
+                  <td className="when" title={dateTime(a.last_login_at)}>
+                    {relative(a.last_login_at)}
+                  </td>
                   <td className="when">{dateTime(a.created_at)}</td>
                   <td className="actions">
                     <IconButton
@@ -79,7 +81,11 @@ export function Admins() {
                       onClick={() =>
                         setConfirming({
                           title: a.role === "admin" ? "Remove admin" : "Remove user",
-                          message: <>Remove <strong>{a.email ?? a.subject}</strong>? Their sessions end on their next request.</>,
+                          message: (
+                            <>
+                              Remove <strong>{a.email ?? a.subject}</strong>? Their sessions end on their next request.
+                            </>
+                          ),
                           action: async () => {
                             await api(`/admins/${a.id}`, { method: "DELETE" });
                             await load();
@@ -94,7 +100,9 @@ export function Admins() {
               ))}
               {admins.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="empty">Nobody has signed in with single sign-on yet.</td>
+                  <td colSpan={7} className="empty">
+                    Nobody has signed in with single sign-on yet.
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -166,8 +174,8 @@ function OidcForm({ initial, onSaved }: { initial: OidcSettings; onSaved: () => 
     <section className="card form">
       <h3>Single sign-on (OpenID Connect)</h3>
       <p className="muted small">
-        Admins sign in with your identity provider. The master key keeps working as a fallback. Register a confidential (or public, PKCE) client
-        at the provider with this redirect URI: <code>{redirectUri}</code>
+        Admins sign in with your identity provider. The master key keeps working as a fallback. Register a confidential (or public, PKCE)
+        client at the provider with this redirect URI: <code>{redirectUri}</code>
       </p>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {notice && (
@@ -179,7 +187,15 @@ function OidcForm({ initial, onSaved }: { initial: OidcSettings; onSaved: () => 
         Enable single sign-on
       </Toggle>
       <div className="row">
-        <TextInput caption="Issuer URL" hint="Discovery reads {issuer}/.well-known/openid-configuration." mono value={issuer} onChange={(e) => setIssuer(e.target.value)} placeholder="e.g. https://login.example.com/realms/main" required={enabled} />
+        <TextInput
+          caption="Issuer URL"
+          hint="Discovery reads {issuer}/.well-known/openid-configuration."
+          mono
+          value={issuer}
+          onChange={(e) => setIssuer(e.target.value)}
+          placeholder="e.g. https://login.example.com/realms/main"
+          required={enabled}
+        />
         <TextInput
           caption="Button label"
           hint="The sign-in button's whole text, e.g. “Sign in with Entra ID”."
@@ -207,20 +223,44 @@ function OidcForm({ initial, onSaved }: { initial: OidcSettings; onSaved: () => 
           // × clears what was typed, and then removes the stored secret.
           {...(secret
             ? { onClear: () => setSecret(""), clearLabel: "Clear the new secret" }
-            : initial.client_secret_set && !removeSecret && { onClear: () => setRemoveSecret(true), clearLabel: "Remove the stored secret" })}
+            : initial.client_secret_set &&
+              !removeSecret && { onClear: () => setRemoveSecret(true), clearLabel: "Remove the stored secret" })}
         />
       </div>
-      <TextInput caption="Gateway URL" hint="How browsers reach this gateway; it sets the redirect URI." mono value={publicUrl} onChange={(e) => setPublicUrl(e.target.value)} placeholder="e.g. https://gateway.example.com" />
+      <TextInput
+        caption="Gateway URL"
+        hint="How browsers reach this gateway; it sets the redirect URI."
+        mono
+        value={publicUrl}
+        onChange={(e) => setPublicUrl(e.target.value)}
+        placeholder="e.g. https://gateway.example.com"
+      />
 
       <fieldset>
         <legend>Who may sign in</legend>
         <p className="muted small">
-          People whose ID token carries the admin role in the roles claim sign in as admins and may do everything. With the user role they sign in as users:
-          they see only the projects an admin adds them to under Access → Users, and there manage keys and see the playground, request log and metrics.
+          People whose ID token carries the admin role in the roles claim sign in as admins and may do everything. With the user role they
+          sign in as users: they see only the projects an admin adds them to under Access → Users, and there manage keys and see the
+          playground, request log and metrics.
         </p>
-        <TextInput caption="Roles claim" hint="A string, list or object of roles. Use a dotted path for nested claims, e.g. realm_access.roles." mono value={rolesClaim} onChange={(e) => setRolesClaim(e.target.value)} placeholder="roles" />
+        <TextInput
+          caption="Roles claim"
+          hint="A string, list or object of roles. Use a dotted path for nested claims, e.g. realm_access.roles."
+          mono
+          value={rolesClaim}
+          onChange={(e) => setRolesClaim(e.target.value)}
+          placeholder="roles"
+        />
         <div className="row">
-          <TextInput caption="Admin role" hint="Matched exactly, including case." mono value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. gateway-admin" required={enabled} />
+          <TextInput
+            caption="Admin role"
+            hint="Matched exactly, including case."
+            mono
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            placeholder="e.g. gateway-admin"
+            required={enabled}
+          />
           <TextInput
             caption="User role"
             hint="Matched exactly, including case. Leave empty to let only admins sign in. Someone with both roles is an admin."

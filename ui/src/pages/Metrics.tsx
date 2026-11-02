@@ -83,7 +83,11 @@ export function Metrics() {
         <div className="tiles">
           <StatTile label="Requests" value={compact(t.requests)} hint={`${compact(t.errors)} errors`} />
           <StatTile label="Error rate" value={pct(t.requests ? t.errors / t.requests : null)} />
-          <StatTile label="Input tokens" value={compact(t.input_tokens + t.cache_read_tokens + t.cache_write_tokens)} hint={`${compact(t.cache_read_tokens)} cache reads`} />
+          <StatTile
+            label="Input tokens"
+            value={compact(t.input_tokens + t.cache_read_tokens + t.cache_write_tokens)}
+            hint={`${compact(t.cache_read_tokens)} cache reads`}
+          />
           <StatTile label="Output tokens" value={compact(t.output_tokens)} />
           <StatTile label="Cost" value={usd(t.cost_usd)} />
           <StatTile label="Latency" value={ms(t.avg_latency_ms)} hint={`p95 ${ms(t.p95_latency_ms)} · TTFT ${ms(t.avg_ttft_ms)}`} />
@@ -164,7 +168,9 @@ export function Metrics() {
                       </button>
                     </td>
                     <td className="num">{compact(m.totals.requests)}</td>
-                    <td className="num">{m.totals.errors ? `${compact(m.totals.errors)} (${pct(m.totals.errors / m.totals.requests)})` : "0"}</td>
+                    <td className="num">
+                      {m.totals.errors ? `${compact(m.totals.errors)} (${pct(m.totals.errors / m.totals.requests)})` : "0"}
+                    </td>
                     <td className="num">{compact(m.totals.input_tokens + m.totals.cache_read_tokens + m.totals.cache_write_tokens)}</td>
                     <td className="num">{compact(m.totals.output_tokens)}</td>
                     <td className="num">{ms(m.totals.avg_latency_ms)}</td>
@@ -175,7 +181,9 @@ export function Metrics() {
                 ))}
                 {usedModels.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="empty">No requests in this time range.</td>
+                    <td colSpan={9} className="empty">
+                      No requests in this time range.
+                    </td>
                   </tr>
                 )}
               </tbody>

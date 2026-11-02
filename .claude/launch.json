@@ -11,18 +11,18 @@
     },
     {
       "name": "ui",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "bun",
       "runtimeArgs": [
         "run",
-        "dev",
-        "--prefix",
-        "ui"
+        "--cwd",
+        "ui",
+        "dev"
       ],
       "port": 5173
     },
     {
       "name": "mock-mcp",
-      "runtimeExecutable": "node",
+      "runtimeExecutable": "bun",
       "runtimeArgs": [
         "dev/mock-mcp.mjs"
       ],
@@ -30,7 +30,7 @@
     },
     {
       "name": "mock-a2a",
-      "runtimeExecutable": "node",
+      "runtimeExecutable": "bun",
       "runtimeArgs": [
         "dev/mock-a2a.mjs"
       ],
@@ -38,7 +38,7 @@
     },
     {
       "name": "mock-mcp-client",
-      "runtimeExecutable": "node",
+      "runtimeExecutable": "bun",
       "runtimeArgs": [
         "dev/mock-mcp-client.mjs"
       ],

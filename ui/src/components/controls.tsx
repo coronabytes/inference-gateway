@@ -1,4 +1,13 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 import { dayLabel, utcDay } from "../format";
 import { Floating, useFloating } from "./floating";
 import { Caption, HintBox as WithHint, useHint } from "./hint";
@@ -87,10 +96,21 @@ export function TextInput({
     <WithHint hint={hint} note={note} className={className}>
       <label className={cx("control", props.disabled && "disabled")}>
         <Caption>{caption}</Caption>
-        <Input {...props} {...(secret && { ...SECRET, type: "text" })} className={cx((mono || secret) && "mono", secret && "secret-input")} />
+        <Input
+          {...props}
+          {...(secret && { ...SECRET, type: "text" })}
+          className={cx((mono || secret) && "mono", secret && "secret-input")}
+        />
         {action && <span className="control-action">{action}</span>}
         {onClear && (
-          <button type="button" className="control-clear" aria-label={clearLabel ?? `Clear ${caption}`} title={clearLabel ?? "Clear"} disabled={props.disabled} onClick={onClear}>
+          <button
+            type="button"
+            className="control-clear"
+            aria-label={clearLabel ?? `Clear ${caption}`}
+            title={clearLabel ?? "Clear"}
+            disabled={props.disabled}
+            onClick={onClear}
+          >
             ×
           </button>
         )}
@@ -100,7 +120,12 @@ export function TextInput({
 }
 
 /** A multi-line text input; the caption sits on its own line at the top of the box. */
-export function TextArea({ caption, hint, className, ...props }: Omit<ComponentProps<"textarea">, "children"> & { caption: string; hint?: ReactNode }) {
+export function TextArea({
+  caption,
+  hint,
+  className,
+  ...props
+}: Omit<ComponentProps<"textarea">, "children"> & { caption: string; hint?: ReactNode }) {
   return (
     <WithHint hint={hint} className={className}>
       <label className={cx("control multiline", props.disabled && "disabled")}>
@@ -142,7 +167,12 @@ export function Select({
   label,
   className,
   ...props
-}: Omit<ComponentProps<typeof SearchSelect>, "label" | "caption"> & { caption: string; label?: string; hint?: ReactNode; className?: string }) {
+}: Omit<ComponentProps<typeof SearchSelect>, "label" | "caption"> & {
+  caption: string;
+  label?: string;
+  hint?: ReactNode;
+  className?: string;
+}) {
   return (
     <WithHint hint={hint} className={className}>
       <SearchSelect {...props} caption={caption} label={label ?? caption} />
@@ -284,7 +314,14 @@ export function MultiSelect({
 }) {
   return (
     <WithHint hint={hint} className={className}>
-      <SearchSelect {...props} value="" onChange={() => {}} multiple={{ values, onChange, none }} caption={caption} label={label ?? caption} />
+      <SearchSelect
+        {...props}
+        value=""
+        onChange={() => {}}
+        multiple={{ values, onChange, none }}
+        caption={caption}
+        label={label ?? caption}
+      />
     </WithHint>
   );
 }
@@ -578,11 +615,29 @@ export function Segmented<T extends string>({
 }
 
 /** A page's tabs, above its content. Pair with `useHashTab` so the tab is part of the address. */
-export function Tabs<T extends string>({ label, options, value, onChange }: { label: string; options: readonly SegmentOption<T>[]; value: T; onChange: (value: T) => void }) {
+export function Tabs<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: readonly SegmentOption<T>[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
   return (
     <div className="tabs" role="tablist" aria-label={label}>
       {options.map((o) => (
-        <button key={o.value} type="button" role="tab" aria-selected={value === o.value} className={value === o.value ? "active" : ""} onClick={() => onChange(o.value)} data-label={o.label}>
+        <button
+          key={o.value}
+          type="button"
+          role="tab"
+          aria-selected={value === o.value}
+          className={value === o.value ? "active" : ""}
+          onClick={() => onChange(o.value)}
+          data-label={o.label}
+        >
           {o.label}
         </button>
       ))}
@@ -703,7 +758,13 @@ export function FileButton({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const button = (
-    <Button className={className ?? "file-pick"} onClick={() => input.current?.click()} disabled={disabled} aria-label={label} title={label}>
+    <Button
+      className={className ?? "file-pick"}
+      onClick={() => input.current?.click()}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+    >
       {children}
     </Button>
   );
@@ -772,7 +833,12 @@ export function SplitButton({
 }
 
 /** A pill button. `primary` for the main action of a dialog or page, `ghost` for quiet ones. */
-export function Button({ variant, className, type = "button", ...props }: ComponentProps<"button"> & { variant?: "primary" | "ghost" | "danger" }) {
+export function Button({
+  variant,
+  className,
+  type = "button",
+  ...props
+}: ComponentProps<"button"> & { variant?: "primary" | "ghost" | "danger" }) {
   return <button aria-describedby={useHint()?.id} {...props} type={type} className={cx(variant, className) || undefined} />;
 }
 
@@ -849,7 +915,9 @@ export function MenuButton({
     const side = align === "left" ? { left: r.left } : { right: document.documentElement.clientWidth - r.right };
     // Above the button when there is no room for a few items below it, as at the bottom of a page.
     const room = window.innerHeight - r.bottom;
-    setAt(room < 40 * items.length + 24 && r.top > room ? { bottom: window.innerHeight - r.top + 6, ...side } : { top: r.bottom + 6, ...side });
+    setAt(
+      room < 40 * items.length + 24 && r.top > room ? { bottom: window.innerHeight - r.top + 6, ...side } : { top: r.bottom + 6, ...side },
+    );
   };
 
   return (

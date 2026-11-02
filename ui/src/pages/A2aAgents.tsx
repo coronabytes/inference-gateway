@@ -27,7 +27,12 @@ const toInput = (a: A2aAgent): A2aAgentInput => ({
 
 /** A2A agents: agents the gateway proxies at `/a2a/{name}`, with its own credentials for them. */
 export function A2aAgents() {
-  const { data, error, setError, reload: load } = useAdminData<[A2aAgent[], NamedItem[], TagInfo[]]>(["/a2a-agents", "/projects/options", "/tags"]);
+  const {
+    data,
+    error,
+    setError,
+    reload: load,
+  } = useAdminData<[A2aAgent[], NamedItem[], TagInfo[]]>(["/a2a-agents", "/projects/options", "/tags"]);
   const [rows, projects, tagInfo] = data ?? [[], [], []];
   const tags = tagInfo.map((t) => t.tag);
   const [editing, setEditing] = useState<A2aAgent | "new" | null>(null);
@@ -49,8 +54,8 @@ export function A2aAgents() {
       title: "Delete A2A agent",
       message: (
         <>
-          Delete A2A agent <strong>{a.name}</strong>? Clients using <span className="mono">/a2a/{a.name}</span> stop working, and its tasks can no longer be
-          followed through the gateway. The agent itself is not changed.
+          Delete A2A agent <strong>{a.name}</strong>? Clients using <span className="mono">/a2a/{a.name}</span> stop working, and its tasks
+          can no longer be followed through the gateway. The agent itself is not changed.
         </>
       ),
       action: async () => {
@@ -65,8 +70,8 @@ export function A2aAgents() {
     <div className="page">
       <div className="page-head">
         <p className="muted small">
-          Clients find an agent at <span className="mono">{cardUrl("{name}")}</span>, an agent card with the gateway's addresses. They authenticate with a
-          virtual key.
+          Clients find an agent at <span className="mono">{cardUrl("{name}")}</span>, an agent card with the gateway's addresses. They
+          authenticate with a virtual key.
         </p>
         <PageActions actions={[{ label: "New A2A agent", onClick: () => setEditing("new"), primary: true }]} />
       </div>
@@ -203,8 +208,7 @@ function AgentForm({
   const badTimeout = !Number.isInteger(timeoutSecs) || timeoutSecs < 1 || timeoutSecs > 3600;
   const pricePerMessage = price.trim() ? Number(price) : 0;
   const badPrice = !Number.isFinite(pricePerMessage) || pricePerMessage < 0;
-  const missing =
-    !name.trim() || !url.trim() || badTimeout || badPrice || authMissing(auth, keepsSecret);
+  const missing = !name.trim() || !url.trim() || badTimeout || badPrice || authMissing(auth, keepsSecret);
 
   const submit = async () => {
     setBusy(true);
@@ -367,12 +371,18 @@ function TryAgent({ agent, onClose }: { agent: A2aAgent; onClose: () => void }) 
       }
     >
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
-      {result && !result.ok && <ErrorBanner error={`The card could not be used: ${result.error ?? "no details"}`} onDismiss={() => setResult(null)} />}
+      {result && !result.ok && (
+        <ErrorBanner error={`The card could not be used: ${result.error ?? "no details"}`} onDismiss={() => setResult(null)} />
+      )}
       {result?.ok && (
         <div className="guardrail-result">
           <div className="guardrail-result-head">
             <Badge tone="good">Card found</Badge>
-            <span className="muted small">{[result.name && `${result.name}${result.version ? ` ${result.version}` : ""}`, ms(result.latency_ms)].filter(Boolean).join(" · ")}</span>
+            <span className="muted small">
+              {[result.name && `${result.name}${result.version ? ` ${result.version}` : ""}`, ms(result.latency_ms)]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
           </div>
           {result.description && <p className="muted">{result.description}</p>}
           <div className="table-wrap">
@@ -428,8 +438,8 @@ function TryAgent({ agent, onClose }: { agent: A2aAgent; onClose: () => void }) 
       )}
       <h4>Connect a client</h4>
       <p className="muted small">
-        A2A clients start from the agent card: give them <span className="mono">{cardUrl(agent.name)}</span>, with a virtual key as the bearer token for the card
-        and for the agent{!agent.enabled && "; the agent is disabled until you enable it"}.
+        A2A clients start from the agent card: give them <span className="mono">{cardUrl(agent.name)}</span>, with a virtual key as the
+        bearer token for the card and for the agent{!agent.enabled && "; the agent is disabled until you enable it"}.
       </p>
     </Modal>
   );

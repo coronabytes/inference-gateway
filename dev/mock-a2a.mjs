@@ -3,7 +3,7 @@
 // /.well-known/agent-card.json. Requires the bearer token "mock-a2a-secret" when MOCK_A2A_TOKEN is
 // not set to something else ("" turns the check off).
 //
-//   node dev/mock-a2a.mjs            # listens on :9997
+//   bun dev/mock-a2a.mjs            # listens on :9997
 //
 // Messages are echoed back as a completed task's artifact. A message containing "fail" fails its
 // task, one containing "ask" leaves it waiting for input (send another message with its taskId).

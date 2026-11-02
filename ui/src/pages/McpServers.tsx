@@ -40,7 +40,12 @@ function toolsSummary(s: McpServer): string {
 
 /** MCP servers: upstreams the gateway proxies at `/mcp/{name}` and combines at `/mcp`, with its own credentials for them. */
 export function McpServers() {
-  const { data, error, setError, reload: load } = useAdminData<[McpServer[], NamedItem[], TagInfo[]]>(["/mcp-servers", "/projects/options", "/tags"]);
+  const {
+    data,
+    error,
+    setError,
+    reload: load,
+  } = useAdminData<[McpServer[], NamedItem[], TagInfo[]]>(["/mcp-servers", "/projects/options", "/tags"]);
   const [rows, projects, tagInfo] = data ?? [[], [], []];
   const tags = tagInfo.map((t) => t.tag);
   const [editing, setEditing] = useState<McpServer | "new" | null>(null);
@@ -58,8 +63,8 @@ export function McpServers() {
       title: "Delete MCP server",
       message: (
         <>
-          Delete MCP server <strong>{s.name}</strong>? Clients using <span className="mono">/mcp/{s.name}</span> stop working, and its tools leave{" "}
-          <span className="mono">/mcp</span>. The server itself is not changed.
+          Delete MCP server <strong>{s.name}</strong>? Clients using <span className="mono">/mcp/{s.name}</span> stop working, and its tools
+          leave <span className="mono">/mcp</span>. The server itself is not changed.
         </>
       ),
       action: async () => {
@@ -75,7 +80,8 @@ export function McpServers() {
       <div className="page-head">
         <p className="muted small">
           Clients connect to <span className="mono">{endpoint()}</span> for the tools of every server their key may use, named{" "}
-          <span className="mono">server__tool</span>, or to <span className="mono">{endpoint("{name}")}</span> for one server. They authenticate with a virtual key.
+          <span className="mono">server__tool</span>, or to <span className="mono">{endpoint("{name}")}</span> for one server. They
+          authenticate with a virtual key.
         </p>
         <PageActions actions={[{ label: "New MCP server", onClick: () => setEditing("new"), primary: true }]} />
       </div>
@@ -123,14 +129,21 @@ export function McpServers() {
                   <IconButton label={`Edit ${s.name}`} title="Edit" onClick={() => setEditing(s)}>
                     <EditIcon />
                   </IconButton>
-                  <IconButton label={`Tools of ${s.name}`} title="Connect, list its tools, choose which keys may call and their prices" onClick={() => setTools(s)}>
+                  <IconButton
+                    label={`Tools of ${s.name}`}
+                    title="Connect, list its tools, choose which keys may call and their prices"
+                    onClick={() => setTools(s)}
+                  >
                     <TryIcon />
                   </IconButton>
                   <MenuButton
                     label={`More for ${s.name}`}
                     className="icon-btn"
                     items={[
-                      { label: s.enabled ? "Disable" : "Enable", onClick: () => update(s, { enabled: !s.enabled }).catch((e) => setError((e as Error).message)) },
+                      {
+                        label: s.enabled ? "Disable" : "Enable",
+                        onClick: () => update(s, { enabled: !s.enabled }).catch((e) => setError((e as Error).message)),
+                      },
                       {
                         label: "Duplicate",
                         onClick: () => {
@@ -226,8 +239,7 @@ function McpServerForm({
   const badTimeout = !Number.isInteger(timeoutSecs) || timeoutSecs < 1 || timeoutSecs > 3600;
   const pricePerCall = price.trim() ? Number(price) : 0;
   const badPrice = !Number.isFinite(pricePerCall) || pricePerCall < 0;
-  const missing =
-    !name.trim() || !url.trim() || badTimeout || badPrice || authMissing(auth, keepsSecret);
+  const missing = !name.trim() || !url.trim() || badTimeout || badPrice || authMissing(auth, keepsSecret);
 
   const submit = async () => {
     setBusy(true);
@@ -351,7 +363,12 @@ function McpServerForm({
             onChange={(e) => setTimeoutSecs(e.target.value)}
           />
         </div>
-        <Toggle caption="Enabled" hint="A disabled server answers 404, as if it did not exist, and its tools leave /mcp." checked={enabled} onChange={setEnabled} />
+        <Toggle
+          caption="Enabled"
+          hint="A disabled server answers 404, as if it did not exist, and its tools leave /mcp."
+          checked={enabled}
+          onChange={setEnabled}
+        />
       </div>
     </Modal>
   );
@@ -361,14 +378,24 @@ function McpServerForm({
  * Connects to the server through the admin API and lists its tools, with a switch for whether keys
  * may call each one and its price; and how to connect a client.
  */
-function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (changes: Partial<McpServerInput>) => Promise<void>; onClose: () => void }) {
+function ServerTools({
+  server,
+  onSave,
+  onClose,
+}: {
+  server: McpServer;
+  onSave: (changes: Partial<McpServerInput>) => Promise<void>;
+  onClose: () => void;
+}) {
   const [result, setResult] = useState<McpServerTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // "listed": keys call only the tools switched on, new ones not; "all": every tool but those switched off.
   const [mode, setMode] = useState<"all" | "listed">(server.allowed_tools.length ? "listed" : "all");
   const [on, setOn] = useState<Record<string, boolean>>({});
-  const [prices, setPrices] = useState<Record<string, string>>(Object.fromEntries(Object.entries(server.tool_prices).map(([t, p]) => [t, String(p)])));
+  const [prices, setPrices] = useState<Record<string, string>>(
+    Object.fromEntries(Object.entries(server.tool_prices).map(([t, p]) => [t, String(p)])),
+  );
   const [dirty, setDirty] = useState(false);
 
   const run = useCallback(async () => {
@@ -379,7 +406,10 @@ function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (
       setResult(r);
       setOn(
         Object.fromEntries(
-          r.tools.map((t) => [t.name, server.allowed_tools.length ? server.allowed_tools.includes(t.name) : !server.denied_tools.includes(t.name)]),
+          r.tools.map((t) => [
+            t.name,
+            server.allowed_tools.length ? server.allowed_tools.includes(t.name) : !server.denied_tools.includes(t.name),
+          ]),
         ),
       );
     } catch (e) {
@@ -422,13 +452,16 @@ function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (
     }
   };
 
-  const change = <T,>(set: (v: T) => void) => (v: T) => {
-    set(v);
-    setDirty(true);
-  };
+  const change =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v);
+      setDirty(true);
+    };
   const config = JSON.stringify(
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder clients replace with a key.
-    { mcpServers: { [server.name]: { type: "http", url: endpoint(server.name), headers: { Authorization: "Bearer ${GATEWAY_API_KEY}" } } } },
+    {
+      mcpServers: { [server.name]: { type: "http", url: endpoint(server.name), headers: { Authorization: "Bearer ${GATEWAY_API_KEY}" } } },
+    },
     null,
     2,
   );
@@ -451,13 +484,19 @@ function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (
       }
     >
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
-      {result && !result.ok && <ErrorBanner error={`The server could not be used: ${result.error ?? "no details"}`} onDismiss={() => setResult(null)} />}
+      {result && !result.ok && (
+        <ErrorBanner error={`The server could not be used: ${result.error ?? "no details"}`} onDismiss={() => setResult(null)} />
+      )}
       {result?.ok && (
         <div className="guardrail-result">
           <div className="guardrail-result-head">
             <Badge tone="good">Connected</Badge>
             <span className="muted small">
-              {[info?.name && `${info.name}${info.version ? ` ${info.version}` : ""}`, result.protocol_version && `protocol ${result.protocol_version}`, ms(result.latency_ms)]
+              {[
+                info?.name && `${info.name}${info.version ? ` ${info.version}` : ""}`,
+                result.protocol_version && `protocol ${result.protocol_version}`,
+                ms(result.latency_ms),
+              ]
                 .filter(Boolean)
                 .join(" · ")}
             </span>
@@ -488,7 +527,11 @@ function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (
                 {result.tools.map((t) => (
                   <tr key={t.name}>
                     <td>
-                      <Switch label={`Keys may call ${t.name}`} checked={!!on[t.name]} onChange={(v) => change(setOn)({ ...on, [t.name]: v })} />
+                      <Switch
+                        label={`Keys may call ${t.name}`}
+                        checked={!!on[t.name]}
+                        onChange={(v) => change(setOn)({ ...on, [t.name]: v })}
+                      />
                     </td>
                     <td className="mono">{t.name}</td>
                     <td className="muted">{t.description}</td>
@@ -520,8 +563,8 @@ function ServerTools({ server, onSave, onClose }: { server: McpServer; onSave: (
       <h4>Connect a client</h4>
       <p className="muted small">
         For clients that read an <span className="mono">mcpServers</span> configuration, such as Claude Code, Cursor or VS Code. Replace{" "}
-        {/* biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder clients replace with a key. */}
-        <span className="mono">{"${GATEWAY_API_KEY}"}</span> with a virtual key. With <span className="mono">{endpoint()}</span> as the URL instead, the client gets the tools of every server the key may use
+        <span className="mono">{"${GATEWAY_API_KEY}"}</span> with a virtual key. With <span className="mono">{endpoint()}</span> as the URL
+        instead, the client gets the tools of every server the key may use
         {!server.enabled && "; this server is disabled until you enable it"}.
       </p>
       <pre className="raw">{config}</pre>

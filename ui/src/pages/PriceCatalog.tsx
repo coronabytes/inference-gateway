@@ -97,7 +97,10 @@ export function PriceCatalog() {
         </div>
         <div className="page-actions">
           {data?.last_import && (
-            <span className="muted small" title={`${new Date(data.last_import.imported_at).toLocaleString()}: ${importSummary(data.last_import)}`}>
+            <span
+              className="muted small"
+              title={`${new Date(data.last_import.imported_at).toLocaleString()}: ${importSummary(data.last_import)}`}
+            >
               Last import {relative(data.last_import.imported_at)}
             </span>
           )}
@@ -126,8 +129,8 @@ export function PriceCatalog() {
       )}
       {empty ? (
         <div className="empty-card">
-          The price catalog is empty. <strong>Run Import</strong> downloads LiteLLM's model prices (about 4,000 models) so new deployments can
-          fill in their prices.{data.next_import && " The scheduled import also does this within a few minutes."}
+          The price catalog is empty. <strong>Run Import</strong> downloads LiteLLM's model prices (about 4,000 models) so new deployments
+          can fill in their prices.{data.next_import && " The scheduled import also does this within a few minutes."}
         </div>
       ) : (
         <div className="table-wrap">
@@ -159,9 +162,15 @@ export function PriceCatalog() {
                 return (
                   <Fragment key={it.key}>
                     <tr className="clickable" onClick={() => setOpen(expanded ? null : it.key)} aria-expanded={expanded}>
-                      <td className="mono clip" title={it.key}>{it.key}</td>
-                      <td className="clip" title={p.provider ?? undefined}>{p.provider ?? "–"}</td>
-                      <td className="clip" title={p.mode ?? undefined}>{p.mode ?? "–"}</td>
+                      <td className="mono clip" title={it.key}>
+                        {it.key}
+                      </td>
+                      <td className="clip" title={p.provider ?? undefined}>
+                        {p.provider ?? "–"}
+                      </td>
+                      <td className="clip" title={p.mode ?? undefined}>
+                        {p.mode ?? "–"}
+                      </td>
                       <td className="num">{perMillion(p.input)}</td>
                       <td className="num">{perMillion(p.output)}</td>
                       <td className="num">{perMillion(p.cacheRead)}</td>
@@ -174,13 +183,16 @@ export function PriceCatalog() {
                         <td colSpan={9}>
                           {p.long && (
                             <p className="small">
-                              Above {compact(p.long.threshold)} input tokens: input {perMillion(p.long.input)}, output {perMillion(p.long.output)}
+                              Above {compact(p.long.threshold)} input tokens: input {perMillion(p.long.input)}, output{" "}
+                              {perMillion(p.long.output)}
                               {p.long.cacheRead !== null && `, cache read ${perMillion(p.long.cacheRead)}`}
                               {p.long.cacheWrite !== null && `, cache write ${perMillion(p.long.cacheWrite)}`}.
                             </p>
                           )}
                           {p.perKWebSearches !== null && (
-                            <p className="small">Web search: ${p.perKWebSearches} per 1,000 searches, filled into chat deployments of this model.</p>
+                            <p className="small">
+                              Web search: ${p.perKWebSearches} per 1,000 searches, filled into chat deployments of this model.
+                            </p>
                           )}
                           <pre className="raw">{JSON.stringify(it.data, null, 2)}</pre>
                         </td>
@@ -191,7 +203,9 @@ export function PriceCatalog() {
               })}
               {items.length === 0 && data && (
                 <tr>
-                  <td colSpan={9} className="empty">No catalog entry matches.</td>
+                  <td colSpan={9} className="empty">
+                    No catalog entry matches.
+                  </td>
                 </tr>
               )}
             </tbody>

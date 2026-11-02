@@ -61,7 +61,10 @@ export function TimeChart({ kind, title, subtitle, timestamps, stepSecs, series,
     let max = 0;
     for (let i = 0; i < n; i++) {
       if (kind === "bars") {
-        max = Math.max(max, series.reduce((s, ser) => s + (ser.values[i] ?? 0), 0));
+        max = Math.max(
+          max,
+          series.reduce((s, ser) => s + (ser.values[i] ?? 0), 0),
+        );
       } else {
         for (const ser of series) max = Math.max(max, ser.values[i] ?? 0);
       }
@@ -187,10 +190,7 @@ export function TimeChart({ kind, title, subtitle, timestamps, stepSecs, series,
               });
               const end = last as [number, number] | null;
               const firstIdx = s.values.findIndex((v) => v != null);
-              const area =
-                series.length === 1 && end && firstIdx >= 0
-                  ? `${d}L${end[0]},${y(0)}L${xCenter(firstIdx)},${y(0)}Z`
-                  : null;
+              const area = series.length === 1 && end && firstIdx >= 0 ? `${d}L${end[0]},${y(0)}L${xCenter(firstIdx)},${y(0)}Z` : null;
               return (
                 <g key={s.name}>
                   {area && <path d={area} fill={s.color} opacity={0.1} />}

@@ -49,7 +49,7 @@ const SECTIONS: { key: SectionKey; label: string; needs?: SectionKey[]; note?: s
 /** The sections that go along: those chosen, and those they need, where `available` has them. */
 function effective(chosen: Set<SectionKey>, available: (k: SectionKey) => boolean): Set<SectionKey> {
   const out = new Set([...chosen].filter(available));
-  for (let grew = true; grew; ) {
+  for (let grew = true; grew;) {
     grew = false;
     for (const s of SECTIONS) {
       if (!out.has(s.key)) continue;
@@ -126,7 +126,8 @@ function only(doc: unknown, on: Set<SectionKey>): unknown {
   return copy;
 }
 
-const nothingChanges = (r: ImportResult, on: Iterable<SectionKey>) => [...on].every((k) => !r[k] || r[k].created.length + r[k].updated.length === 0);
+const nothingChanges = (r: ImportResult, on: Iterable<SectionKey>) =>
+  [...on].every((k) => !r[k] || r[k].created.length + r[k].updated.length === 0);
 
 /** Per section: how many entries the file has, and how many are new, updated and unchanged; the
  *  names unfold under each row. */
@@ -155,7 +156,12 @@ function Summary({ result, counts, on }: { result: ImportResult; counts: Partial
                 <tr>
                   <td>
                     {names ? (
-                      <button type="button" className="transfer-unfold" aria-expanded={open === s.key} onClick={() => setOpen(open === s.key ? null : s.key)}>
+                      <button
+                        type="button"
+                        className="transfer-unfold"
+                        aria-expanded={open === s.key}
+                        onClick={() => setOpen(open === s.key ? null : s.key)}
+                      >
                         {s.label}
                       </button>
                     ) : (
@@ -206,7 +212,8 @@ function Secrets({ result }: { result: ImportResult }) {
     <ul className="transfer-secrets small">
       {parts.map((p) => (
         <li key={p.what}>
-          New {p.what} without secrets: {p.names.join(", ")}. Enter them on the <a href={p.href}>{p.page}</a> page; until then they do not work.
+          New {p.what} without secrets: {p.names.join(", ")}. Enter them on the <a href={p.href}>{p.page}</a> page; until then they do not
+          work.
         </li>
       ))}
     </ul>
@@ -314,10 +321,10 @@ export function ConfigTransfer() {
     <section className="card form">
       <h3>Backup &amp; Restore</h3>
       <p className="muted small">
-        The configuration as one JSON file, to back it up or move it to another gateway. Secrets are never exported: after an import, enter those of new
-        credentials, MCP servers and A2A agents again. Keys come with the hash of their secret, so imported keys work with the same secret; an existing key
-        keeps its own. An import updates what has the same id, or else what matches by name, and adds the rest; it never deletes anything. Renames carry
-        over: routers, keys and descriptions of a renamed model follow the new name.
+        The configuration as one JSON file, to back it up or move it to another gateway. Secrets are never exported: after an import, enter
+        those of new credentials, MCP servers and A2A agents again. Keys come with the hash of their secret, so imported keys work with the
+        same secret; an existing key keeps its own. An import updates what has the same id, or else what matches by name, and adds the rest;
+        it never deletes anything. Renames carry over: routers, keys and descriptions of a renamed model follow the new name.
       </p>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
@@ -343,7 +350,9 @@ export function ConfigTransfer() {
           <SectionPicker chosen={importChosen} on={importOn} onChange={setImportChosen} counts={file.counts} />
           {preview && importOn.size > 0 && (
             <>
-              {nothingChanges(preview, importOn) && <p className="muted">Nothing to change: this gateway already matches these sections of the file.</p>}
+              {nothingChanges(preview, importOn) && (
+                <p className="muted">Nothing to change: this gateway already matches these sections of the file.</p>
+              )}
               <Summary result={preview} counts={file.counts} on={importOn} />
               <Secrets result={preview} />
             </>

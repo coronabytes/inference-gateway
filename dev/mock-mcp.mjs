@@ -3,7 +3,7 @@
 // server-sent events (a progress notification, then the reply). Requires the bearer token
 // "mock-mcp-secret" when MOCK_MCP_TOKEN is not set to something else ("" turns the check off).
 //
-//   node dev/mock-mcp.mjs            # listens on :9998
+//   bun dev/mock-mcp.mjs            # listens on :9998
 //
 // Tools: `echo` returns its text, `add` adds two numbers, `fail` reports a tool error, `slow`
 // answers after `ms` milliseconds (to exercise timeouts and clients that go away), `whoami` says

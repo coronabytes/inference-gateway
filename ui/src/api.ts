@@ -1,6 +1,6 @@
 import type { components } from "./api.gen";
 
-/** The API's types, generated from the gateway's OpenAPI document (`npm run gen:api`). The few
+/** The API's types, generated from the gateway's OpenAPI document (`bun run gen:api`). The few
  * written out below are answers the gateway builds as plain JSON, which the document describes only
  * as objects. */
 type S = components["schemas"];
@@ -37,7 +37,12 @@ function adminHeaders(): Record<string, string> {
 
 /** Raw admin API request (for streaming responses); the caller handles the body. `headers` are
  * sent as well, such as the playground's labels. */
-export async function adminFetch(path: string, body: unknown, signal?: AbortSignal, headers: Record<string, string> = {}): Promise<Response> {
+export async function adminFetch(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+  headers: Record<string, string> = {},
+): Promise<Response> {
   const res = await fetch(`/admin/api${path}`, {
     method: "POST",
     headers: { ...headers, ...adminHeaders(), "content-type": "application/json" },
@@ -45,7 +50,10 @@ export async function adminFetch(path: string, body: unknown, signal?: AbortSign
     signal,
   });
   if (res.status === 401 && !res.headers.get("content-type")?.includes("event-stream")) {
-    const data = await res.clone().json().catch(() => ({}));
+    const data = await res
+      .clone()
+      .json()
+      .catch(() => ({}));
     // 401 from the admin layer (bad master key) signs out; 401 from the pipeline (key disabled) does not.
     if (data?.error === "admin authentication required") window.dispatchEvent(new Event("gw-unauthorized"));
   }

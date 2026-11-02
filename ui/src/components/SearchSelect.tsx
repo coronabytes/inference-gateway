@@ -102,7 +102,9 @@ export function SearchSelect({
       if (!o) return;
       // Toggle the option, keeping the options' order; `none` clears the choice.
       const on = o.value !== "" && !multiple.values.includes(o.value);
-      multiple.onChange(o.value === "" ? [] : options.map((x) => x.value).filter((v) => (v === o.value ? on : multiple.values.includes(v))));
+      multiple.onChange(
+        o.value === "" ? [] : options.map((x) => x.value).filter((v) => (v === o.value ? on : multiple.values.includes(v))),
+      );
       return;
     }
     if (o) onChange(o.value);
@@ -140,8 +142,7 @@ export function SearchSelect({
       // Close only the list, not a dialog around it.
       e.stopPropagation();
       close();
-    }
-    else if (e.key === "Tab") close(false);
+    } else if (e.key === "Tab") close(false);
     else return;
     e.preventDefault();
   };
@@ -171,7 +172,16 @@ export function SearchSelect({
       >
         <span className="select-value">
           {caption && <Caption>{caption}</Caption>}
-          {display ?? (picked ? (picked.length ? picked.map((o) => o.label).join(", ") : multiple.none) : selected ? selected.label : options.length ? "Choose…" : empty)}
+          {display ??
+            (picked
+              ? picked.length
+                ? picked.map((o) => o.label).join(", ")
+                : multiple.none
+              : selected
+                ? selected.label
+                : options.length
+                  ? "Choose…"
+                  : empty)}
           {selected?.note && <span className="select-note">{selected.note}</span>}
         </span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
@@ -194,7 +204,15 @@ export function SearchSelect({
                 aria-activedescendant={shown[active] ? `${listId}-${active}` : undefined}
               />
             )}
-            <ul id={listId} ref={list} role="listbox" aria-label={label} aria-multiselectable={multiple ? true : undefined} tabIndex={-1} onKeyDown={searchable ? undefined : onKey}>
+            <ul
+              id={listId}
+              ref={list}
+              role="listbox"
+              aria-label={label}
+              aria-multiselectable={multiple ? true : undefined}
+              tabIndex={-1}
+              onKeyDown={searchable ? undefined : onKey}
+            >
               {shown.map((o, i) => {
                 const heading = o.group && o.group !== lastGroup ? o.group : null;
                 lastGroup = o.group;
@@ -233,7 +251,11 @@ export function SearchSelect({
             {footer && (
               // Clicks stay here: the root's preventDefault (React passes portal events up) would
               // stop the fields from working.
-              <div className="select-footer" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), close())}>
+              <div
+                className="select-footer"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), close())}
+              >
                 {footer}
               </div>
             )}

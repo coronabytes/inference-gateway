@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { applyEvent, buildBody, indented, parseFull, type Api, type ChatOptions, type Result, type Turn } from "./protocol";
 
 const PLAIN: ChatOptions = { effort: "", webSearch: false, mcp: [], schema: null };
@@ -108,13 +108,25 @@ describe("streamed events", () => {
       { choices: [], usage: { prompt_tokens: 12, completion_tokens: 5 } },
       "[DONE]",
     ]);
-    expect(r).toEqual({ text: "The sky scatters light.", sources: [{ url: "https://a.example", title: "A" }], mcp: [], input: 12, output: 5 });
+    expect(r).toEqual({
+      text: "The sky scatters light.",
+      sources: [{ url: "https://a.example", title: "A" }],
+      mcp: [],
+      input: 12,
+      output: 5,
+    });
   });
 
   it("reads Responses text, MCP items, citations and the completed response", () => {
     const r = stream("responses", [
-      { type: "response.output_item.done", item: { type: "mcp_list_tools", server_label: "docs", tools: [{ name: "search" }, { name: "fetch" }] } },
-      { type: "response.output_item.done", item: { type: "mcp_call", server_label: "docs", name: "search", arguments: '{"q":"sky"}', output: "found" } },
+      {
+        type: "response.output_item.done",
+        item: { type: "mcp_list_tools", server_label: "docs", tools: [{ name: "search" }, { name: "fetch" }] },
+      },
+      {
+        type: "response.output_item.done",
+        item: { type: "mcp_call", server_label: "docs", name: "search", arguments: '{"q":"sky"}', output: "found" },
+      },
       { type: "response.output_text.delta", delta: "Rayleigh" },
       { type: "response.output_text.delta", delta: " scattering." },
       { type: "response.output_text.annotation.added", annotation: { type: "url_citation", url: "https://b.example" } },
@@ -123,14 +135,21 @@ describe("streamed events", () => {
         response: {
           id: "resp_2",
           usage: { input_tokens: 20, output_tokens: 7 },
-          output: [{ type: "web_search_call" }, { type: "web_search_call" }, { type: "message", content: [{ annotations: [{ type: "url_citation", url: "https://c.example", title: "C" }] }] }],
+          output: [
+            { type: "web_search_call" },
+            { type: "web_search_call" },
+            { type: "message", content: [{ annotations: [{ type: "url_citation", url: "https://c.example", title: "C" }] }] },
+          ],
         },
       },
     ]);
     expect(r.text).toBe("Rayleigh scattering.");
     expect(r.responseId).toBe("resp_2");
     expect(r).toMatchObject({ input: 20, output: 7, searches: 2 });
-    expect(r.sources).toEqual([{ url: "https://b.example", title: undefined }, { url: "https://c.example", title: "C" }]);
+    expect(r.sources).toEqual([
+      { url: "https://b.example", title: undefined },
+      { url: "https://c.example", title: "C" },
+    ]);
     expect(r.mcp).toEqual([
       { kind: "tools", server: "docs", tools: ["search", "fetch"] },
       { kind: "call", server: "docs", tool: "search", arguments: '{"q":"sky"}', output: "found", error: undefined },
@@ -144,15 +163,30 @@ describe("streamed events", () => {
 
   it("reads Anthropic text, citations, MCP calls and usage with cached tokens", () => {
     const r = stream("messages", [
-      { type: "message_start", message: { usage: { input_tokens: 10, cache_read_input_tokens: 90, cache_creation_input_tokens: 5, output_tokens: 1 } } },
-      { type: "content_block_start", content_block: { type: "mcp_tool_use", id: "t1", server_name: "docs", name: "search", input: { q: "sky" } } },
-      { type: "content_block_start", content_block: { type: "mcp_tool_result", tool_use_id: "t1", is_error: true, content: [{ type: "text", text: "denied" }] } },
+      {
+        type: "message_start",
+        message: { usage: { input_tokens: 10, cache_read_input_tokens: 90, cache_creation_input_tokens: 5, output_tokens: 1 } },
+      },
+      {
+        type: "content_block_start",
+        content_block: { type: "mcp_tool_use", id: "t1", server_name: "docs", name: "search", input: { q: "sky" } },
+      },
+      {
+        type: "content_block_start",
+        content_block: { type: "mcp_tool_result", tool_use_id: "t1", is_error: true, content: [{ type: "text", text: "denied" }] },
+      },
       { type: "content_block_delta", delta: { type: "text_delta", text: "Blue " } },
       { type: "content_block_delta", delta: { type: "citations_delta", citation: { url: "https://d.example", title: "D" } } },
       { type: "content_block_delta", delta: { type: "text_delta", text: "light." } },
       { type: "message_delta", usage: { output_tokens: 42, server_tool_use: { web_search_requests: 3 } } },
     ]);
-    expect(r).toMatchObject({ text: "Blue light.", input: 105, output: 42, searches: 3, sources: [{ url: "https://d.example", title: "D" }] });
+    expect(r).toMatchObject({
+      text: "Blue light.",
+      input: 105,
+      output: 42,
+      searches: 3,
+      sources: [{ url: "https://d.example", title: "D" }],
+    });
     expect(r.mcp).toEqual([{ kind: "call", id: "t1", server: "docs", tool: "search", arguments: '{"q":"sky"}', error: "denied" }]);
   });
 
@@ -195,7 +229,13 @@ describe("whole responses", () => {
         { type: "text", text: "is blue." },
       ],
     });
-    expect(r).toMatchObject({ text: "Sky is blue.", input: 3, output: 3, searches: 1, sources: [{ url: "https://f.example", title: "F" }] });
+    expect(r).toMatchObject({
+      text: "Sky is blue.",
+      input: 3,
+      output: 3,
+      searches: 1,
+      sources: [{ url: "https://f.example", title: "F" }],
+    });
     expect(r.mcp).toEqual([{ kind: "call", id: "t2", server: "docs", tool: "search", arguments: "{}", output: "ok" }]);
   });
 });

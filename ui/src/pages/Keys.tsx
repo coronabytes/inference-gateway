@@ -17,7 +17,20 @@ import {
   type TagInfo,
   type VirtualKey,
 } from "../api";
-import { Banner, Button, MenuButton, MultiSelect, PageActions, Segmented, Select, Tabs, TextInput, Toggle, useDebounced, useHashTab } from "../components/controls";
+import {
+  Banner,
+  Button,
+  MenuButton,
+  MultiSelect,
+  PageActions,
+  Segmented,
+  Select,
+  Tabs,
+  TextInput,
+  Toggle,
+  useDebounced,
+  useHashTab,
+} from "../components/controls";
 import { GuardrailList, TagList, TagPicker } from "../components/Tags";
 import { KeySignIns, takeSignInResult } from "./KeySignIns";
 import {
@@ -46,8 +59,12 @@ import { useAdminData } from "../useAdminData";
 /** A key being created, in `project` when started from a project's card, or one being edited. */
 type Editing = { mode: "create"; project?: string } | { mode: "edit"; key: VirtualKey };
 
-
-const SCOPE_LABEL: Record<KeyScope, string> = { inference: "Inference", admin: "Admin", all: "Inference + admin", project: "Project admin" };
+const SCOPE_LABEL: Record<KeyScope, string> = {
+  inference: "Inference",
+  admin: "Admin",
+  all: "Inference + admin",
+  project: "Project admin",
+};
 
 /** The scopes a key may have: in a project, none with every right an admin has. */
 const scopesFor = (inProject: boolean): KeyScope[] => (inProject ? ["inference", "project"] : ["inference", "admin", "all"]);
@@ -287,7 +304,9 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
         </div>
         {p && (
           <>
-            <div className="key-budget">{p.budget ? <BudgetMeter budget={p.budget} /> : <span className="muted small">No budget</span>}</div>
+            <div className="key-budget">
+              {p.budget ? <BudgetMeter budget={p.budget} /> : <span className="muted small">No budget</span>}
+            </div>
             <div className="stat">
               {p.enabled ? <Badge tone="good">Active</Badge> : <Badge tone="warning">Inactive</Badge>}
               {p.prompt_logging === "force" && (
@@ -309,11 +328,17 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
                     items={[
                       { label: "New key in this project", onClick: () => setEditing({ mode: "create", project: p.id }) },
                       // While inactive, every key in the project is refused, on the inference API and the admin API.
-                      { label: p.enabled ? "Deactivate" : "Activate", onClick: () => act(() => setProjectEnabled(p, !p.enabled, setConfirming, load)) },
+                      {
+                        label: p.enabled ? "Deactivate" : "Activate",
+                        onClick: () => act(() => setProjectEnabled(p, !p.enabled, setConfirming, load)),
+                      },
                       { label: "Reset spend", onClick: () => confirmResetSpend(p, setConfirming, load), disabled: !p.budget },
                       {
                         label: "Delete stored prompts",
-                        onClick: () => offerDeleteStoredPrompts(`/projects/${p.id}`, p.name, setConfirming, { always: true, done: load }).catch((e) => setError((e as Error).message)),
+                        onClick: () =>
+                          offerDeleteStoredPrompts(`/projects/${p.id}`, p.name, setConfirming, { always: true, done: load }).catch((e) =>
+                            setError((e as Error).message),
+                          ),
                       },
                       { label: "Delete", onClick: () => confirmDelete(p, setConfirming, load), danger: true },
                     ]}
@@ -351,11 +376,21 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
           {!adminOnly && k.allowed_models.length > 0 && <div className="key-models mono">{k.allowed_models.join(", ")}</div>}
           {!adminOnly && <TagList tags={k.allowed_tags} empty={k.allowed_models.length ? undefined : "all models"} />}
           {!adminOnly && (
-            <GuardrailList ids={k.guardrail_ids} inherited={projects.find((p) => p.id === k.project_id)?.guardrail_ids} names={guardrailNames} />
+            <GuardrailList
+              ids={k.guardrail_ids}
+              inherited={projects.find((p) => p.id === k.project_id)?.guardrail_ids}
+              names={guardrailNames}
+            />
           )}
         </div>
         <div className="key-budget">
-          {adminOnly ? <span className="muted small">–</span> : b ? <BudgetMeter budget={b} /> : <span className="muted small">No budget</span>}
+          {adminOnly ? (
+            <span className="muted small">–</span>
+          ) : b ? (
+            <BudgetMeter budget={b} />
+          ) : (
+            <span className="muted small">No budget</span>
+          )}
         </div>
         <div className="stat">
           {!k.project_active ? (
@@ -392,7 +427,12 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
               if (!k.enabled || !k.project_active) return save();
               setConfirming({
                 title: "Disable key",
-                message: <>Disable <strong>{k.name}</strong>? Clients using it are refused immediately, on every replica, until it is enabled again.</>,
+                message: (
+                  <>
+                    Disable <strong>{k.name}</strong>? Clients using it are refused immediately, on every replica, until it is enabled
+                    again.
+                  </>
+                ),
                 confirmLabel: "Disable",
                 action: save,
               });
@@ -400,7 +440,11 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
           >
             {k.enabled ? <PauseIcon /> : <PlayIcon />}
           </IconButton>
-          <IconButton label={`Sign-ins of ${k.name}`} title="Sign-ins: to MCP servers and A2A agents, and of apps as this key" onClick={() => setSignIns(k)}>
+          <IconButton
+            label={`Sign-ins of ${k.name}`}
+            title="Sign-ins: to MCP servers and A2A agents, and of apps as this key"
+            onClick={() => setSignIns(k)}
+          >
             <PlugIcon />
           </IconButton>
           <IconButton
@@ -441,7 +485,10 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
               <MultiSelect
                 caption="Project"
                 // A user's keys are always in one of their projects.
-                options={[...(projectNames ?? []).map((p) => ({ value: p.id, label: p.name })), ...(user ? [] : [{ value: NO_PROJECT, label: "No project" }])]}
+                options={[
+                  ...(projectNames ?? []).map((p) => ({ value: p.id, label: p.name })),
+                  ...(user ? [] : [{ value: NO_PROJECT, label: "No project" }]),
+                ]}
                 values={projectsPicked}
                 onChange={onProjectFilter}
               />
@@ -452,7 +499,12 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
               values={tagFilter}
               onChange={setTagFilter}
             />
-            <Toggle caption="Logging" hint="Only the keys whose prompts and responses are logged now." checked={loggingOnly} onChange={setLoggingOnly} />
+            <Toggle
+              caption="Logging"
+              hint="Only the keys whose prompts and responses are logged now."
+              checked={loggingOnly}
+              onChange={setLoggingOnly}
+            />
             {filtering && (
               <span className="muted small">
                 {shown.length}
@@ -479,7 +531,10 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
       {projects.length > 0 && groups.length > 0 ? (
         groups.map((g) => (
           // An inactive project's keys are refused; its card shows them greyed out.
-          <section key={g.id} className={g.project && !g.project.enabled ? "card list-card key-group inactive" : "card list-card key-group"}>
+          <section
+            key={g.id}
+            className={g.project && !g.project.enabled ? "card list-card key-group inactive" : "card list-card key-group"}
+          >
             {cardHead(g)}
             {g.keys.length > 0 ? (
               <ul className="list">{g.keys.map(keyItem)}</ul>
@@ -490,7 +545,9 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
         ))
       ) : shown.length === 0 ? (
         <div className="card list-card">
-          <p className="empty">{filtering ? "No keys match the filters." : "No keys or projects yet. Create a project to group keys by team, app or customer."}</p>
+          <p className="empty">
+            {filtering ? "No keys match the filters." : "No keys or projects yet. Create a project to group keys by team, app or customer."}
+          </p>
         </div>
       ) : (
         <section className="card list-card key-group">
@@ -522,8 +579,8 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
                     title: "Delete virtual key",
                     message: (
                       <>
-                        Delete <strong>{k.name}</strong>? Clients using this key stop working immediately, on every replica. Prompts and responses it
-                        logged are deleted too.
+                        Delete <strong>{k.name}</strong>? Clients using this key stop working immediately, on every replica. Prompts and
+                        responses it logged are deleted too.
                       </>
                     ),
                     action: () =>
@@ -540,7 +597,9 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
               ? () => {
                   const k = editing.key;
                   setEditing(null);
-                  offerDeleteStoredPrompts(`/keys/${k.id}`, k.name, setConfirming, { always: true, done: load }).catch((e) => setError((e as Error).message));
+                  offerDeleteStoredPrompts(`/keys/${k.id}`, k.name, setConfirming, { always: true, done: load }).catch((e) =>
+                    setError((e as Error).message),
+                  );
                 }
               : undefined
           }
@@ -648,7 +707,9 @@ function KeyForm({
 
   // Tags, limits and budget only apply to inference calls; an admin-only key saves without them.
   const inference = callsModels(scope);
-  const projectGuardrails = guardrails.filter((g) => projects.find((p) => p.id === project)?.guardrail_ids.includes(g.id)).map((g) => g.name);
+  const projectGuardrails = guardrails
+    .filter((g) => projects.find((p) => p.id === project)?.guardrail_ids.includes(g.id))
+    .map((g) => g.name);
   // A project that forbids web search forbids it for its keys, whatever theirs says.
   const projectForbidsSearch = projects.find((p) => p.id === project)?.web_search === false;
   // The project's prompt logging policy decides, the gateway's for keys outside projects; a key
@@ -669,7 +730,9 @@ function KeyForm({
   const models = useAdminData<ModelOption[]>(inference && pickModels ? `/models/options${project ? `?project=${project}` : ""}` : null);
   const modelOptions = [
     ...(models.data ?? []).map((m) => ({ value: m.name, label: m.name, note: m.router ? "router" : undefined })),
-    ...allowedModels.filter((m) => models.data && !models.data.some((o) => o.name === m)).map((m) => ({ value: m, label: m, note: "unavailable" })),
+    ...allowedModels
+      .filter((m) => models.data && !models.data.some((o) => o.name === m))
+      .map((m) => ({ value: m, label: m, note: "unavailable" })),
   ];
   const modelsMissing = inference && pickModels && allowedModels.length === 0;
 
@@ -733,7 +796,14 @@ function KeyForm({
         }}
       />
       <div className="form">
-        <TextInput caption="Name" value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. team-search-prod" required />
+        <TextInput
+          caption="Name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          placeholder="e.g. team-search-prod"
+          required
+        />
         {projects.length > 0 && (
           <Select
             caption="Project"
@@ -835,14 +905,27 @@ function KeyForm({
             </div>
             {loggingPolicy === "allow" && promptLogging && !initial?.prompt_logging && (
               <Banner tone="warning">
-                This key's prompts and responses will be stored, unencrypted, until logging is turned off. Use it for debugging, not for production traffic.
+                This key's prompts and responses will be stored, unencrypted, until logging is turned off. Use it for debugging, not for
+                production traffic.
               </Banner>
             )}
             <fieldset>
               <legend>Limits</legend>
               <div className="row">
-                <TextInput caption="Requests / minute" inputMode="numeric" value={rpm} onChange={(e) => setRpm(e.target.value)} placeholder="unlimited" />
-                <TextInput caption="Tokens / minute" inputMode="numeric" value={tpm} onChange={(e) => setTpm(e.target.value)} placeholder="unlimited" />
+                <TextInput
+                  caption="Requests / minute"
+                  inputMode="numeric"
+                  value={rpm}
+                  onChange={(e) => setRpm(e.target.value)}
+                  placeholder="unlimited"
+                />
+                <TextInput
+                  caption="Tokens / minute"
+                  inputMode="numeric"
+                  value={tpm}
+                  onChange={(e) => setTpm(e.target.value)}
+                  placeholder="unlimited"
+                />
               </div>
               <div className="row">
                 <Select

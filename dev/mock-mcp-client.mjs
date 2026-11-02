@@ -3,8 +3,8 @@
 // do: an unauthenticated request, the WWW-Authenticate challenge, the protected resource and
 // authorization server metadata, then the authorization code flow with PKCE and `resource`.
 //
-//   node dev/mock-mcp-client.mjs     # listens on :9996, against the console's address
-//   GATEWAY_URL=http://localhost:5173 MCP_PATH=/mcp/mock node dev/mock-mcp-client.mjs
+//   bun dev/mock-mcp-client.mjs     # listens on :9996, against the console's address
+//   GATEWAY_URL=http://localhost:5173 MCP_PATH=/mcp/mock bun dev/mock-mcp-client.mjs
 //
 // Open http://127.0.0.1:9996 and click Connect. After the approval in the console it lists the
 // tools with its access token, refreshes the token, and lists them again.

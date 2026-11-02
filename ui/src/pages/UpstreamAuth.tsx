@@ -125,7 +125,12 @@ function withFound(s: AuthState, d: OAuthDiscovered): AuthState {
     authorizationUrl: d.authorization_url ?? s.authorizationUrl,
     scopes: s.scopes || d.scopes.join(" "),
     resource: s.resource || d.resource || "",
-    ...(d.client_id && { clientId: d.client_id, secret: d.client_secret ?? "", redirectUri: d.redirect_uri ?? "", tokenAuth: d.client_secret ? "" : "none" }),
+    ...(d.client_id && {
+      clientId: d.client_id,
+      secret: d.client_secret ?? "",
+      redirectUri: d.redirect_uri ?? "",
+      tokenAuth: d.client_secret ? "" : "none",
+    }),
     registerOnSave: getsClient(s) && !d.client_id && !!d.registration_url,
   };
 }
@@ -143,7 +148,8 @@ export async function withClient(kind: "mcp" | "a2a", url: string, s: AuthState)
 
 /** What discovery means for the client, in a sentence. */
 function clientNote(d: OAuthDiscovered, s: AuthState): string {
-  if (d.client === "metadata_document") return "The gateway signs in with its client metadata document (CIMD): nothing is registered there.";
+  if (d.client === "metadata_document")
+    return "The gateway signs in with its client metadata document (CIMD): nothing is registered there.";
   if (d.client === "registered") return "The gateway registered itself there.";
   if (!getsClient(s)) return "";
   if (d.registration_url) {
@@ -216,10 +222,16 @@ export function AuthFields({
       autoFound.current = quiet;
       onChangeRef.current(next);
       setError(null);
-      const lead = fresh ? `The ${what} signs in with OAuth: each key signs in to it on the Access page.` : "Found its authorization server.";
+      const lead = fresh
+        ? `The ${what} signs in with OAuth: each key signs in to it on the Access page.`
+        : "Found its authorization server.";
       setFound([lead, clientNote(d, base)].filter(Boolean).join(" "));
       const ready = next.auth === "oauth_user" && (next.clientId || next.registerOnSave);
-      setFolded(ready ? `${host(d.authorization_url)} · ${d.client === "metadata_document" ? "client metadata document" : next.registerOnSave ? "registers on save" : "registered client"}` : null);
+      setFolded(
+        ready
+          ? `${host(d.authorization_url)} · ${d.client === "metadata_document" ? "client metadata document" : next.registerOnSave ? "registers on save" : "registered client"}`
+          : null,
+      );
     } catch (e) {
       if (!live()) return;
       if (!quiet) {
@@ -277,7 +289,14 @@ export function AuthFields({
           required
         />
       )}
-      <TextInput caption="Token URL" hint="Where the gateway gets and refreshes tokens." mono value={s.tokenUrl} onChange={(e) => set({ tokenUrl: e.target.value })} required />
+      <TextInput
+        caption="Token URL"
+        hint="Where the gateway gets and refreshes tokens."
+        mono
+        value={s.tokenUrl}
+        onChange={(e) => set({ tokenUrl: e.target.value })}
+        required
+      />
       <TextInput
         caption="Client ID"
         hint={
@@ -293,7 +312,11 @@ export function AuthFields({
       />
       <TextInput
         caption="Client secret"
-        hint={s.auth === "oauth_user" ? "Leave empty for a public client, which signs in with PKCE alone. Stored encrypted." : "Stored encrypted."}
+        hint={
+          s.auth === "oauth_user"
+            ? "Leave empty for a public client, which signs in with PKCE alone. Stored encrypted."
+            : "Stored encrypted."
+        }
         secret
         mono
         value={s.secret}
@@ -301,7 +324,14 @@ export function AuthFields({
         placeholder={keepsSecret ? "unchanged" : s.auth === "oauth_user" ? "none" : ""}
         required={s.auth === "oauth" && s.tokenAuth !== "none" && !keepsSecret}
       />
-      <TextInput caption="Scopes" hint="Space-separated." mono value={s.scopes} onChange={(e) => set({ scopes: e.target.value })} placeholder="optional" />
+      <TextInput
+        caption="Scopes"
+        hint="Space-separated."
+        mono
+        value={s.scopes}
+        onChange={(e) => set({ scopes: e.target.value })}
+        placeholder="optional"
+      />
       <TextInput
         caption="Resource"
         hint={`The resource the tokens are for (RFC 8707). MCP servers expect their own URL; leave empty when the ${what} wants none.`}
@@ -341,14 +371,21 @@ export function AuthFields({
         caption="Authentication"
         hint={
           <ul className="hint-list">
-            <li>How the gateway signs in to the {what}. Clients never see its credentials: they authenticate to the gateway with their virtual key.</li>
+            <li>
+              How the gateway signs in to the {what}. Clients never see its credentials: they authenticate to the gateway with their virtual
+              key.
+            </li>
             <li>
               <strong>OAuth: the gateway's client</strong> gets tokens with a client registered for the gateway (client credentials).
             </li>
             <li>
-              <strong>OAuth: each key signs in</strong>: each virtual key signs in to the {what} once, on the Access page, and calls it as that account.
+              <strong>OAuth: each key signs in</strong>: each virtual key signs in to the {what} once, on the Access page, and calls it as
+              that account.
             </li>
-            <li>{auto ? "The form finds out when the server signs in with OAuth as you type its URL, and picks it. " : ""}Discover, in the {kind === "mcp" ? "URL" : "agent card"} field, looks it up and fills it in.</li>
+            <li>
+              {auto ? "The form finds out when the server signs in with OAuth as you type its URL, and picks it. " : ""}Discover, in the{" "}
+              {kind === "mcp" ? "URL" : "agent card"} field, looks it up and fills it in.
+            </li>
           </ul>
         }
         value={s.auth}
@@ -368,16 +405,17 @@ export function AuthFields({
                 <strong>Key</strong>: each virtual key signs in once, on the Access page.
               </li>
               <li>
-                <strong>Tenant</strong> or <strong>Tenant and user</strong>: for an application that serves many tenants with one key. Each tenant, or each user of a tenant, signs in
-                on their own, told apart by the request's labels <code>tenant</code> and <code>user</code> (<code>x-gateway-labels: tenant=…,user=…</code>). A request without
-                them is refused.
+                <strong>Tenant</strong> or <strong>Tenant and user</strong>: for an application that serves many tenants with one key. Each
+                tenant, or each user of a tenant, signs in on their own, told apart by the request's labels <code>tenant</code> and{" "}
+                <code>user</code> (<code>x-gateway-labels: tenant=…,user=…</code>). A request without them is refused.
               </li>
               <li>
-                Those who have not signed in get a sign-in link: in the error, as a sign-in tool in chat requests, or from <code>POST /v1/oauth/sign-ins</code>.
+                Those who have not signed in get a sign-in link: in the error, as a sign-in tool in chat requests, or from{" "}
+                <code>POST /v1/oauth/sign-ins</code>.
               </li>
               <li>
-                The gateway trusts the labels: whoever holds the key can act as any tenant or user. Keep such a key on the application's server, which sets the labels from its
-                own sign-in.
+                The gateway trusts the labels: whoever holds the key can act as any tenant or user. Keep such a key on the application's
+                server, which sets the labels from its own sign-in.
               </li>
             </ul>
           }
@@ -398,7 +436,9 @@ export function AuthFields({
         />
       )}
       {s.auth === "oauth_user" && savedSignInPer && s.signInBy !== savedSignInPer && (
-        <Banner tone="warning">Saving signs everyone out of the {what}: the sign-ins kept so far are per {SIGN_IN_PER_LABEL[savedSignInPer].toLowerCase()}.</Banner>
+        <Banner tone="warning">
+          Saving signs everyone out of the {what}: the sign-ins kept so far are per {SIGN_IN_PER_LABEL[savedSignInPer].toLowerCase()}.
+        </Banner>
       )}
       {s.auth === "header" && (
         <TextInput
@@ -414,7 +454,11 @@ export function AuthFields({
       {(s.auth === "bearer" || s.auth === "header") && (
         <TextInput
           caption={s.auth === "bearer" ? "Token" : "API key"}
-          hint={s.auth === "bearer" ? "Sent as Authorization: Bearer followed by the token. Stored encrypted." : "Sent as the header's value. Stored encrypted."}
+          hint={
+            s.auth === "bearer"
+              ? "Sent as Authorization: Bearer followed by the token. Stored encrypted."
+              : "Sent as the header's value. Stored encrypted."
+          }
           secret
           mono
           value={s.secret}

@@ -89,7 +89,11 @@ function foundryNote(d: FoundryDeployment): string {
   return [[d.model, d.model_version].filter(Boolean).join(" "), sku, limits, state].filter(Boolean).join(" · ");
 }
 
-const BEDROCK_KIND: Record<BedrockModel["kind"], string> = { on_demand: "on-demand", cross_region: "cross-region profile", global: "global profile" };
+const BEDROCK_KIND: Record<BedrockModel["kind"], string> = {
+  on_demand: "on-demand",
+  cross_region: "cross-region profile",
+  global: "global profile",
+};
 
 /** How a Bedrock model is called and what its account quota allows: "cross-region profile · 200 RPM, 2M TPM". */
 function bedrockNote(b: BedrockModel): string {
@@ -287,7 +291,9 @@ export function DeploymentForm({
     if (initial || (baseModel && !baseAuto) || !upstream.trim()) return;
     const t = setTimeout(async () => {
       try {
-        const r = await api<{ exact: PriceEntry | null }>(`/prices/match?provider=${provider}&model=${encodeURIComponent(upstream.trim())}`);
+        const r = await api<{ exact: PriceEntry | null }>(
+          `/prices/match?provider=${provider}&model=${encodeURIComponent(upstream.trim())}`,
+        );
         if (r.exact) applyCatalog(r.exact, true);
         else if (baseAuto) {
           setBaseModel("");
@@ -454,7 +460,11 @@ export function DeploymentForm({
             </Button>
           )}
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={busy || !modelName.trim() || !upstream.trim() || !available.some((c) => c.id === credentialId) || longIncomplete} onClick={submit}>
+          <Button
+            variant="primary"
+            disabled={busy || !modelName.trim() || !upstream.trim() || !available.some((c) => c.id === credentialId) || longIncomplete}
+            onClick={submit}
+          >
             {initial ? "Save" : "Add deployment"}
           </Button>
         </>
@@ -513,8 +523,9 @@ export function DeploymentForm({
                 caption="Foundry deployment"
                 hint={
                   <>
-                    The deployments on {foundry ? <span className="mono">{foundry.resource.split("/").pop()}</span> : "the credential's resource"}, read
-                    with its Entra ID app. Picking one fills in the upstream model, protocol, base model with its prices, and the RPM and TPM
+                    The deployments on{" "}
+                    {foundry ? <span className="mono">{foundry.resource.split("/").pop()}</span> : "the credential's resource"}, read with
+                    its Entra ID app. Picking one fills in the upstream model, protocol, base model with its prices, and the RPM and TPM
                     limits of its quota.
                   </>
                 }
@@ -539,16 +550,17 @@ export function DeploymentForm({
                 hint={
                   <ul className="hint-list">
                     <li>
-                      The models and inference profiles the credential can call{bedrock ? ` in ${bedrock.region}` : ""}. Picking one fills in the
-                      upstream model, base model with its prices, and the RPM and TPM limits of the account&apos;s quota for it.
+                      The models and inference profiles the credential can call{bedrock ? ` in ${bedrock.region}` : ""}. Picking one fills
+                      in the upstream model, base model with its prices, and the RPM and TPM limits of the account&apos;s quota for it.
                     </li>
                     <li>
-                      <strong>Quotas belong to the AWS account and region</strong>, not to a deployment: everything using the account shares them.
-                      Lower the limits when other deployments or applications use the same model.
+                      <strong>Quotas belong to the AWS account and region</strong>, not to a deployment: everything using the account shares
+                      them. Lower the limits when other deployments or applications use the same model.
                     </li>
                     <li>
                       Bedrock may count a model&apos;s output tokens several times against its TPM quota (its token burndown rate), so the
-                      gateway&apos;s TPM limit can let more through than the quota allows. Check the model&apos;s rate in the AWS documentation.
+                      gateway&apos;s TPM limit can let more through than the quota allows. Check the model&apos;s rate in the AWS
+                      documentation.
                     </li>
                     <li>
                       <strong>Permissions:</strong> listing needs <span className="mono">bedrock:ListFoundationModels</span> and{" "}
@@ -573,7 +585,8 @@ export function DeploymentForm({
               {bedrock?.quotas_error && <p className="muted small">{bedrock.quotas_error} Enter the RPM and TPM limits yourself.</p>}
               {sharing.length > 0 && (
                 <p className="muted small">
-                  {sharing.map((d) => d.model_name).join(", ")} {sharing.length === 1 ? "uses" : "use"} the same model on this credential and
+                  {sharing.map((d) => d.model_name).join(", ")} {sharing.length === 1 ? "uses" : "use"} the same model on this credential
+                  and
                   {sharing.length === 1 ? " shares" : " share"} its quota. Split the limits between them.
                 </p>
               )}
@@ -590,31 +603,35 @@ export function DeploymentForm({
                   ? `Amazon Titan Text Embeddings V2: ${TITAN_MODEL}`
                   : provider === "bedrock" && mode === "rerank"
                     ? "amazon.rerank-v1:0 or cohere.rerank-v3-5:0 (or a model ARN)"
-                  : provider === "azure" && mode === "rerank"
-                    ? "Your Cohere rerank deployment, e.g. Cohere-rerank-v4.0-pro"
-                  : mode === "rerank"
-                    ? "A model of a server with Cohere's rerank API, e.g. rerank-v3.5 (Cohere) or BAAI/bge-reranker-v2-m3 (vLLM)"
-                  : provider === "bedrock"
-                    ? "Model or inference profile ID, e.g. anthropic.claude-opus-5-5"
-                  : provider === "typesafe"
-                    ? "TypeSafe model, e.g. jev-latest"
-                  : provider === "vertex" && mode === "embedding"
-                    ? "Google embedding model, e.g. gemini-embedding-001"
-                  : provider === "vertex" && style === "anthropic"
-                    ? "Claude model with its version, e.g. claude-sonnet-4-5@20250929"
-                  : provider === "vertex"
-                    ? "Gemini model, e.g. gemini-2.5-flash (sent as google/gemini-2.5-flash), or publisher/model for Model Garden"
-                  : provider === "gemini"
-                    ? mode === "embedding" ? "e.g. gemini-embedding-001" : "e.g. gemini-2.5-flash"
-                  : provider === "mistral"
-                    ? mode === "embedding" ? "e.g. mistral-embed" : "e.g. mistral-large-latest"
-                    : provider === "azure" && mode === "decision"
-                      ? "Your Microsoft-Decision-1 deployment name (Azure does not allow naming it Microsoft-Decision-1)"
-                      : provider === "azure"
-                        ? "Your Foundry deployment name. A catalog pick only suggests it; change it if your deployment is named differently."
-                        : mode === "embedding"
-                          ? "The model the provider serves, e.g. text-embedding-3-large"
-                          : "The model the provider serves, as its API names it."
+                    : provider === "azure" && mode === "rerank"
+                      ? "Your Cohere rerank deployment, e.g. Cohere-rerank-v4.0-pro"
+                      : mode === "rerank"
+                        ? "A model of a server with Cohere's rerank API, e.g. rerank-v3.5 (Cohere) or BAAI/bge-reranker-v2-m3 (vLLM)"
+                        : provider === "bedrock"
+                          ? "Model or inference profile ID, e.g. anthropic.claude-opus-5-5"
+                          : provider === "typesafe"
+                            ? "TypeSafe model, e.g. jev-latest"
+                            : provider === "vertex" && mode === "embedding"
+                              ? "Google embedding model, e.g. gemini-embedding-001"
+                              : provider === "vertex" && style === "anthropic"
+                                ? "Claude model with its version, e.g. claude-sonnet-4-5@20250929"
+                                : provider === "vertex"
+                                  ? "Gemini model, e.g. gemini-2.5-flash (sent as google/gemini-2.5-flash), or publisher/model for Model Garden"
+                                  : provider === "gemini"
+                                    ? mode === "embedding"
+                                      ? "e.g. gemini-embedding-001"
+                                      : "e.g. gemini-2.5-flash"
+                                    : provider === "mistral"
+                                      ? mode === "embedding"
+                                        ? "e.g. mistral-embed"
+                                        : "e.g. mistral-large-latest"
+                                      : provider === "azure" && mode === "decision"
+                                        ? "Your Microsoft-Decision-1 deployment name (Azure does not allow naming it Microsoft-Decision-1)"
+                                        : provider === "azure"
+                                          ? "Your Foundry deployment name. A catalog pick only suggests it; change it if your deployment is named differently."
+                                          : mode === "embedding"
+                                            ? "The model the provider serves, e.g. text-embedding-3-large"
+                                            : "The model the provider serves, as its API names it."
               }
               value={upstream}
               onChange={changeUpstream}
@@ -623,7 +640,13 @@ export function DeploymentForm({
                 applyCatalog(entry, false);
               }}
               {...catalogScope(provider, mode)}
-              placeholder={provider === "typesafe" ? "e.g. jev-latest" : provider === "bedrock" && mode === "embedding" ? `e.g. ${TITAN_MODEL}` : "search the catalog or type"}
+              placeholder={
+                provider === "typesafe"
+                  ? "e.g. jev-latest"
+                  : provider === "bedrock" && mode === "embedding"
+                    ? `e.g. ${TITAN_MODEL}`
+                    : "search the catalog or type"
+              }
             />
             {chat ? (
               <Select
@@ -635,8 +658,8 @@ export function DeploymentForm({
                         <strong>Converse</strong> works with every Bedrock chat model.
                       </li>
                       <li>
-                        <strong>Anthropic Messages via InvokeModel</strong> sends Claude its own API through Bedrock Runtime, in any region or
-                        inference profile that serves the model, with token counting.
+                        <strong>Anthropic Messages via InvokeModel</strong> sends Claude its own API through Bedrock Runtime, in any region
+                        or inference profile that serves the model, with token counting.
                       </li>
                       <li>
                         <strong>via bedrock-mantle</strong> calls Bedrock&apos;s Anthropic-compatible endpoint, where it is available.
@@ -655,14 +678,18 @@ export function DeploymentForm({
                   mode === "decision"
                     ? "System One"
                     : mode === "rerank"
-                      ? provider === "bedrock" ? "Bedrock Rerank API" : "Cohere rerank (v2)"
-                    : provider === "bedrock"
-                      ? "Titan Embeddings V2"
-                      : provider === "vertex"
-                        ? "Vertex AI predict"
-                        : "OpenAI embeddings"
+                      ? provider === "bedrock"
+                        ? "Bedrock Rerank API"
+                        : "Cohere rerank (v2)"
+                      : provider === "bedrock"
+                        ? "Titan Embeddings V2"
+                        : provider === "vertex"
+                          ? "Vertex AI predict"
+                          : "OpenAI embeddings"
                 }
-                hint={provider === "bedrock" && mode === "embedding" ? "Amazon Titan Text Embeddings V2, called with InvokeModel." : undefined}
+                hint={
+                  provider === "bedrock" && mode === "embedding" ? "Amazon Titan Text Embeddings V2, called with InvokeModel." : undefined
+                }
                 disabled
               />
             )}
@@ -672,8 +699,8 @@ export function DeploymentForm({
               caption="Base"
               hint={
                 <>
-                  The price catalog entry for this model (the base model); picking one fills in the prices. Found from the upstream model when the
-                  catalog has it{provider === "azure" ? ", e.g. azure/gpt-4o for an Azure deployment named prod-4o" : ""}.
+                  The price catalog entry for this model (the base model); picking one fills in the prices. Found from the upstream model
+                  when the catalog has it{provider === "azure" ? ", e.g. azure/gpt-4o for an Azure deployment named prod-4o" : ""}.
                 </>
               }
               placeholder="search the catalog"
@@ -694,7 +721,11 @@ export function DeploymentForm({
                 setNameAuto(e.target.value.trim() === "");
               }}
               required
-              placeholder={nameAuto ? "from the upstream model" : `e.g. ${mode === "embedding" ? "text-embedding" : mode === "decision" ? "jev" : mode === "rerank" ? "rerank" : "claude-opus"}`}
+              placeholder={
+                nameAuto
+                  ? "from the upstream model"
+                  : `e.g. ${mode === "embedding" ? "text-embedding" : mode === "decision" ? "jev" : mode === "rerank" ? "rerank" : "claude-opus"}`
+              }
             />
           </div>
         </fieldset>
@@ -722,8 +753,8 @@ export function DeploymentForm({
           hint={
             <ul className="hint-list">
               <li>
-                <strong>With projects</strong>, only keys in one of them can use this deployment, whatever tags other keys hold. Their
-                tags still apply.
+                <strong>With projects</strong>, only keys in one of them can use this deployment, whatever tags other keys hold. Their tags
+                still apply.
               </li>
               <li>
                 <strong>Without</strong>, keys in any project, or in none, can use it as their tags allow.
@@ -742,14 +773,26 @@ export function DeploymentForm({
         <Section title="Routing & limits" summary={routingSummary}>
           <div className="row four">
             <TextInput caption="Weight" inputMode="numeric" value={weight} onChange={(e) => setWeight(e.target.value)} />
-            <TextInput caption="Priority" hint="Lower is tried first." inputMode="numeric" value={priority} onChange={(e) => setPriority(e.target.value)} />
+            <TextInput
+              caption="Priority"
+              hint="Lower is tried first."
+              inputMode="numeric"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+            />
             <TextInput caption="RPM limit" inputMode="numeric" value={rpm} onChange={(e) => setRpm(e.target.value)} placeholder="none" />
             <TextInput caption="TPM limit" inputMode="numeric" value={tpm} onChange={(e) => setTpm(e.target.value)} placeholder="none" />
           </div>
           <div className="row four">
             <TextInput caption="Timeout (s)" inputMode="numeric" value={timeout} onChange={(e) => setTimeoutSecs(e.target.value)} />
             {chat && (
-              <TextInput caption="Default max tokens" inputMode="numeric" value={defaultMax} onChange={(e) => setDefaultMax(e.target.value)} placeholder="auto" />
+              <TextInput
+                caption="Default max tokens"
+                inputMode="numeric"
+                value={defaultMax}
+                onChange={(e) => setDefaultMax(e.target.value)}
+                placeholder="auto"
+              />
             )}
             {anthropicStyle && (
               <Select
@@ -803,7 +846,13 @@ export function DeploymentForm({
             {chat && (
               <>
                 <TextInput caption="Cache read" inputMode="decimal" value={crCost} onChange={priceInput(setCrCost)} placeholder="= input" />
-                <TextInput caption="Cache write" inputMode="decimal" value={cwCost} onChange={priceInput(setCwCost)} placeholder="= input" />
+                <TextInput
+                  caption="Cache write"
+                  inputMode="decimal"
+                  value={cwCost}
+                  onChange={priceInput(setCwCost)}
+                  placeholder="= input"
+                />
               </>
             )}
           </div>
@@ -835,10 +884,36 @@ export function DeploymentForm({
           )}
           {longOn && (
             <div className="row four">
-              <TextInput caption="Long input" inputMode="decimal" value={longIn} onChange={priceInput(setLongIn)} placeholder="required" required />
-              <TextInput caption="Long output" inputMode="decimal" value={longOut} onChange={priceInput(setLongOut)} placeholder="required" required />
-              <TextInput caption="Long cache read" inputMode="decimal" value={longCr} onChange={priceInput(setLongCr)} placeholder="= long input" />
-              <TextInput caption="Long cache write" inputMode="decimal" value={longCw} onChange={priceInput(setLongCw)} placeholder="= long input" />
+              <TextInput
+                caption="Long input"
+                inputMode="decimal"
+                value={longIn}
+                onChange={priceInput(setLongIn)}
+                placeholder="required"
+                required
+              />
+              <TextInput
+                caption="Long output"
+                inputMode="decimal"
+                value={longOut}
+                onChange={priceInput(setLongOut)}
+                placeholder="required"
+                required
+              />
+              <TextInput
+                caption="Long cache read"
+                inputMode="decimal"
+                value={longCr}
+                onChange={priceInput(setLongCr)}
+                placeholder="= long input"
+              />
+              <TextInput
+                caption="Long cache write"
+                inputMode="decimal"
+                value={longCw}
+                onChange={priceInput(setLongCw)}
+                placeholder="= long input"
+              />
             </div>
           )}
         </Section>

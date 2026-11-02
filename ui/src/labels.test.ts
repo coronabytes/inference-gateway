@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { MAX_LABELS, labelError, labelHeaders, labelQuery, withLabel } from "./labels";
 
 describe("request labels", () => {

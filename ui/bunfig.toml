@@ -1,0 +1,3 @@
+[fmt]
+printWidth = 140
+ignorePatterns = ["openapi.json", "src/api.gen.ts"]

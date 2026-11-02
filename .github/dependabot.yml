@@ -1,5 +1,5 @@
 # The workflows pin actions to commit SHAs and the Dockerfile pins its base images to digests;
-# Dependabot proposes the bumps. Rust and npm dependencies get one grouped pull request a week for
+# Dependabot proposes the bumps. Rust and Bun dependencies get one grouped pull request a week for
 # minor and patch updates, and one each for major updates. Security updates come as soon as an
 # advisory is published.
 version: 2
@@ -17,7 +17,7 @@ updates:
       rust:
         update-types: [minor, patch]
 
-  - package-ecosystem: npm
+  - package-ecosystem: bun
     directory: /ui
     schedule:
       interval: weekly

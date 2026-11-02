@@ -150,7 +150,11 @@ export function RouterForm({
   const pickModels = (i: number, names: string[]) =>
     patch(i, { models: names.map((model) => routes[i].models.find((m) => m.model === model) ?? { model }) });
   const setEffort = (i: number, model: string, effort: string) =>
-    patch(i, { models: routes[i].models.map((m) => (m.model === model ? { model, reasoning_effort: (effort || null) as ReasoningEffort | null } : m)) });
+    patch(i, {
+      models: routes[i].models.map((m) =>
+        m.model === model ? { model, reasoning_effort: (effort || null) as ReasoningEffort | null } : m,
+      ),
+    });
   const addRoute = () => {
     const taken = new Set(routes.map((r) => r.name.trim().toLowerCase()));
     const next = ROUTE_NAMES.find((n) => !taken.has(n.toLowerCase())) ?? `Route ${routes.length + 1}`;
@@ -163,7 +167,8 @@ export function RouterForm({
   const decisionMissing = !!decisionModel && !decisionModels.includes(decisionModel);
   const missing = decisionMissing || routes.some((r) => r.models.some((m) => !chatModels.includes(m.model)));
   // An effort the model does not take, e.g. saved before its catalog entry said so.
-  const unsupported = (m: Route["models"][number]) => !!m.reasoning_effort && !supportedEfforts(deployments, m.model).includes(m.reasoning_effort);
+  const unsupported = (m: Route["models"][number]) =>
+    !!m.reasoning_effort && !supportedEfforts(deployments, m.model).includes(m.reasoning_effort);
   const badEffort = routes.some((r) => r.models.some(unsupported));
   const invalid =
     !MODEL_NAME.test(name.trim()) ||
@@ -269,7 +274,9 @@ export function RouterForm({
           <div className="routes-editor">
             {routes.map((r, i) => {
               const options = [
-                ...r.models.filter((m) => !chatModels.includes(m.model)).map((m) => ({ value: m.model, label: label(m.model, chatModels) })),
+                ...r.models
+                  .filter((m) => !chatModels.includes(m.model))
+                  .map((m) => ({ value: m.model, label: label(m.model, chatModels) })),
                 ...chatModels.map((m) => ({ value: m, label: m })),
               ];
               const nameTaken = !!r.name.trim() && names.indexOf(r.name.trim().toLowerCase()) !== i;
@@ -295,7 +302,11 @@ export function RouterForm({
                     empty="No chat models"
                     options={options}
                   />
-                  <IconButton label={`Remove route ${i + 1}`} title="Remove" onClick={() => setRoutes((rs) => rs.filter((_, j) => j !== i))}>
+                  <IconButton
+                    label={`Remove route ${i + 1}`}
+                    title="Remove"
+                    onClick={() => setRoutes((rs) => rs.filter((_, j) => j !== i))}
+                  >
                     <TrashIcon />
                   </IconButton>
                   <TextArea
@@ -332,7 +343,11 @@ export function RouterForm({
               );
             })}
           </div>
-          {duplicateName && <p className="small" role="alert">Each route needs its own name.</p>}
+          {duplicateName && (
+            <p className="small" role="alert">
+              Each route needs its own name.
+            </p>
+          )}
           {badEffort && (
             <p className="small" role="alert">
               A model is set to a reasoning effort it does not take; pick another level for it.
@@ -366,7 +381,8 @@ export function RouterForm({
           hint={
             <ul className="hint-list">
               <li>
-                <strong>Keys with tags</strong> can call this router only if they hold every one of its tags, and then reach only the routes and models their tags allow.
+                <strong>Keys with tags</strong> can call this router only if they hold every one of its tags, and then reach only the routes
+                and models their tags allow.
               </li>
               <li>
                 <strong>Keys without tags</strong> can call every router.

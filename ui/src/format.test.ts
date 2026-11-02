@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { bytes, compact, duration, ms, pct, usd } from "./format";
 
 describe("number formats", () => {
