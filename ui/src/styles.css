@@ -333,8 +333,9 @@ input:focus-visible, select:focus-visible, button:focus-visible, svg:focus-visib
   content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
   background: #ffffff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); transition: transform 0.15s;
 }
-.switch[aria-checked="true"] .switch-track { background: var(--status-good); }
-.switch[aria-checked="true"] .switch-track::after { transform: translateX(12px); }
+/* On, the track takes the theme's accent, like a chosen tab; the knob its ink, so it shows in both themes. */
+.switch[aria-checked="true"] .switch-track { background: var(--accent); }
+.switch[aria-checked="true"] .switch-track::after { transform: translateX(12px); background: var(--accent-ink); }
 .check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 
 /* tiles */
@@ -479,6 +480,12 @@ tr.clickable:focus-visible { outline: 2px solid var(--link); outline-offset: -2p
 fieldset { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px 12px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
 legend { font-size: 12.5px; font-weight: 600; padding: 0 4px; }
 fieldset p { margin: 0; }
+/* A section title that is a small Segmented (`legend-tabs`): its caption names the section, its tabs switch what it shows. */
+legend.with-tabs { display: flex; align-items: center; padding: 0; }
+.segmented.legend-tabs > .control-caption { margin: 0 4px 0 8px; }
+.segmented.legend-tabs { padding: 1px; }
+.segmented.legend-tabs button { padding: 1px 10px; font-size: 12.5px; }
+.segmented.legend-tabs button:not(.active) { font-weight: 400; }
 /* Section: a collapsible fieldset, closed by default; its summary line hides once it is open. */
 details.section { border: 1px solid var(--border); border-radius: 14px; padding: 0 12px; }
 details.section > summary {
@@ -768,7 +775,8 @@ td.num > .stat-pairs { display: inline-grid; text-align: left; }
 /* A note that spans both rows, then a second column of pairs, kept close to the note it belongs to. */
 .stat-pairs.wide { grid-template-columns: repeat(5, auto); }
 .stat-pairs > .threshold { grid-column: 3; grid-row: 1 / span 2; align-self: center; padding-left: 12px; white-space: nowrap; }
-.stat-pairs.num > .long { min-width: 0; }
+/* Long-context prices keep their full width: a squeezed column would run them into their labels. */
+.stat-pairs.num > .long { min-width: max-content; }
 .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Keys: the project's budget, status and commands stand over its keys' own; keys are indented a
@@ -780,6 +788,8 @@ td.num > .stat-pairs { display: inline-grid; text-align: left; }
 .key-name-text, .key-scope { color: var(--text-primary); font-weight: 550; }
 .key-ident .small { margin-top: 2px; }
 .key-access .tags { margin-top: 4px; }
+/* The models a key is limited to, instead of tags. */
+.key-access .key-models { margin-top: 4px; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 /* Guardrails a key or project applies: amber-edged, and dimmed when they come from the project. */
 .tag.guardrail { border-color: color-mix(in srgb, var(--status-warning) 55%, transparent); background: color-mix(in srgb, var(--status-warning) 12%, transparent); color: var(--text-primary); }
 .tag.guardrail.inherited { opacity: 0.6; }
@@ -942,8 +952,8 @@ a.button.primary:hover { background: var(--accent-hover); box-shadow: var(--glow
 .hub-table col.col-stats { width: 360px; }
 .hub-table col.col-tokens { width: 120px; }
 .hub-table td.logo { padding-right: 0; }
-.hub-table col.col-price { width: 210px; }
-.hub-table col.col-caps { width: 240px; }
+.hub-table col.col-price { width: 250px; }
+.hub-table col.col-caps { width: 200px; }
 .hub-table col.col-actions { width: 44px; }
 /* The tile footer's status bar, latency and speed, in a row of the list; latency and speed keep fixed widths. */
 .hub-row-stats { display: flex; align-items: flex-end; gap: 16px; }

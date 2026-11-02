@@ -133,11 +133,12 @@ const searches = (m: HubModel) => m.mode === "rerank" || (m.mode === "chat" && m
 function PriceSummary({ model: m }: { model: HubModel }) {
   const ps = m.deployments.map((d) => d.prices);
   if (m.mode === "rerank") {
+    // One pair, like a token price: the amount, then what it is per.
     return (
-      <>
-        <div>{range(ps.map((p) => p.per_k_searches))}</div>
-        <div className="muted small">$ per 1K searches</div>
-      </>
+      <div className="stat-pairs num" title="$ per 1K searches">
+        <span>{range(ps.map((p) => p.per_k_searches))}</span>
+        <span className="muted small">per 1K searches</span>
+      </div>
     );
   }
   const thresholds = new Set(ps.map((p) => p.long_context_threshold));
@@ -600,7 +601,6 @@ export function ModelHub() {
                       </td>
                       <td className="num">
                         <PriceSummary model={m} />
-                        {options.length > 1 && <div className="muted small">{options.length} prices</div>}
                       </td>
                       <td className="middle">
                         <CapabilityIcons m={m} picked={capFilter} onPick={toggleCap} />

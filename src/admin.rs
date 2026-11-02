@@ -86,6 +86,7 @@ pub fn router(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         .routes(routes!(transfer::import))
         .routes(routes!(keys::list_keys, keys::create_key))
         .routes(routes!(keys::key_options))
+        .routes(routes!(keys::model_options))
         .routes(routes!(keys::update_key, keys::delete_key))
         .routes(routes!(keys::reset_spend))
         .routes(routes!(keys::regenerate_key))

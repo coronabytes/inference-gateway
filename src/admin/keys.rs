@@ -324,6 +324,50 @@ pub(super) async fn key_options(
     Ok(Json(keys))
 }
 
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ModelOptionsQuery {
+    /// The key's project: models limited to other projects are left out. Omitted for a key
+    /// outside projects.
+    project: Option<Uuid>,
+}
+
+/// A model a key's `allowed_models` may name.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ModelOption {
+    name: String,
+    /// An auto router, which routes only to those of its models the key may call as well.
+    router: bool,
+}
+
+/// Model names
+///
+/// The models a key in `project` may be limited to, by name: deployments, auto routers and
+/// aliases, whatever their tags.
+#[utoipa::path(get, path = "/models/options", tag = "Virtual keys", params(ModelOptionsQuery),
+    responses(
+        (status = 200, description = "The models.", body = Vec<ModelOption>),
+        (status = 404, description = "A project the caller does not see.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn model_options(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<ModelOptionsQuery>,
+) -> R<Json<Vec<ModelOption>>> {
+    if !access.sees(q.project) {
+        return Err(AdminError::not_found());
+    }
+    let snap = state.registry.snapshot();
+    // What a key in the project without tags or allowed models may call.
+    let probe = VirtualKey { project_id: q.project, ..Default::default() };
+    let models = crate::api::models::names(&snap, &probe)
+        .into_iter()
+        .map(|name| ModelOption { name: name.clone(), router: snap.routers.contains_key(snap.resolve(name)) })
+        .collect();
+    Ok(Json(models))
+}
+
 /// Project names
 ///
 /// The projects a picker offers, by name: id and name only.

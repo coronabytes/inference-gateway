@@ -1250,6 +1250,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/models/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Model names
+         * @description The models a key in `project` may be limited to, by name: deployments, auto routers and
+         *     aliases, whatever their tags.
+         */
+        get: operations["model_options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/oauth/discover": {
         parameters: {
             query?: never;
@@ -3937,6 +3958,12 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** @description A model a key's `allowed_models` may name. */
+        ModelOption: {
+            name: string;
+            /** @description An auto router, which routes only to those of its models the key may call as well. */
+            router: boolean;
+        };
         /**
          * @description The models a key may use, in the OpenAI format, or in Anthropic's for clients that send
          *     `anthropic-version`.
@@ -4728,6 +4755,7 @@ export interface components {
             project_id: string | null;
             /** @description False while the key's project is inactive; the key is then refused like a disabled one. */
             project_active: boolean;
+            /** @description Model names (deployments, auto routers, aliases) this key may call; empty means any. */
             allowed_models: string[];
             /** @description Deployment tags this key holds; empty means no tag restriction. */
             allowed_tags: string[];
@@ -7494,6 +7522,41 @@ export interface operations {
             };
             /** @description Invalid metadata, or no such model. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    model_options: {
+        parameters: {
+            query?: {
+                /**
+                 * @description The key's project: models limited to other projects are left out. Omitted for a key
+                 *     outside projects.
+                 */
+                project?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The models. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelOption"][];
+                };
+            };
+            /** @description A project the caller does not see. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
