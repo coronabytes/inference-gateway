@@ -711,7 +711,7 @@ function KeyForm({
   // Tags, limits and budget only apply to inference calls; an admin-only key saves without them.
   const inference = callsModels(scope);
   // The form's tab; an admin-only key has General alone.
-  const [tab, setTab] = useState<"general" | "access" | "limits" | "logging">("general");
+  const [tab, setTab] = useState<"general" | "limits" | "logging">("general");
   const shown = inference ? tab : "general";
   const panel = (t: typeof tab) => (t === shown ? "form" : "form inactive");
   const projectGuardrails = guardrails
@@ -790,7 +790,6 @@ function KeyForm({
             onChange={setTab}
             options={[
               { value: "general", label: "General" },
-              { value: "access", label: "Access" },
               { value: "limits", label: "Limits" },
               { value: "logging", label: "Logging" },
             ]}
@@ -850,54 +849,54 @@ function KeyForm({
             options={scopesFor(!!project).map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
           />
           <TextInput caption="Expires" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
-        </div>
-        {inference && (
-          <div className={panel("access")}>
-            <MultiSelect
-              caption="Models"
-              hint="The deployments, routers and aliases this key may call; only those its tags reach are offered. A router routes only to those of its models picked here too. All: every model its tags reach."
-              values={allowedModels}
-              onChange={setAllowedModels}
-              options={modelOptions}
-            />
-            <TagPicker
-              caption="Tags"
-              hint={
-                allowedTags.length
-                  ? "This key can use deployments, routers, MCP servers and A2A agents without tags, and those whose tags are all selected here: with eu, only the EU deployments of each model."
-                  : "No tags selected: this key can use every deployment, MCP server and A2A agent, except those limited to other projects."
-              }
-              options={tags}
-              value={allowedTags}
-              onChange={setAllowedTags}
-            />
-            {guardrails.length > 0 && (
+          {inference && (
+            <>
               <MultiSelect
-                caption="Guardrails"
-                hint={
-                  projectGuardrails.length
-                    ? `Every request of this key goes through these, and through its project's: ${projectGuardrails.join(", ")}.`
-                    : "Every request of this key goes through these, whatever it asks for. Requests can ask for more by name."
-                }
-                values={guardrailIds}
-                onChange={setGuardrailIds}
-                none="None"
-                options={guardrails.map((g) => ({ value: g.id, label: g.name, note: g.description }))}
+                caption="Models"
+                hint="The deployments, routers and aliases this key may call; only those its tags reach are offered. A router routes only to those of its models picked here too. All: every model its tags reach."
+                values={allowedModels}
+                onChange={setAllowedModels}
+                options={modelOptions}
               />
-            )}
-            <Toggle
-              caption="Web search"
-              hint={
-                projectForbidsSearch
-                  ? "The key's project forbids web search, so none of its keys can turn it on."
-                  : "Whether requests may have the model search the web, billed per search at the deployment's price. Off, they are refused."
-              }
-              checked={webSearch && !projectForbidsSearch}
-              onChange={setWebSearch}
-              disabled={projectForbidsSearch}
-            />
-          </div>
-        )}
+              <TagPicker
+                caption="Tags"
+                hint={
+                  allowedTags.length
+                    ? "This key can use deployments, routers, MCP servers and A2A agents without tags, and those whose tags are all selected here: with eu, only the EU deployments of each model."
+                    : "No tags selected: this key can use every deployment, MCP server and A2A agent, except those limited to other projects."
+                }
+                options={tags}
+                value={allowedTags}
+                onChange={setAllowedTags}
+              />
+              {guardrails.length > 0 && (
+                <MultiSelect
+                  caption="Guardrails"
+                  hint={
+                    projectGuardrails.length
+                      ? `Every request of this key goes through these, and through its project's: ${projectGuardrails.join(", ")}.`
+                      : "Every request of this key goes through these, whatever it asks for. Requests can ask for more by name."
+                  }
+                  values={guardrailIds}
+                  onChange={setGuardrailIds}
+                  none="None"
+                  options={guardrails.map((g) => ({ value: g.id, label: g.name, note: g.description }))}
+                />
+              )}
+              <Toggle
+                caption="Web search"
+                hint={
+                  projectForbidsSearch
+                    ? "The key's project forbids web search, so none of its keys can turn it on."
+                    : "Whether requests may have the model search the web, billed per search at the deployment's price. Off, they are refused."
+                }
+                checked={webSearch && !projectForbidsSearch}
+                onChange={setWebSearch}
+                disabled={projectForbidsSearch}
+              />
+            </>
+          )}
+        </div>
         {inference && (
           <div className={panel("limits")}>
             <div className="row">
