@@ -883,22 +883,22 @@ function KeyForm({
                   options={guardrails.map((g) => ({ value: g.id, label: g.name, note: g.description }))}
                 />
               )}
-              <Toggle
-                caption="Web search"
-                hint={
-                  projectForbidsSearch
-                    ? "The key's project forbids web search, so none of its keys can turn it on."
-                    : "Whether requests may have the model search the web, billed per search at the deployment's price. Off, they are refused."
-                }
-                checked={webSearch && !projectForbidsSearch}
-                onChange={setWebSearch}
-                disabled={projectForbidsSearch}
-              />
             </>
           )}
         </div>
         {inference && (
           <div className={panel("limits")}>
+            <Toggle
+              caption="Web search"
+              hint={
+                projectForbidsSearch
+                  ? "The key's project forbids web search, so none of its keys can turn it on."
+                  : "Whether requests may have the model search the web, billed per search at the deployment's price. Off, they are refused."
+              }
+              checked={webSearch && !projectForbidsSearch}
+              onChange={setWebSearch}
+              disabled={projectForbidsSearch}
+            />
             <div className="row">
               <TextInput
                 caption="Requests / minute"
