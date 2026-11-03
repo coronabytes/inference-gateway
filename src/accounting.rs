@@ -280,7 +280,7 @@ impl Tracker {
     /// The whole usage. Web searches a stream reported before it (see `searched`) are kept.
     pub fn set_usage(&mut self, u: Usage) {
         self.usage = Usage { search_units: self.usage.search_units.max(u.search_units), ..u };
-        self.usage_reported |= u.total() > 0 || u.search_units > 0;
+        self.usage_reported |= u.total() > 0 || u.search_units > 0 || u.audio_seconds > 0 || u.characters > 0;
     }
 
     /// Web searches a passthrough stream reported apart from its usage (Chat Completions).
@@ -714,7 +714,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             timeout: Duration::from_secs(1),
-            pricing: Pricing { standard: Rates::new(1.0, 2.0, None, None), long_context: None, per_k_searches },
+            pricing: Pricing { standard: Rates::new(1.0, 2.0, None, None), per_k_searches, ..Default::default() },
             tags: vec![],
             project_ids: vec![],
             catalog: None,

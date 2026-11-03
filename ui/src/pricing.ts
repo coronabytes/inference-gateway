@@ -2,6 +2,11 @@
 
 const perM = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? Number((v * 1e6).toPrecision(8)) : null);
 const perK = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? Number((v * 1000).toPrecision(8)) : null);
+const scale = (v: unknown, by: number): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? Number((v * by).toPrecision(8)) : null;
+/** Characters of text spoken per second, to price speech models the catalog prices per second of
+ *  audio (gpt-4o-mini-tts) per character, as the gateway bills them (`CHARACTERS_PER_SECOND` in prices.rs). */
+const CHARACTERS_PER_SECOND = 15;
 const int = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 export interface Tier {
@@ -26,6 +31,12 @@ export interface CatalogPrices extends Tier {
    * for one: Bedrock has none (see `Caps::of` in api/models.rs).
    */
   perKWebSearches: number | null;
+  /** Transcription models: the audio input's own token price (USD per 1M), where it has one. */
+  audioInput: number | null;
+  /** Transcription models: USD per minute of audio (LiteLLM prices it per second). */
+  perAudioMinute: number | null;
+  /** Speech models: USD per 1M characters, or else converted from a price per second of audio. */
+  perMCharacters: number | null;
 }
 
 const LONG_INPUT = /^input_cost_per_token_above_(\d+)k_tokens$/;
@@ -61,6 +72,9 @@ export function catalogPrices(data: Record<string, unknown>): CatalogPrices {
       data.supports_web_search === true && !String(data.litellm_provider ?? "").startsWith("bedrock")
         ? perK((data.search_context_cost_per_query as Record<string, unknown> | undefined)?.search_context_size_medium)
         : null,
+    audioInput: perM(data.input_cost_per_audio_token),
+    perAudioMinute: scale(data.input_cost_per_second, 60),
+    perMCharacters: scale(data.input_cost_per_character, 1e6) ?? scale(data.output_cost_per_second, 1e6 / CHARACTERS_PER_SECOND),
   };
 }
 
@@ -77,6 +91,10 @@ export interface DeploymentPrices {
   long_cache_write_cost_per_mtok: number | null;
   /** USD per 1,000 searches: rerank queries, or the web searches a chat model runs. */
   cost_per_k_searches: number | null;
+  /** USD per minute of input audio, for transcription models priced by the minute. */
+  cost_per_audio_minute: number | null;
+  /** USD per 1M characters of input text, for speech models. */
+  cost_per_m_characters: number | null;
 }
 
 export const PRICE_FIELDS: { key: keyof DeploymentPrices; label: string }[] = [
@@ -90,13 +108,16 @@ export const PRICE_FIELDS: { key: keyof DeploymentPrices; label: string }[] = [
   { key: "long_cache_read_cost_per_mtok", label: "long cache read" },
   { key: "long_cache_write_cost_per_mtok", label: "long cache write" },
   { key: "cost_per_k_searches", label: "per 1K searches" },
+  { key: "cost_per_audio_minute", label: "per audio minute" },
+  { key: "cost_per_m_characters", label: "per 1M characters" },
 ];
 
 /**
  * The prices a deployment of `mode` gets from a catalog entry, exactly as the deployment form
  * fills them in: cache prices stay empty when they equal the input price, embedding and rerank
  * models have no output price, only chat models get cache and long-context prices, and rerank
- * models a price per search, chat models one per web search.
+ * models a price per search, chat models one per web search. Transcription models get a price per
+ * minute of audio besides their token prices; speech models only a price per character.
  */
 export function deploymentPrices(data: Record<string, unknown>, mode: string): DeploymentPrices {
   const p = catalogPrices(data);
@@ -104,8 +125,8 @@ export function deploymentPrices(data: Record<string, unknown>, mode: string): D
   const differs = (v: number | null, base: number | null) => (v !== null && v !== base ? v : null);
   const long = chat && p.long && p.long.input !== null && p.long.output !== null ? p.long : null;
   return {
-    input_cost_per_mtok: p.input ?? 0,
-    output_cost_per_mtok: mode === "embedding" || mode === "rerank" ? 0 : (p.output ?? 0),
+    input_cost_per_mtok: mode === "speech" ? 0 : ((mode === "transcription" ? p.audioInput : null) ?? p.input ?? 0),
+    output_cost_per_mtok: mode === "embedding" || mode === "rerank" || mode === "speech" ? 0 : (p.output ?? 0),
     cache_read_cost_per_mtok: chat ? differs(p.cacheRead, p.input) : null,
     cache_write_cost_per_mtok: chat ? differs(p.cacheWrite, p.input) : null,
     long_context_threshold: long ? long.threshold : null,
@@ -114,6 +135,8 @@ export function deploymentPrices(data: Record<string, unknown>, mode: string): D
     long_cache_read_cost_per_mtok: long ? differs(long.cacheRead, long.input) : null,
     long_cache_write_cost_per_mtok: long ? differs(long.cacheWrite, long.input) : null,
     cost_per_k_searches: mode === "rerank" ? p.perKSearches : chat ? p.perKWebSearches : null,
+    cost_per_audio_minute: mode === "transcription" ? p.perAudioMinute : null,
+    cost_per_m_characters: mode === "speech" ? p.perMCharacters : null,
   };
 }
 
@@ -161,6 +184,8 @@ export function catalogScope(provider: string, mode: string): { providers: strin
     embedding: ["embedding"],
     decision: ["evaluation"],
     rerank: ["rerank"],
+    transcription: ["audio_transcription"],
+    speech: ["audio_speech"],
   };
   return { providers: providers[provider] ?? [], modes: modes[mode] ?? [] };
 }

@@ -2188,6 +2188,29 @@ td.marks .guardrail-mark:last-child {
   field-sizing: content;
   max-height: 164px;
 }
+/* A message box with a button inside at its right end (MessageInput's `action`). */
+.composer .message-input {
+  flex: 1;
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.composer .message-input textarea {
+  padding-right: 40px;
+}
+.message-input-action {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+}
+.message-input-action .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+.message-input-action .icon-btn[aria-pressed="true"] {
+  background: var(--wash);
+  color: var(--text-primary);
+}
 
 /* icon buttons & confirm dialog */
 .icon-btn {
@@ -2543,6 +2566,72 @@ td.num > .stat-pairs {
 }
 .rerank-results .prob-row {
   grid-template-columns: minmax(120px, 3fr) minmax(60px, 1fr) 52px;
+}
+/* Audio panels (PlaygroundPanels.tsx): where the audio comes from, a player, and the transcript. */
+.audio-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.audio-source button svg {
+  vertical-align: -2px;
+}
+.audio-preview {
+  width: 100%;
+  margin: 8px 0;
+}
+.transcript {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+/* A speech deployment's voices (VoiceEditor.tsx): id, name, default and remove per row; a long list scrolls. */
+.voice-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.voice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 112px auto;
+  gap: 8px;
+  align-items: center;
+}
+.voice-default {
+  justify-self: center;
+  white-space: nowrap;
+}
+.voice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+@media (max-width: 700px) {
+  .voice-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .voice-row > :nth-child(2) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+/* A reply's Read aloud button, at the start of its meta line. */
+.bubble-meta .read-aloud {
+  width: 22px;
+  height: 22px;
+  margin: -4px 4px -4px -4px;
+  vertical-align: middle;
+}
+.bubble-meta .read-aloud[aria-pressed="true"] {
+  background: var(--wash);
+  color: var(--text-primary);
 }
 .prob-row .meter {
   height: 6px;

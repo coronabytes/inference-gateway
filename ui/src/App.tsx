@@ -18,11 +18,19 @@ const Models = lazy(() => import("./pages/Models").then((m) => ({ default: m.Mod
 const Playground = lazy(() => import("./pages/Playground").then((m) => ({ default: m.Playground })));
 const Tools = lazy(() => import("./pages/Tools").then((m) => ({ default: m.Tools })));
 
-type PageId = "metrics" | "logs" | "access" | "models" | "tools" | "cluster";
+type PageId = "metrics" | "logs" | "access" | "models" | "playground" | "tools" | "cluster";
 
 const PAGES: Record<PageId, { label: string; el: ReactNode }> = {
   metrics: { label: "Metrics", el: <Metrics /> },
   models: { label: "Models", el: <Models /> },
+  playground: {
+    label: "Playground",
+    el: (
+      <div className="page">
+        <Playground />
+      </div>
+    ),
+  },
   tools: { label: "Tools", el: <Tools /> },
   access: { label: "Access", el: <Keys /> },
   logs: { label: "Logs", el: <Logs /> },
@@ -33,14 +41,7 @@ const PAGES: Record<PageId, { label: string; el: ReactNode }> = {
  * pages keep their addresses, so links work for admins and users alike. */
 const USER_PAGES: Partial<Record<PageId, { label: string; el: ReactNode }>> = {
   metrics: PAGES.metrics,
-  models: {
-    label: "Playground",
-    el: (
-      <div className="page">
-        <Playground />
-      </div>
-    ),
-  },
+  playground: PAGES.playground,
   access: { label: "Keys", el: <Keys /> },
   logs: {
     label: "Request log",
@@ -55,7 +56,7 @@ const USER_PAGES: Partial<Record<PageId, { label: string; el: ReactNode }>> = {
 /** Former page addresses (pages since renamed or made tabs of another); old links and bookmarks still open them. */
 const MOVED: Record<string, string> = {
   credentials: "models/credentials",
-  playground: "models/playground",
+  "models/playground": "playground",
   "cluster/requests": "logs",
   "cluster/audit": "logs/audit",
   settings: "cluster/settings",
@@ -68,8 +69,9 @@ const MOVED: Record<string, string> = {
 /** The page in the address (`#/page` or `#/page/tab`). */
 function currentPage(): PageId {
   // A page may take parameters after it: `#/page?name=value`.
-  const h = window.location.hash.replace(/^#\/?/, "").split("?")[0];
-  if (h in MOVED) window.history.replaceState(null, "", `#/${MOVED[h]}`);
+  const [h, query] = window.location.hash.replace(/^#\/?/, "").split("?");
+  // Moved pages keep their parameters (the playground's model and key).
+  if (h in MOVED) window.history.replaceState(null, "", `#/${MOVED[h]}${query === undefined ? "" : `?${query}`}`);
   const page = (MOVED[h] ?? h).split("/")[0];
   return (page in PAGES ? page : "metrics") as PageId;
 }

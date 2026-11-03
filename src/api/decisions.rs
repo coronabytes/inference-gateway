@@ -375,6 +375,8 @@ fn usage(resp: &Value) -> Usage {
         cache_write_tokens: cache_write,
         reasoning_tokens: 0,
         search_units: 0,
+        audio_seconds: 0,
+        characters: 0,
     }
 }
 

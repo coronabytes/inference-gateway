@@ -134,6 +134,21 @@ function RequestDetails({ r, routed }: { r: LogRow; routed: boolean }) {
               {compact(r.output_tokens)} out
             </td>
           </tr>
+          {r.audio_seconds > 0 && (
+            <tr>
+              <th>Audio</th>
+              <td>
+                {r.audio_seconds >= 60 ? `${Math.floor(r.audio_seconds / 60)} min ${r.audio_seconds % 60} s` : `${r.audio_seconds} s`}{" "}
+                transcribed
+              </td>
+            </tr>
+          )}
+          {r.characters > 0 && (
+            <tr>
+              <th>Speech</th>
+              <td>{r.characters.toLocaleString()} characters spoken</td>
+            </tr>
+          )}
           {r.searches > 0 && (
             <tr>
               <th>{r.api === "rerank" ? "Searches" : "Web searches"}</th>

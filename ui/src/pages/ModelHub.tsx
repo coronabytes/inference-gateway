@@ -29,6 +29,8 @@ import {
   PlayIcon,
   ReasoningIcon,
   RerankIcon,
+  MicIcon,
+  SpeakerIcon,
   RouterIcon,
   TilesIcon,
   TokenPrices,
@@ -54,6 +56,8 @@ const MODE_ICON: Record<string, ReactNode> = {
   embedding: <EmbeddingIcon />,
   decision: <DecisionIcon />,
   rerank: <RerankIcon />,
+  transcription: <MicIcon />,
+  speech: <SpeakerIcon />,
   router: <RouterIcon />,
 };
 
@@ -155,6 +159,16 @@ function priceOptions(m: HubModel): PriceOption[] {
   );
 }
 
+/** The price audio models bill by, other than tokens: speech per 1M characters, transcription per
+ *  minute of audio (where its deployments have such a price; gpt-4o-transcribe bills tokens). */
+function audioPrice(m: HubModel): { unit: string; of: (p: HubPrices) => number } | null {
+  if (m.mode === "speech") return { unit: "per 1M characters", of: (p) => p.per_m_characters };
+  if (m.mode === "transcription" && m.deployments.some((d) => d.prices.per_audio_minute > 0)) {
+    return { unit: "per minute", of: (p) => p.per_audio_minute };
+  }
+  return null;
+}
+
 /** Rerank models bill searches; chat models may bill the web searches they run. */
 const searches = (m: HubModel) => m.mode === "rerank" || (m.mode === "chat" && m.deployments.some((d) => d.prices.per_k_searches > 0));
 
@@ -168,6 +182,15 @@ function PriceSummary({ model: m }: { model: HubModel }) {
       <div className="stat-pairs num" title="$ per 1K searches">
         <span>{range(ps.map((p) => p.per_k_searches))}</span>
         <span className="muted small">per 1K searches</span>
+      </div>
+    );
+  }
+  const audio = audioPrice(m);
+  if (audio) {
+    return (
+      <div className="stat-pairs num" title={`$ ${audio.unit}`}>
+        <span>{range(ps.map(audio.of))}</span>
+        <span className="muted small">{audio.unit}</span>
       </div>
     );
   }
@@ -254,7 +277,7 @@ const slug = (s: string) =>
 function openPlayground(model: string, key: string) {
   const params = new URLSearchParams({ model });
   if (key) params.set("key", key);
-  window.location.hash = `#/models/playground?${params}`;
+  window.location.hash = `#/playground?${params}`;
 }
 
 /** The play button of a model's row or tile. */
@@ -769,6 +792,14 @@ function TilePrice({ model: m }: { model: HubModel }) {
       </div>
     );
   }
+  const audio = audioPrice(m);
+  if (audio) {
+    return (
+      <div className="hub-tile-price small">
+        <span className="mono">{of(audio.of)}</span> {audio.unit.replace(/^per /, "/ ")}
+      </div>
+    );
+  }
   const cached = m.mode === "embedding" ? "–" : of((p) => p.cache_read);
   return (
     <div className="hub-tile-price small" title={cached !== "–" ? `Cached input ${cached} / 1M` : undefined}>
@@ -1010,8 +1041,9 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
             <th className="num">Priority</th>
             <th className="num">Weight</th>
             {m.mode === "rerank" && <th className="num">Per 1K searches</th>}
-            <th className="num">Input</th>
-            {m.mode !== "embedding" && m.mode !== "rerank" && <th className="num">Output</th>}
+            {m.mode === "transcription" && <th className="num">Per minute</th>}
+            {m.mode === "speech" ? <th className="num">Per 1M characters</th> : <th className="num">Input</th>}
+            {m.mode !== "embedding" && m.mode !== "rerank" && m.mode !== "speech" && <th className="num">Output</th>}
             {chat && <th className="num">Cache read</th>}
             {chat && <th className="num">Cache write</th>}
             {chat && searches(m) && <th className="num">Per 1K web searches</th>}
@@ -1032,8 +1064,13 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
                 </td>
                 <td className="num">{d.weight}</td>
                 {m.mode === "rerank" && <td className="num">{price(d.prices.per_k_searches)}</td>}
-                <td className="num">{price(d.prices.input)}</td>
-                {m.mode !== "embedding" && m.mode !== "rerank" && <td className="num">{price(d.prices.output)}</td>}
+                {m.mode === "transcription" && <td className="num">{price(d.prices.per_audio_minute)}</td>}
+                {m.mode === "speech" ? (
+                  <td className="num">{price(d.prices.per_m_characters)}</td>
+                ) : (
+                  <td className="num">{price(d.prices.input)}</td>
+                )}
+                {m.mode !== "embedding" && m.mode !== "rerank" && m.mode !== "speech" && <td className="num">{price(d.prices.output)}</td>}
                 {chat && <td className="num">{price(d.prices.cache_read)}</td>}
                 {chat && <td className="num">{price(d.prices.cache_write)}</td>}
                 {chat && searches(m) && <td className="num">{d.prices.per_k_searches ? price(d.prices.per_k_searches) : "–"}</td>}

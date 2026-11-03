@@ -175,7 +175,13 @@ pub struct Prices {
     pub long_cache_read_cost_per_mtok: Option<f64>,
     pub long_cache_write_cost_per_mtok: Option<f64>,
     pub cost_per_k_searches: Option<f64>,
+    pub cost_per_audio_minute: Option<f64>,
+    pub cost_per_m_characters: Option<f64>,
 }
+
+/// Characters of text spoken per second, to price speech models the catalog prices per second
+/// of audio (gpt-4o-mini-tts) per character, as the gateway bills them: about 900 a minute.
+const CHARACTERS_PER_SECOND: f64 = 15.0;
 
 impl Prices {
     fn of(d: &DeploymentRow) -> Self {
@@ -190,6 +196,8 @@ impl Prices {
             long_cache_read_cost_per_mtok: d.long_cache_read_cost_per_mtok,
             long_cache_write_cost_per_mtok: d.long_cache_write_cost_per_mtok,
             cost_per_k_searches: d.cost_per_k_searches,
+            cost_per_audio_minute: d.cost_per_audio_minute,
+            cost_per_m_characters: d.cost_per_m_characters,
         }
     }
 
@@ -197,7 +205,8 @@ impl Prices {
     /// deployment form fills them in (`deploymentPrices` in `ui/src/pricing.ts`): cache prices stay
     /// empty when they equal the input price, embedding and rerank models have no output price,
     /// only chat models get cache and long-context prices, and rerank models a price per search,
-    /// chat models one per web search.
+    /// chat models one per web search. Transcription models get a price per minute of audio besides
+    /// their token prices; speech models only a price per character.
     fn from_catalog(data: &Value, mode: &str) -> Self {
         // LiteLLM prices per token and per query; to 8 significant digits, as the console rounds.
         let scaled = |v: Option<&Value>, by: f64| v.and_then(Value::as_f64).and_then(|v| format!("{:.7e}", v * by).parse::<f64>().ok());
@@ -219,11 +228,17 @@ impl Prices {
                 let (input, output) = (tier("input_cost_per_token")?, tier("output_cost_per_token")?);
                 Some((k * 1000, input, output, tier("cache_read_input_token_cost"), tier("cache_creation_input_token_cost")))
             });
+        // Transcription models bill their input audio, at its own token price where it has one.
+        let audio_input = if mode == "transcription" { per_m("input_cost_per_audio_token") } else { None };
         let web_search = data.get("supports_web_search") == Some(&Value::Bool(true))
             && !data.get("litellm_provider").and_then(Value::as_str).unwrap_or("").starts_with("bedrock");
         Self {
-            input_cost_per_mtok: input.unwrap_or(0.0),
-            output_cost_per_mtok: if mode == "embedding" || mode == "rerank" { 0.0 } else { per_m("output_cost_per_token").unwrap_or(0.0) },
+            input_cost_per_mtok: if mode == "speech" { 0.0 } else { audio_input.or(input).unwrap_or(0.0) },
+            output_cost_per_mtok: if matches!(mode, "embedding" | "rerank" | "speech") {
+                0.0
+            } else {
+                per_m("output_cost_per_token").unwrap_or(0.0)
+            },
             cache_read_cost_per_mtok: if chat { differs(cache_read, input) } else { None },
             cache_write_cost_per_mtok: if chat { differs(cache_write, input) } else { None },
             long_context_threshold: long.map(|l| l.0),
@@ -236,11 +251,17 @@ impl Prices {
                 "chat" if web_search => scaled(data.pointer("/search_context_cost_per_query/search_context_size_medium"), 1000.0),
                 _ => None,
             },
+            cost_per_audio_minute: if mode == "transcription" { scaled(data.get("input_cost_per_second"), 60.0) } else { None },
+            cost_per_m_characters: match mode {
+                "speech" => scaled(data.get("input_cost_per_character"), 1e6)
+                    .or_else(|| scaled(data.get("output_cost_per_second"), 1e6 / CHARACTERS_PER_SECOND)),
+                _ => None,
+            },
         }
     }
 
     /// The prices as billed, field by field: an empty cache price is the input price of its tier.
-    fn billed(&self) -> [Option<f64>; 10] {
+    fn billed(&self) -> [Option<f64>; 12] {
         let long = self.long_context_threshold.is_some();
         [
             Some(self.input_cost_per_mtok),
@@ -253,6 +274,8 @@ impl Prices {
             if long { self.long_cache_read_cost_per_mtok.or(self.long_input_cost_per_mtok) } else { None },
             if long { self.long_cache_write_cost_per_mtok.or(self.long_input_cost_per_mtok) } else { None },
             self.cost_per_k_searches,
+            self.cost_per_audio_minute,
+            self.cost_per_m_characters,
         ]
     }
 
@@ -518,6 +541,25 @@ mod tests {
         );
         let rerank = Prices::from_catalog(&json!({ "input_cost_per_query": 0.002 }), "rerank");
         assert_eq!(rerank.cost_per_k_searches, Some(2.0));
+    }
+
+    #[test]
+    fn audio_catalog_prices() {
+        let whisper = Prices::from_catalog(&json!({ "input_cost_per_second": 0.0001, "output_cost_per_second": 0.0001 }), "transcription");
+        assert_eq!((whisper.cost_per_audio_minute, whisper.input_cost_per_mtok, whisper.output_cost_per_mtok), (Some(0.006), 0.0, 0.0));
+        let gpt = Prices::from_catalog(
+            &json!({ "input_cost_per_audio_token": 6e-6, "input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5 }),
+            "transcription",
+        );
+        assert_eq!((gpt.input_cost_per_mtok, gpt.output_cost_per_mtok, gpt.cost_per_audio_minute), (6.0, 10.0, None));
+        let tts = Prices::from_catalog(&json!({ "input_cost_per_character": 1.5e-5 }), "speech");
+        assert_eq!((tts.cost_per_m_characters, tts.input_cost_per_mtok), (Some(15.0), 0.0));
+        // Priced per second of audio: about 15 characters a second.
+        let mini = Prices::from_catalog(
+            &json!({ "input_cost_per_token": 6e-7, "output_cost_per_token": 1e-5, "output_cost_per_second": 0.00025 }),
+            "speech",
+        );
+        assert_eq!((mini.cost_per_m_characters, mini.output_cost_per_mtok), (Some(16.666667), 0.0));
     }
 
     #[test]

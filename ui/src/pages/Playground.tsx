@@ -1,10 +1,11 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminFetch, api, GUARDRAILS_HEADER, type Mode, type NamedItem, type PlaygroundOptions, type ReasoningEffort } from "../api";
+import { isSilent, microphoneError, SILENT_RECORDING, speak, transcribe, useLiveTranscription, usePlayer, useRecorder } from "../audio";
 import { Banner, Button, FileButton, MenuButton, MessageInput, MultiSelect, SplitButton, TextArea } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { LabelEditor } from "../components/LabelInput";
 import { SearchSelect } from "../components/SearchSelect";
-import { AttachIcon, EffortIcon, ErrorBanner, GlobeIcon, PlugIcon } from "../components/ui";
+import { AttachIcon, EffortIcon, ErrorBanner, GlobeIcon, MicIcon, PlugIcon, SpeakerIcon, StopIcon } from "../components/ui";
 import { EFFORTS } from "../efforts";
 import { bytes, compact, ms } from "../format";
 import { labelHeaders, type Labels } from "../labels";
@@ -12,7 +13,7 @@ import { sse } from "../sse";
 import { KeySignIns, takeSignInResult } from "./KeySignIns";
 import { MODES } from "./DeploymentForm";
 import { AgentPanel } from "./PlaygroundAgent";
-import { DecisionPanel, EmbeddingPanel, RerankPanel } from "./PlaygroundPanels";
+import { DecisionPanel, EmbeddingPanel, LiveTranscriptionPanel, RerankPanel, SpeechPanel, TranscriptionPanel } from "./PlaygroundPanels";
 import {
   APIS,
   applyEvent,
@@ -175,7 +176,19 @@ function McpItems({ items }: { items: McpView[] }) {
  * One message with its files, MCP items, sources and meta line. Memoized: a reply's updates replace
  * only the last message, so the finished ones above it do not render again while it streams.
  */
-const Bubble = memo(function Bubble({ m }: { m: Msg }) {
+const Bubble = memo(function Bubble({
+  m,
+  index,
+  reading,
+  onReadAloud,
+}: {
+  m: Msg;
+  index: number;
+  /** This reply's audio is being made, or plays. */
+  reading?: "loading" | "playing";
+  /** Reads a reply aloud, or stops it; absent without a speech model. */
+  onReadAloud?: (index: number, text: string) => void;
+}) {
   return (
     <div className={`bubble-row ${m.role}`}>
       <div className={`bubble ${m.role}${m.error ? " failed" : ""}${m.json ? " json" : ""}`}>
@@ -222,6 +235,19 @@ const Bubble = memo(function Bubble({ m }: { m: Msg }) {
       )}
       {m.meta && (
         <div className="bubble-meta" title={m.meta.requestId ? `x-request-id: ${m.meta.requestId}` : undefined}>
+          {onReadAloud && m.role === "assistant" && !!m.text && (
+            <button
+              type="button"
+              className="icon-btn read-aloud"
+              aria-label={reading === "playing" ? "Stop reading" : "Read aloud"}
+              title={reading === "playing" ? "Stop reading" : reading === "loading" ? "Making the audio…" : "Read aloud"}
+              aria-pressed={reading === "playing"}
+              disabled={reading === "loading"}
+              onClick={() => onReadAloud(index, m.text)}
+            >
+              {reading === "playing" ? <StopIcon /> : <SpeakerIcon />}
+            </button>
+          )}
           {APIS.find((a) => a.id === m.meta!.api)?.label} · {m.meta.model} · {ms(m.meta.latency)}
           {m.meta.input != null && ` · ${compact(m.meta.input)} in / ${compact(m.meta.output ?? 0)} out`}
           {!!m.meta.searches && ` · ${m.meta.searches} web search${m.meta.searches === 1 ? "" : "es"}`}
@@ -241,7 +267,7 @@ const Bubble = memo(function Bubble({ m }: { m: Msg }) {
   );
 });
 
-/** The model and key the address asks for, as the hub's play button links them: `#/models/playground?model=…&key=…`. */
+/** The model and key the address asks for, as the hub's play button links them: `#/playground?model=…&key=…`. */
 function askedInHash(): { model: string | null; key: string | null } {
   const h = window.location.hash;
   const params = new URLSearchParams(h.includes("?") ? h.slice(h.indexOf("?") + 1) : "");
@@ -308,6 +334,14 @@ export function Playground() {
   /** Guardrails to apply on top of those enforced on the key. */
   const [pickedGuardrails, setPickedGuardrails] = useState<string[]>([]);
   const abort = useRef<AbortController | null>(null);
+  // Dictation and reading aloud, with the key's speech to text and text to speech models.
+  const [transcribing, setTranscribing] = useState(false);
+  const [loadingAudio, setLoadingAudio] = useState<number | null>(null);
+  const recorder = useRecorder();
+  const liveMic = useLiveTranscription();
+  /** The message box's text before live dictation began: the words heard are added after it. */
+  const beforeLive = useRef("");
+  const player = usePlayer();
   const scroller = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
 
@@ -365,6 +399,13 @@ export function Playground() {
   // Sorted by name; the A2A agents after the models.
   const models = useMemo(() => [...options.models.map((m) => m.name), ...options.a2a_agents.map((a) => AGENT + a.name)], [options]);
   const chosen = options.models.find((m) => m.name === model);
+  // The key's first speech to text and text to speech models, for dictating and reading aloud.
+  // Dictation streams to a realtime model, where the key has one, so words appear as they are said;
+  // otherwise it records, then sends the recording to a transcription model.
+  const sttLive = options.models.find((m) => m.mode === "transcription" && m.realtime)?.name;
+  const stt = sttLive ?? options.models.find((m) => m.mode === "transcription")?.name;
+  const dictating = recorder.recording || liveMic.live;
+  const tts = options.models.find((m) => m.mode === "speech")?.name;
   /** The A2A agent chosen instead of a model. */
   const agent = model.startsWith(AGENT) ? model.slice(AGENT.length) : null;
   const mode: Mode | "agent" = agent ? "agent" : (chosen?.mode ?? "chat");
@@ -400,7 +441,10 @@ export function Playground() {
     if (wanted && models.includes(wanted)) {
       wantedModel.current = null;
       setModel(wanted);
-    } else if (!models.includes(model)) setModel(models[0] ?? "");
+    } else if (!models.includes(model)) {
+      // A chat model first: the others, such as speech models, have panels of their own.
+      setModel(options.models.find((m) => m.mode === "chat")?.name ?? models[0] ?? "");
+    }
   }, [models, model]);
 
   // A server-side conversation belongs to one key and API; start fresh when they change.
@@ -532,8 +576,86 @@ export function Playground() {
     }
   };
 
+  /** Reads a reply aloud with the speech model, or stops it while it plays. A ref, so the bubbles keep one callback. */
+  const readAloud = useRef<(index: number, text: string) => void>(() => {});
+  readAloud.current = async (index, text) => {
+    if (player.playing === String(index)) return player.stop();
+    if (!tts || !keyId) return;
+    player.stop();
+    setLoadingAudio(index);
+    try {
+      const s = await speak(keyId, tts, text, labels);
+      await player.play(String(index), s.audio);
+    } catch (e) {
+      setError(`Could not read the reply aloud: ${(e as Error).message}`);
+    } finally {
+      setLoadingAudio((i) => (i === index ? null : i));
+    }
+  };
+  const onReadAloud = useCallback((index: number, text: string) => readAloud.current(index, text), []);
+
+  /** Starts recording, or stops and puts the transcript into the message box. */
+  const dictate = async () => {
+    if (sttLive) return dictateLive(sttLive);
+    if (!recorder.recording) {
+      try {
+        player.stop();
+        await recorder.start();
+      } catch (e) {
+        setError(microphoneError(e));
+      }
+      return;
+    }
+    const audio = await recorder.stop();
+    if (!audio || !stt) return;
+    setTranscribing(true);
+    try {
+      // Silence would come back as an empty transcript, with nothing to say why.
+      if (await isSilent(audio)) return setError(SILENT_RECORDING);
+      const text = (await transcribe(keyId, stt, audio, labels)).text.trim();
+      if (text) setInput((cur) => (cur.trim() ? `${cur.trimEnd()} ${text}` : text));
+      composer.current?.focus();
+    } catch (e) {
+      setError(`Could not transcribe the recording: ${(e as Error).message}`);
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  /** Live dictation: the words go into the message box as they are heard; stopping takes the final transcript. */
+  const dictateLive = async (model: string) => {
+    const joined = (text: string) => {
+      const before = beforeLive.current;
+      return before.trim() ? `${before.trimEnd()} ${text.trimStart()}` : text.trimStart();
+    };
+    if (!liveMic.live) {
+      beforeLive.current = input;
+      try {
+        player.stop();
+        await liveMic.start(
+          keyId,
+          model,
+          (text) => setInput(joined(text)),
+          (message) => setError(`Live dictation: ${message}`),
+        );
+      } catch (e) {
+        setError((e as Error).name ? microphoneError(e) : String(e));
+      }
+      return;
+    }
+    setTranscribing(true);
+    try {
+      const transcript = await liveMic.stop();
+      if (transcript?.trim()) setInput(joined(transcript));
+      composer.current?.focus();
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
   const clear = () => {
     abort.current?.abort();
+    player.stop();
     setMessages([]);
     setPreviousId(null);
     setLastSent(null);
@@ -671,6 +793,16 @@ export function Playground() {
       {mode === "embedding" && model && <EmbeddingPanel key={model} keyId={keyId} keyName={key?.name} model={model} labels={labels} />}
       {mode === "decision" && model && <DecisionPanel key={model} keyId={keyId} keyName={key?.name} model={model} labels={labels} />}
       {mode === "rerank" && model && <RerankPanel key={model} keyId={keyId} keyName={key?.name} model={model} labels={labels} />}
+      {mode === "transcription" &&
+        model &&
+        (chosen?.realtime ? (
+          <LiveTranscriptionPanel key={model} keyId={keyId} keyName={key?.name} model={model} labels={labels} />
+        ) : (
+          <TranscriptionPanel key={model} keyId={keyId} keyName={key?.name} model={model} labels={labels} />
+        ))}
+      {mode === "speech" && model && (
+        <SpeechPanel key={model} keyId={keyId} keyName={key?.name} model={model} labels={labels} voices={chosen?.voices ?? []} />
+      )}
       {agent && <AgentPanel key={`${keyId} ${agent}`} keyId={keyId} keyName={key?.name} agent={agent} labels={labels} />}
       {mode === "chat" && (
         <>
@@ -717,7 +849,13 @@ export function Playground() {
                 </div>
               )}
               {messages.map((m, i) => (
-                <Bubble key={i} m={m} />
+                <Bubble
+                  key={i}
+                  m={m}
+                  index={i}
+                  onReadAloud={tts ? onReadAloud : undefined}
+                  reading={player.playing === String(i) ? "playing" : loadingAudio === i ? "loading" : undefined}
+                />
               ))}
             </div>
             {messages.length === 0 && models.length > 0 && (
@@ -819,6 +957,32 @@ export function Playground() {
                 placeholder={models.length ? "Message… (Enter to send, Shift+Enter for a new line)" : "Add a model first"}
                 disabled={!models.length}
                 aria-label="Message"
+                action={
+                  stt && (
+                    <Button
+                      className="icon-btn"
+                      aria-pressed={dictating}
+                      aria-label={dictating ? "Stop dictating" : "Dictate"}
+                      title={
+                        !(sttLive ? liveMic.supported : recorder.supported)
+                          ? "This browser cannot record audio."
+                          : dictating
+                            ? sttLive
+                              ? "Stop dictating"
+                              : "Stop, and put the transcript into the message box"
+                            : transcribing
+                              ? "Transcribing…"
+                              : sttLive
+                                ? `Dictate: your words appear as you speak, transcribed live by ${stt}`
+                                : `Dictate: record a message, transcribed by ${stt}`
+                      }
+                      onClick={dictate}
+                      disabled={!(sttLive ? liveMic.supported : recorder.supported) || transcribing}
+                    >
+                      {dictating ? <StopIcon /> : <MicIcon />}
+                    </Button>
+                  )
+                }
               />
               <SplitButton
                 variant={busy ? undefined : "primary"}

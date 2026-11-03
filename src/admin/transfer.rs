@@ -193,10 +193,16 @@ fn deployment_doc(d: &DeploymentRow, credential: &str, projects: &HashMap<Uuid, 
         "base_model": d.base_model, "tags": d.tags, "enabled": d.enabled,
     });
     match v {
-        // Only rerank deployments have it, and only some deployments projects; left out otherwise.
+        // Only some deployments have prices per search, minute or character, and projects; left out otherwise.
         Value::Object(mut m) => {
             if let Some(p) = d.cost_per_k_searches {
                 m.insert("cost_per_k_searches".into(), p.into());
+            }
+            if let Some(p) = d.cost_per_audio_minute {
+                m.insert("cost_per_audio_minute".into(), p.into());
+            }
+            if let Some(p) = d.cost_per_m_characters {
+                m.insert("cost_per_m_characters".into(), p.into());
             }
             if !d.project_ids.is_empty() {
                 let mut names: Vec<&str> = d.project_ids.iter().filter_map(|id| projects.get(id).map(String::as_str)).collect();

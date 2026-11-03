@@ -1397,6 +1397,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/playground/realtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Playground: realtime transcription
+         * @description A transcription session as a chosen virtual key, as at `/v1/realtime?intent=transcription`:
+         *     OpenAI Realtime events over a WebSocket, logged and billed to the key.
+         */
+        get: operations["playground_realtime"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/playground/{api}": {
         parameters: {
             query?: never;
@@ -1409,8 +1430,8 @@ export interface paths {
         /**
          * Playground
          * @description Runs an inference request as a chosen virtual key, with its limits, budget and logging.
-         *     `api` is `chat`, `responses`, `messages`, `embeddings`, `rerank`, `decisions` or `systemone`; the
-         *     body is that endpoint's. `models` and `models-extended` list the key's models as
+         *     `api` is `chat`, `responses`, `messages`, `embeddings`, `rerank`, `decisions`, `systemone`,
+         *     `transcriptions` (a `multipart/form-data` body) or `speech`; the body is that endpoint's. `models` and `models-extended` list the key's models as
          *     `GET /v1/models` and `GET /v1/models-extended` do; their body is ignored.
          */
         post: operations["playground"];
@@ -2079,6 +2100,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/audio/speech": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Speak text
+         * @description Text to speech, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Returns the audio.
+         *     Also served at `/audio/speech`.
+         */
+        post: operations["speech"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audio/transcriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe audio
+         * @description Speech to text, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Also served at
+         *     `/audio/transcriptions`.
+         */
+        post: operations["transcriptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/chat/completions": {
         parameters: {
             query?: never;
@@ -2265,6 +2328,28 @@ export interface paths {
          * @description Deletes the sign-in of the tenant or user in the request's `x-gateway-labels`.
          */
         delete: operations["sign_out"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/realtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Realtime transcription
+         * @description OpenAI's Realtime API for transcription sessions, over a WebSocket: stream audio, get its
+         *     transcript as it is spoken. Browsers may send their key as the `openai-insecure-api-key.<key>`
+         *     subprotocol.
+         */
+        get: operations["realtime"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2521,7 +2606,7 @@ export interface components {
          * @description Wire protocol spoken with the upstream.
          * @enum {string}
          */
-        ApiStyle: "chat" | "responses" | "anthropic" | "converse" | "systemone" | "embeddings" | "rerank";
+        ApiStyle: "chat" | "responses" | "anthropic" | "converse" | "systemone" | "embeddings" | "rerank" | "transcription" | "speech";
         ApproveInput: {
             /**
              * Format: uuid
@@ -2896,10 +2981,20 @@ export interface components {
              */
             aws_service?: string | null;
             bedrock_api?: components["schemas"]["BedrockApi"] | null;
+            /**
+             * @description Speech: the voices the deployment speaks, the first being the one of requests that name
+             *     none. `*` lets any other voice through. Empty: any voice, and the provider's default.
+             */
+            voices?: components["schemas"]["Voice"][];
+            /**
+             * @description Transcription: a realtime model, which takes audio as it is spoken over a WebSocket
+             *     (`/v1/realtime?intent=transcription`) instead of files (`/v1/audio/transcriptions`).
+             */
+            realtime?: boolean;
         };
         DeploymentInput: {
             model_name: string;
-            /** @description chat (default), embedding, decision or rerank. */
+            /** @description chat (default), embedding, decision, rerank, transcription or speech. */
             mode?: components["schemas"]["Mode"];
             provider: components["schemas"]["ProviderKind"];
             upstream_model: string;
@@ -2946,6 +3041,16 @@ export interface components {
              *     models a web search the model ran.
              */
             cost_per_k_searches?: number | null;
+            /**
+             * Format: double
+             * @description USD per minute of input audio, for transcription models priced by the minute.
+             */
+            cost_per_audio_minute?: number | null;
+            /**
+             * Format: double
+             * @description USD per 1M characters of input text, for speech models.
+             */
+            cost_per_m_characters?: number | null;
             /** @description Price catalog key, e.g. `azure/gpt-4o` for an Azure deployment with its own name. */
             base_model?: string | null;
             /** @description Permission tags; a key with tags needs all of them to use this deployment. */
@@ -2962,7 +3067,10 @@ export interface components {
             ok: boolean;
             /** Format: int64 */
             latency_ms: number;
-            /** @description The model's reply (chat), dimensions (embeddings), the ranking (rerank) or an answer (decisions). */
+            /**
+             * @description The model's reply (chat), dimensions (embeddings), the ranking (rerank), an answer (decisions), a
+             *     transcript (transcription) or the audio's size (speech).
+             */
             text?: string;
             usage?: components["schemas"]["TestUsage"];
             /**
@@ -3013,6 +3121,10 @@ export interface components {
             long_cache_write_cost_per_mtok: number | null;
             /** Format: double */
             cost_per_k_searches: number | null;
+            /** Format: double */
+            cost_per_audio_minute: number | null;
+            /** Format: double */
+            cost_per_m_characters: number | null;
             base_model: string | null;
             tags: string[];
             project_ids: string[];
@@ -3457,7 +3569,10 @@ export interface components {
             /** @description With `stats=true`: its requests over the last 24 hours. */
             stats?: components["schemas"]["HubStats"];
         };
-        /** @description USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches. */
+        /**
+         * @description USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches, `per_audio_minute` per
+         *     minute of transcribed audio, `per_m_characters` per 1M spoken characters.
+         */
         HubPrices: {
             /** Format: double */
             input: number;
@@ -3482,6 +3597,10 @@ export interface components {
             long_cache_write?: number;
             /** Format: double */
             per_k_searches: number;
+            /** Format: double */
+            per_audio_minute: number;
+            /** Format: double */
+            per_m_characters: number;
         };
         /** @description A model's requests over the last 24 hours, from the request log. */
         HubStats: {
@@ -3811,6 +3930,16 @@ export interface components {
              */
             search_cost_usd: number;
             /**
+             * Format: int64
+             * @description Seconds of audio a transcription model was billed for.
+             */
+            audio_seconds: number;
+            /**
+             * Format: int64
+             * @description Characters of text a speech model spoke.
+             */
+            characters: number;
+            /**
              * @description Whether its bodies were logged: `stored`, `truncated` (cut to the size limit), `expired`
              *     (past their retention), `dropped` (could not be kept) or `deleted`; none when not logged.
              */
@@ -3964,7 +4093,7 @@ export interface components {
          * @description What a deployment serves, and so which endpoints route to it.
          * @enum {string}
          */
-        Mode: "chat" | "embedding" | "decision" | "rerank";
+        Mode: "chat" | "embedding" | "decision" | "rerank" | "transcription" | "speech";
         ModelEntry: {
             id: string;
             /** @description Always `model`. */
@@ -4154,6 +4283,10 @@ export interface components {
             router: boolean;
             /** @description Requests may have it search the web: it has a web search, and the key and its project allow it. */
             web_search: boolean;
+            /** @description Speech: the voices its deployments list, the default first; `*` when they let others through. */
+            voices?: components["schemas"]["Voice"][];
+            /** @description Transcription: a realtime model, streamed to over `/playground/realtime`. */
+            realtime?: boolean;
         };
         /**
          * @description What the playground offers for a key: the models it may call, the guardrails a request may
@@ -4669,6 +4802,26 @@ export interface components {
          * @enum {string}
          */
         Source: "input" | "output";
+        /** @description An OpenAI text to speech request. */
+        SpeechRequest: {
+            model: string;
+            /** @description Up to 4,096 characters. */
+            input: string;
+            /**
+             * @description The voice: OpenAI's voice names, or the provider's voice id (Mistral's `voice_id`, such as
+             *     `voice_478`; `gb_jane_neutral` when none of Mistral's is given).
+             */
+            voice?: string | null;
+            /** @description How to speak (OpenAI's gpt-4o-mini-tts). */
+            instructions?: string | null;
+            /** @description `mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm`. */
+            response_format?: string | null;
+            /**
+             * Format: double
+             * @description 0.25 to 4.0 (OpenAI).
+             */
+            speed?: number | null;
+        };
         SpendPoint: {
             /**
              * Format: int64
@@ -4818,6 +4971,26 @@ export interface components {
             /** Format: int64 */
             requests: number;
         };
+        /**
+         * @description An OpenAI audio transcription request (`multipart/form-data`). Other fields of OpenAI's API
+         *     are passed on to OpenAI-compatible and Azure deployments.
+         */
+        TranscriptionRequest: {
+            /**
+             * Format: binary
+             * @description The audio: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav or webm.
+             */
+            file: string;
+            model: string;
+            /** @description The audio's language (ISO-639-1), which improves accuracy. */
+            language?: string | null;
+            /** @description Text to guide the model. Not sent to Mistral. */
+            prompt?: string | null;
+            /** @description `json` (default), `text`, `verbose_json`, `srt` or `vtt`. */
+            response_format?: string | null;
+            /** Format: double */
+            temperature?: number | null;
+        };
         /** @description The outcome of one check. */
         Verdict: {
             action: components["schemas"]["Action"];
@@ -4894,6 +5067,13 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description A voice of a speech deployment. */
+        Voice: {
+            /** @description The voice as the provider names it (`alloy`, `voice_478`), or `*` for any other voice. */
+            id: string;
+            /** @description What the playground shows for it, such as `Sheila (English, US)`. */
+            name?: string | null;
         };
     };
     responses: never;
@@ -6221,7 +6401,10 @@ export interface operations {
             query?: {
                 /** @description Just the deployments whose model name contains this text, ignoring case. */
                 q?: string;
-                /** @description Just the deployments of this mode: `chat`, `embedding`, `decision` or `rerank`. */
+                /**
+                 * @description Just the deployments of this mode: `chat`, `embedding`, `decision`, `rerank`, `transcription`
+                 *     or `speech`.
+                 */
                 mode?: string;
                 /** @description Just the deployments carrying any of these tags, as `azure,cheap`; `-` stands for none. */
                 tags?: string;
@@ -7853,6 +8036,37 @@ export interface operations {
             };
         };
     };
+    playground_realtime: {
+        parameters: {
+            query: {
+                key_id: string;
+                /** @description The realtime transcription model, instead of naming it in `session.update`. */
+                model?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session: OpenAI Realtime events over a WebSocket. */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Opened from another site. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
     playground: {
         parameters: {
             query: {
@@ -9230,6 +9444,132 @@ export interface operations {
             };
         };
     };
+    speech: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Up to 5 labels for the request log and metrics, as comma-separated `key=value` pairs, such as `tenant=0192…,feature=core`. Keys are letters, digits, `_`, `-` and `.`; values are printable ASCII without commas. Keys and values are shorter than 128 characters. Invalid labels are refused with `400`. */
+                "x-gateway-labels"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeechRequest"];
+            };
+        };
+        responses: {
+            /** @description The audio, in the requested format. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+            /** @description Missing, invalid, disabled or expired key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+            /** @description The key may not use this model. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+            /** @description A rate limit or the key's budget. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+        };
+    };
+    transcriptions: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Up to 5 labels for the request log and metrics, as comma-separated `key=value` pairs, such as `tenant=0192…,feature=core`. Keys are letters, digits, `_`, `-` and `.`; values are printable ASCII without commas. Keys and values are shorter than 128 characters. Invalid labels are refused with `400`. */
+                "x-gateway-labels"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["TranscriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description The transcript: JSON, or text for `text`, `srt` and `vtt`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderAnswer"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+            /** @description Missing, invalid, disabled or expired key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+            /** @description The key may not use this model. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+            /** @description A rate limit or the key's budget. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+        };
+    };
     chat_completions: {
         parameters: {
             query?: never;
@@ -9707,6 +10047,50 @@ export interface operations {
             };
             /** @description They had not signed in. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+        };
+    };
+    realtime: {
+        parameters: {
+            query?: {
+                /** @description `transcription`: the only kind of session served. */
+                intent?: string;
+                /** @description The transcription model, instead of `session.audio.input.transcription.model`. */
+                model?: string;
+            };
+            header?: {
+                /** @description Up to 5 labels for the request log and metrics, as comma-separated `key=value` pairs, such as `tenant=0192…,feature=core`. Keys are letters, digits, `_`, `-` and `.`; values are printable ASCII without commas. Keys and values are shorter than 128 characters. Invalid labels are refused with `400`. */
+                "x-gateway-labels"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session: OpenAI Realtime events over a WebSocket. */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a transcription session, or not a WebSocket. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAiError"];
+                };
+            };
+            /** @description Missing, invalid, disabled or expired key. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

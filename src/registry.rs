@@ -329,6 +329,8 @@ fn build_deployment(row: DeploymentRow, creds: &HashMap<Uuid, Result<ResolvedCre
                 _ => None,
             },
             per_k_searches: row.cost_per_k_searches.unwrap_or(0.0),
+            per_audio_minute: row.cost_per_audio_minute.unwrap_or(0.0),
+            per_m_characters: row.cost_per_m_characters.unwrap_or(0.0),
         },
         catalog: None,
     })

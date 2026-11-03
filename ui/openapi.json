@@ -2132,7 +2132,7 @@
           {
             "name": "mode",
             "in": "query",
-            "description": "Just the deployments of this mode: `chat`, `embedding`, `decision` or `rerank`.",
+            "description": "Just the deployments of this mode: `chat`, `embedding`, `decision`, `rerank`, `transcription`\nor `speech`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -5132,13 +5132,69 @@
         ]
       }
     },
+    "/admin/api/playground/realtime": {
+      "get": {
+        "tags": [
+          "Playground"
+        ],
+        "summary": "Playground: realtime transcription",
+        "description": "A transcription session as a chosen virtual key, as at `/v1/realtime?intent=transcription`:\nOpenAI Realtime events over a WebSocket, logged and billed to the key.",
+        "operationId": "playground_realtime",
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "description": "The realtime transcription model, instead of naming it in `session.update`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "The session: OpenAI Realtime events over a WebSocket."
+          },
+          "403": {
+            "description": "Opened from another site.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/playground/{api}": {
       "post": {
         "tags": [
           "Playground"
         ],
         "summary": "Playground",
-        "description": "Runs an inference request as a chosen virtual key, with its limits, budget and logging.\n`api` is `chat`, `responses`, `messages`, `embeddings`, `rerank`, `decisions` or `systemone`; the\nbody is that endpoint's. `models` and `models-extended` list the key's models as\n`GET /v1/models` and `GET /v1/models-extended` do; their body is ignored.",
+        "description": "Runs an inference request as a chosen virtual key, with its limits, budget and logging.\n`api` is `chat`, `responses`, `messages`, `embeddings`, `rerank`, `decisions`, `systemone`,\n`transcriptions` (a `multipart/form-data` body) or `speech`; the body is that endpoint's. `models` and `models-extended` list the key's models as\n`GET /v1/models` and `GET /v1/models-extended` do; their body is ignored.",
         "operationId": "playground",
         "parameters": [
           {
@@ -7378,6 +7434,199 @@
         }
       }
     },
+    "/v1/audio/speech": {
+      "post": {
+        "tags": [
+          "Inference"
+        ],
+        "summary": "Speak text",
+        "description": "Text to speech, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Returns the audio.\nAlso served at `/audio/speech`.",
+        "operationId": "speech",
+        "parameters": [
+          {
+            "name": "x-gateway-labels",
+            "in": "header",
+            "description": "Up to 5 labels for the request log and metrics, as comma-separated `key=value` pairs, such as `tenant=0192…,feature=core`. Keys are letters, digits, `_`, `-` and `.`; values are printable ASCII without commas. Keys and values are shorter than 128 characters. Invalid labels are refused with `400`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeechRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The audio, in the requested format.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, disabled or expired key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may not use this model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "A rate limit or the key's budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "virtual_key": []
+          },
+          {
+            "virtual_key_header": []
+          }
+        ]
+      }
+    },
+    "/v1/audio/transcriptions": {
+      "post": {
+        "tags": [
+          "Inference"
+        ],
+        "summary": "Transcribe audio",
+        "description": "Speech to text, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Also served at\n`/audio/transcriptions`.",
+        "operationId": "transcriptions",
+        "parameters": [
+          {
+            "name": "x-gateway-labels",
+            "in": "header",
+            "description": "Up to 5 labels for the request log and metrics, as comma-separated `key=value` pairs, such as `tenant=0192…,feature=core`. Keys are letters, digits, `_`, `-` and `.`; values are printable ASCII without commas. Keys and values are shorter than 128 characters. Invalid labels are refused with `400`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/TranscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The transcript: JSON, or text for `text`, `srt` and `vtt`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, disabled or expired key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key may not use this model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "A rate limit or the key's budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "virtual_key": []
+          },
+          {
+            "virtual_key_header": []
+          }
+        ]
+      }
+    },
     "/v1/chat/completions": {
       "post": {
         "tags": [
@@ -8079,6 +8328,81 @@
           },
           "404": {
             "description": "They had not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "virtual_key": []
+          },
+          {
+            "virtual_key_header": []
+          }
+        ]
+      }
+    },
+    "/v1/realtime": {
+      "get": {
+        "tags": [
+          "Inference"
+        ],
+        "summary": "Realtime transcription",
+        "description": "OpenAI's Realtime API for transcription sessions, over a WebSocket: stream audio, get its\ntranscript as it is spoken. Browsers may send their key as the `openai-insecure-api-key.<key>`\nsubprotocol.",
+        "operationId": "realtime",
+        "parameters": [
+          {
+            "name": "intent",
+            "in": "query",
+            "description": "`transcription`: the only kind of session served.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "description": "The transcription model, instead of `session.audio.input.transcription.model`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-gateway-labels",
+            "in": "header",
+            "description": "Up to 5 labels for the request log and metrics, as comma-separated `key=value` pairs, such as `tenant=0192…,feature=core`. Keys are letters, digits, `_`, `-` and `.`; values are printable ASCII without commas. Keys and values are shorter than 128 characters. Invalid labels are refused with `400`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "The session: OpenAI Realtime events over a WebSocket."
+          },
+          "400": {
+            "description": "Not a transcription session, or not a WebSocket.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, disabled or expired key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8970,7 +9294,9 @@
           "converse",
           "systemone",
           "embeddings",
-          "rerank"
+          "rerank",
+          "transcription",
+          "speech"
         ]
       },
       "ApproveInput": {
@@ -9944,6 +10270,17 @@
                 "type": "null"
               }
             ]
+          },
+          "voices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Voice"
+            },
+            "description": "Speech: the voices the deployment speaks, the first being the one of requests that name\nnone. `*` lets any other voice through. Empty: any voice, and the provider's default."
+          },
+          "realtime": {
+            "type": "boolean",
+            "description": "Transcription: a realtime model, which takes audio as it is spoken over a WebSocket\n(`/v1/realtime?intent=transcription`) instead of files (`/v1/audio/transcriptions`)."
           }
         },
         "additionalProperties": false
@@ -9962,7 +10299,7 @@
           },
           "mode": {
             "$ref": "#/components/schemas/Mode",
-            "description": "chat (default), embedding, decision or rerank."
+            "description": "chat (default), embedding, decision, rerank, transcription or speech."
           },
           "provider": {
             "$ref": "#/components/schemas/ProviderKind"
@@ -10070,6 +10407,22 @@
             "format": "double",
             "description": "USD per 1,000 searches: for rerank models a query over up to 100 documents, for chat\nmodels a web search the model ran."
           },
+          "cost_per_audio_minute": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "USD per minute of input audio, for transcription models priced by the minute."
+          },
+          "cost_per_m_characters": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "USD per 1M characters of input text, for speech models."
+          },
           "base_model": {
             "type": [
               "string",
@@ -10119,7 +10472,7 @@
           },
           "text": {
             "type": "string",
-            "description": "The model's reply (chat), dimensions (embeddings), the ranking (rerank) or an answer (decisions)."
+            "description": "The model's reply (chat), dimensions (embeddings), the ranking (rerank), an answer (decisions), a\ntranscript (transcription) or the audio's size (speech)."
           },
           "usage": {
             "$ref": "#/components/schemas/TestUsage"
@@ -10161,6 +10514,8 @@
           "long_cache_read_cost_per_mtok",
           "long_cache_write_cost_per_mtok",
           "cost_per_k_searches",
+          "cost_per_audio_minute",
+          "cost_per_m_characters",
           "base_model",
           "tags",
           "project_ids",
@@ -10285,6 +10640,20 @@
             "format": "double"
           },
           "cost_per_k_searches": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "cost_per_audio_minute": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "cost_per_m_characters": {
             "type": [
               "number",
               "null"
@@ -11459,13 +11828,15 @@
       },
       "HubPrices": {
         "type": "object",
-        "description": "USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches.",
+        "description": "USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches, `per_audio_minute` per\nminute of transcribed audio, `per_m_characters` per 1M spoken characters.",
         "required": [
           "input",
           "output",
           "cache_read",
           "cache_write",
-          "per_k_searches"
+          "per_k_searches",
+          "per_audio_minute",
+          "per_m_characters"
         ],
         "properties": {
           "input": {
@@ -11507,6 +11878,14 @@
             "format": "double"
           },
           "per_k_searches": {
+            "type": "number",
+            "format": "double"
+          },
+          "per_audio_minute": {
+            "type": "number",
+            "format": "double"
+          },
+          "per_m_characters": {
             "type": "number",
             "format": "double"
           }
@@ -12248,6 +12627,8 @@
           "guardrail_cost_usd",
           "searches",
           "search_cost_usd",
+          "audio_seconds",
+          "characters",
           "bodies"
         ],
         "properties": {
@@ -12429,6 +12810,16 @@
             "type": "number",
             "format": "double",
             "description": "The searches' part of `cost_usd`."
+          },
+          "audio_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds of audio a transcription model was billed for."
+          },
+          "characters": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Characters of text a speech model spoke."
           },
           "bodies": {
             "type": [
@@ -12887,7 +13278,9 @@
           "chat",
           "embedding",
           "decision",
-          "rerank"
+          "rerank",
+          "transcription",
+          "speech"
         ]
       },
       "ModelEntry": {
@@ -13438,6 +13831,17 @@
           "web_search": {
             "type": "boolean",
             "description": "Requests may have it search the web: it has a web search, and the key and its project allow it."
+          },
+          "voices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Voice"
+            },
+            "description": "Speech: the voices its deployments list, the default first; `*` when they let others through."
+          },
+          "realtime": {
+            "type": "boolean",
+            "description": "Transcription: a realtime model, streamed to over `/playground/realtime`."
           }
         }
       },
@@ -14689,6 +15093,52 @@
           "output"
         ]
       },
+      "SpeechRequest": {
+        "type": "object",
+        "description": "An OpenAI text to speech request.",
+        "required": [
+          "model",
+          "input"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "input": {
+            "type": "string",
+            "description": "Up to 4,096 characters."
+          },
+          "voice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The voice: OpenAI's voice names, or the provider's voice id (Mistral's `voice_id`, such as\n`voice_478`; `gb_jane_neutral` when none of Mistral's is given)."
+          },
+          "instructions": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How to speak (OpenAI's gpt-4o-mini-tts)."
+          },
+          "response_format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm`."
+          },
+          "speed": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "0.25 to 4.0 (OpenAI)."
+          }
+        }
+      },
       "SpendPoint": {
         "type": "object",
         "required": [
@@ -15109,6 +15559,52 @@
           }
         }
       },
+      "TranscriptionRequest": {
+        "type": "object",
+        "description": "An OpenAI audio transcription request (`multipart/form-data`). Other fields of OpenAI's API\nare passed on to OpenAI-compatible and Azure deployments.",
+        "required": [
+          "file",
+          "model"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "description": "The audio: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav or webm."
+          },
+          "model": {
+            "type": "string"
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The audio's language (ISO-639-1), which improves accuracy."
+          },
+          "prompt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Text to guide the model. Not sent to Mistral."
+          },
+          "response_format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`json` (default), `text`, `verbose_json`, `srt` or `vtt`."
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
       "Verdict": {
         "type": "object",
         "description": "The outcome of one check.",
@@ -15305,6 +15801,27 @@
             "format": "date-time"
           }
         }
+      },
+      "Voice": {
+        "type": "object",
+        "description": "A voice of a speech deployment.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The voice as the provider names it (`alloy`, `voice_478`), or `*` for any other voice."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the playground shows for it, such as `Sheila (English, US)`."
+          }
+        },
+        "additionalProperties": false
       }
     },
     "securitySchemes": {

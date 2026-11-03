@@ -39,7 +39,7 @@ Labels in `x-gateway-labels` are logged with each message, as for model requests
 
 ## In the playground
 
-The playground (**Models → Playground**) lists the A2A agents the chosen key may use after its models, under **A2A agents**. Pick one to talk to it as the key, through `/a2a/{name}`. Each message is logged, counted and charged like a client's.
+The **Playground** lists the A2A agents the chosen key may use after its models, under **A2A agents**. Pick one to talk to it as the key, through `/a2a/{name}`. Each message is logged, counted and charged like a client's.
 
 - **The card:** the agent's name, skills and A2A version are shown before the first message. **Agent card** shows all of it, as clients get it.
 - **Messages** go over JSON-RPC, in the A2A version of the agent's JSON-RPC interface, and are streamed when the agent streams. An agent with only HTTP+JSON cannot be tried here.

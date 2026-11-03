@@ -21,6 +21,7 @@ mod ir;
 mod labels;
 mod mcp;
 mod model;
+mod multipart;
 mod netguard;
 mod oauth;
 mod openapi;
@@ -293,6 +294,13 @@ fn routes(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         .routes(routes!(api::rerank::rerank))
         .route("/v2/rerank", post(api::rerank::rerank))
         .route("/rerank", post(api::rerank::rerank))
+        .routes(routes!(api::audio::transcriptions))
+        .route("/audio/transcriptions", post(api::audio::transcriptions))
+        .routes(routes!(api::audio::speech))
+        .route("/audio/speech", post(api::audio::speech))
+        // OpenAI's Realtime API, for transcription sessions; also at /realtime.
+        .routes(routes!(api::realtime::realtime))
+        .route("/realtime", axum::routing::get(api::realtime::realtime))
         .routes(routes!(api::models::list_models))
         .routes(routes!(api::models::list_models_extended))
         // Sign-ins of tenants and users to MCP servers and A2A agents (see `api::sign_ins`).

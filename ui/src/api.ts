@@ -27,6 +27,11 @@ export function setToken(token: string | null) {
 
 let memoryToken: string | null = getToken();
 
+/** The key the console is signed in with, if any; WebSockets send it as a subprotocol. */
+export function adminToken(): string | null {
+  return memoryToken;
+}
+
 export class AuthError extends Error {}
 
 /** Headers for every admin request: the master key when signed in with it, and the header the
@@ -36,7 +41,8 @@ function adminHeaders(): Record<string, string> {
 }
 
 /** Raw admin API request (for streaming responses); the caller handles the body. `headers` are
- * sent as well, such as the playground's labels. */
+ * sent as well, such as the playground's labels. A `FormData` body goes as `multipart/form-data`,
+ * anything else as JSON. */
 export async function adminFetch(
   path: string,
   body: unknown,
@@ -45,8 +51,8 @@ export async function adminFetch(
 ): Promise<Response> {
   const res = await fetch(`/admin/api${path}`, {
     method: "POST",
-    headers: { ...headers, ...adminHeaders(), "content-type": "application/json" },
-    body: JSON.stringify(body),
+    headers: { ...headers, ...adminHeaders(), ...(body instanceof FormData ? {} : { "content-type": "application/json" }) },
+    body: body instanceof FormData ? body : JSON.stringify(body),
     signal,
   });
   if (res.status === 401 && !res.headers.get("content-type")?.includes("event-stream")) {
@@ -111,10 +117,14 @@ export type AdminUser = S["PersonView"];
 export type Provider = S["ProviderKind"];
 /** Upstream protocol of a chat deployment. */
 export type ApiStyle = S["ApiStyle"];
-/** What a deployment serves: chat endpoints, /v1/embeddings, /v1/decisions and /v1/systemone, or /v1/rerank. */
+/** What a deployment serves: chat endpoints, /v1/embeddings, /v1/decisions and /v1/systemone, /v1/rerank,
+ *  /v1/audio/transcriptions or /v1/audio/speech. */
 export type Mode = S["Mode"];
 
 export type DeploymentConfig = S["DeploymentConfig"];
+
+/** A speech deployment's voice; `*` lets voices not listed through. */
+export type Voice = S["Voice"];
 
 export type Deployment = S["DeploymentView"];
 
@@ -444,5 +454,6 @@ export type HubStats = S["HubStats"];
 
 export type HubDeployment = S["HubDeployment"];
 
-/** USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches. */
+/** USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches, `per_audio_minute` per
+ *  minute of transcribed audio, `per_m_characters` per 1M spoken characters. */
 export type HubPrices = S["HubPrices"];

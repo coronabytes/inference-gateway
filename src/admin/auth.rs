@@ -13,7 +13,7 @@ use std::{
 use axum::{
     Extension, Json,
     extract::{MatchedPath, Path, Query, Request, State},
-    http::{Method, StatusCode},
+    http::{Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Redirect, Response},
 };
@@ -370,6 +370,7 @@ const USER_ROUTES: &[(Method, &str)] = &[
     (Method::GET, "/keys/{id}/rates"),
     (Method::GET, "/keys/{id}/spend"),
     (Method::GET, "/playground/options"),
+    (Method::GET, "/playground/realtime"),
     (Method::POST, "/playground/{api}"),
     (Method::POST, "/playground/a2a/{agent}"),
     (Method::GET, "/playground/a2a/{agent}/card"),
@@ -420,6 +421,14 @@ fn unauthenticated() -> AdminError {
 /// user, or a local-development session. Users only reach `USER_ROUTES`, and keys whose scope is
 /// the inference API only `KEY_ROUTES`.
 pub async fn require_admin(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
+    // A console signed in with a key opens WebSockets (the playground's realtime sessions) with the
+    // key as a subprotocol, as it cannot set the header.
+    if !req.headers().contains_key(header::AUTHORIZATION)
+        && let Some(v) =
+            crate::api::realtime::protocol_key(req.headers()).and_then(|k| header::HeaderValue::from_str(&format!("Bearer {k}")).ok())
+    {
+        req.headers_mut().insert(header::AUTHORIZATION, v);
+    }
     match authenticated_via(&state, &req).await {
         Some((Via::Session | Via::Dev | Via::DevUser, _)) if !csrf_ok(&req) => {
             AdminError::forbidden(format!("missing {CSRF_HEADER} header")).into_response()

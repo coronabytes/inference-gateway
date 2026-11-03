@@ -215,6 +215,40 @@ mod schemas {
         max_tokens_per_doc: Option<u32>,
     }
 
+    /// An OpenAI audio transcription request (`multipart/form-data`). Other fields of OpenAI's API
+    /// are passed on to OpenAI-compatible and Azure deployments.
+    #[derive(ToSchema)]
+    pub struct TranscriptionRequest {
+        /// The audio: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav or webm.
+        #[schema(format = Binary, value_type = String)]
+        file: Value,
+        model: String,
+        /// The audio's language (ISO-639-1), which improves accuracy.
+        language: Option<String>,
+        /// Text to guide the model. Not sent to Mistral.
+        prompt: Option<String>,
+        /// `json` (default), `text`, `verbose_json`, `srt` or `vtt`.
+        response_format: Option<String>,
+        temperature: Option<f64>,
+    }
+
+    /// An OpenAI text to speech request.
+    #[derive(ToSchema)]
+    pub struct SpeechRequest {
+        model: String,
+        /// Up to 4,096 characters.
+        input: String,
+        /// The voice: OpenAI's voice names, or the provider's voice id (Mistral's `voice_id`, such as
+        /// `voice_478`; `gb_jane_neutral` when none of Mistral's is given).
+        voice: Option<String>,
+        /// How to speak (OpenAI's gpt-4o-mini-tts).
+        instructions: Option<String>,
+        /// `mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm`.
+        response_format: Option<String>,
+        /// 0.25 to 4.0 (OpenAI).
+        speed: Option<f64>,
+    }
+
     /// An OpenAI Decisions request.
     #[derive(ToSchema)]
     pub struct DecisionsRequest {
@@ -282,8 +316,20 @@ mod tests {
     /// documentation itself, and the redirect to it in debug builds.
     #[test]
     fn only_aliases_are_undocumented() {
-        let expected: BTreeSet<String> =
-            ["/decisions", "/systemone", "/embeddings", "/rerank", "/v2/rerank", "/openapi.json", "/"].map(String::from).into();
+        let expected: BTreeSet<String> = [
+            "/decisions",
+            "/systemone",
+            "/embeddings",
+            "/rerank",
+            "/v2/rerank",
+            "/audio/transcriptions",
+            "/audio/speech",
+            "/realtime",
+            "/openapi.json",
+            "/",
+        ]
+        .map(String::from)
+        .into();
         assert_eq!(undocumented_routes(), expected);
     }
 

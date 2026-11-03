@@ -14,9 +14,40 @@ const port = Number(process.env.PORT ?? 5173);
 // OAuth sign-in of MCP clients, whose addresses are the console's, where people approve it).
 const PROXIED = ["/admin/api", "/admin/auth/oauth", "/v1", "/mcp", "/a2a", "/.well-known", "/oauth", "/admin/openapi.json", "/admin/docs"];
 
-async function proxy(req: Request) {
+/** A browser's WebSocket, and the gateway's that it is relayed to. */
+interface Relay {
+  target: string;
+  headers: Record<string, string>;
+  protocols: string[];
+  upstream?: WebSocket;
+  /** What the browser sent while the gateway's socket was still opening. */
+  queue: (string | Uint8Array<ArrayBuffer>)[];
+}
+
+async function proxy(req: Request, server: Bun.Server<Relay>) {
   const url = new URL(req.url);
   const target = new URL(url.pathname + url.search, gateway);
+  // WebSockets (the playground's realtime sessions) are relayed: only from the console's own pages,
+  // as the gateway checks when it is not behind this server.
+  if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    const origin = req.headers.get("origin");
+    if (origin && new URL(origin).host !== url.host) return new Response("cross-origin WebSocket", { status: 403 });
+    const headers: Record<string, string> = {};
+    for (const name of ["cookie", "authorization", "x-gateway-labels"]) {
+      const v = req.headers.get(name);
+      if (v) headers[name] = v;
+    }
+    const protocols = (req.headers.get("sec-websocket-protocol") ?? "")
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    target.protocol = gateway.protocol === "https:" ? "wss:" : "ws:";
+    const relay: Relay = { target: target.href, headers, protocols, queue: [] };
+    // The gateway picks `realtime` among the protocols offered; the browser needs the same answer.
+    const answer = protocols.includes("realtime") ? { "sec-websocket-protocol": "realtime" } : undefined;
+    if (server.upgrade(req, { data: relay, headers: answer })) return undefined;
+    return new Response("WebSocket upgrade failed", { status: 400 });
+  }
   try {
     const res = await fetch(target, {
       method: req.method,
@@ -43,9 +74,31 @@ const publicFiles = Object.fromEntries(
 
 await fetchScalar();
 
-const server = Bun.serve({
+const server = Bun.serve<Relay>({
   port,
   development: { hmr: true, console: true },
+  websocket: {
+    open(ws) {
+      const r = ws.data;
+      const up = new WebSocket(r.target, { headers: r.headers, protocols: r.protocols } as unknown as string[]);
+      r.upstream = up;
+      up.onopen = () => {
+        for (const m of r.queue.splice(0)) up.send(m);
+      };
+      up.onmessage = (e) => ws.send(typeof e.data === "string" ? e.data : new Uint8Array(e.data as ArrayBuffer));
+      up.onclose = (e) => ws.close(e.code === 1005 ? 1000 : e.code, e.reason);
+      up.onerror = () => ws.close(1011, "gateway unreachable");
+    },
+    message(ws, message) {
+      const up = ws.data.upstream;
+      const m = typeof message === "string" ? message : new Uint8Array(message);
+      if (up?.readyState === WebSocket.OPEN) up.send(m);
+      else ws.data.queue.push(m);
+    },
+    close(ws) {
+      ws.data.upstream?.close();
+    },
+  },
   routes: {
     ...publicFiles,
     ...Object.fromEntries(

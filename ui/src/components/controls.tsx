@@ -138,10 +138,16 @@ export function TextArea({
 
 /**
  * The message box of a chat composer, beside its buttons: no caption (`aria-label` names it), one
- * line that grows with the text. Enter calls `onSend`, Shift+Enter starts a new line.
+ * line that grows with the text. Enter calls `onSend`, Shift+Enter starts a new line. `action`, such
+ * as a microphone button, sits inside the box at its right end.
  */
-export function MessageInput({ onSend, onKeyDown, ...props }: Omit<ComponentProps<"textarea">, "children"> & { onSend: () => void }) {
-  return (
+export function MessageInput({
+  onSend,
+  onKeyDown,
+  action,
+  ...props
+}: Omit<ComponentProps<"textarea">, "children"> & { onSend: () => void; action?: ReactNode }) {
+  const box = (
     <textarea
       rows={1}
       aria-describedby={useHint()?.id}
@@ -154,6 +160,13 @@ export function MessageInput({ onSend, onKeyDown, ...props }: Omit<ComponentProp
         }
       }}
     />
+  );
+  if (!action) return box;
+  return (
+    <div className="message-input">
+      {box}
+      <span className="message-input-action">{action}</span>
+    </div>
   );
 }
 

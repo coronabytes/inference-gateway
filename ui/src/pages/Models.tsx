@@ -30,7 +30,6 @@ import { Credentials } from "./Credentials";
 import { DeploymentForm, MODES } from "./DeploymentForm";
 import { Guardrails } from "./Guardrails";
 import { ModelHub } from "./ModelHub";
-import { Playground } from "./Playground";
 import { PriceCatalog } from "./PriceCatalog";
 import { TagList } from "../components/Tags";
 import { RouterCard, RouterForm } from "./Routers";
@@ -80,6 +79,8 @@ const pricesOf = (d: Deployment): DeploymentPrices => ({
   long_cache_read_cost_per_mtok: d.long_cache_read_cost_per_mtok,
   long_cache_write_cost_per_mtok: d.long_cache_write_cost_per_mtok,
   cost_per_k_searches: d.cost_per_k_searches,
+  cost_per_audio_minute: d.cost_per_audio_minute,
+  cost_per_m_characters: d.cost_per_m_characters,
 });
 
 /** What changes, for a tooltip: "input 0.1 → 0.15, cache read = input → 0.01". */
@@ -115,7 +116,7 @@ interface AllModels {
   aliases: ModelAlias[];
 }
 
-const TABS = ["hub", "playground", "deployments", "guardrails", "credentials", "pricing"] as const;
+const TABS = ["hub", "deployments", "guardrails", "credentials", "pricing"] as const;
 
 export function Models() {
   const [deps, setDeps] = useState<Deployment[]>([]);
@@ -386,7 +387,6 @@ export function Models() {
       label="Models"
       options={[
         { value: "hub", label: "Hub" },
-        { value: "playground", label: "Playground" },
         { value: "deployments", label: "Deployments" },
         { value: "guardrails", label: "Guardrails" },
         { value: "credentials", label: "Credentials" },
@@ -402,17 +402,7 @@ export function Models() {
     return (
       <div className="page">
         {tabs}
-        {tab === "hub" ? (
-          <ModelHub />
-        ) : tab === "pricing" ? (
-          <PriceCatalog />
-        ) : tab === "credentials" ? (
-          <Credentials />
-        ) : tab === "guardrails" ? (
-          <Guardrails />
-        ) : (
-          <Playground />
-        )}
+        {tab === "hub" ? <ModelHub /> : tab === "pricing" ? <PriceCatalog /> : tab === "credentials" ? <Credentials /> : <Guardrails />}
       </div>
     );
   }
@@ -604,6 +594,16 @@ export function Models() {
                         <span>{d.cost_per_k_searches ?? 0}</span>
                         <span className="muted small">$ per 1K searches</span>
                       </>
+                    ) : d.mode === "speech" ? (
+                      <>
+                        <span>{d.cost_per_m_characters ?? 0}</span>
+                        <span className="muted small">$ per 1M characters</span>
+                      </>
+                    ) : d.mode === "transcription" && d.cost_per_audio_minute != null ? (
+                      <>
+                        <span>{d.cost_per_audio_minute}</span>
+                        <span className="muted small">$ per minute</span>
+                      </>
                     ) : (
                       <TokenPrices
                         input={d.input_cost_per_mtok}
@@ -628,7 +628,11 @@ export function Models() {
                           catalog{" "}
                           {d.mode === "rerank"
                             ? `${drift.expected.cost_per_k_searches ?? 0}`
-                            : `${drift.expected.input_cost_per_mtok} · ${drift.expected.output_cost_per_mtok}`}
+                            : d.mode === "speech"
+                              ? `${drift.expected.cost_per_m_characters ?? 0} per 1M characters`
+                              : d.mode === "transcription" && drift.expected.cost_per_audio_minute != null
+                                ? `${drift.expected.cost_per_audio_minute} per minute`
+                                : `${drift.expected.input_cost_per_mtok} · ${drift.expected.output_cost_per_mtok}`}
                           {d.mode === "chat" &&
                             drift.fields.includes("cost_per_k_searches") &&
                             `, ${drift.expected.cost_per_k_searches ?? 0} per 1K web searches`}

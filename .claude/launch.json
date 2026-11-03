@@ -21,6 +21,22 @@
       "port": 5173
     },
     {
+      "name": "mock-upstream",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "dev/mock-upstream.mjs"
+      ],
+      "port": 9999
+    },
+    {
+      "name": "mock-realtime",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "dev/mock-realtime.mjs"
+      ],
+      "port": 9995
+    },
+    {
       "name": "mock-mcp",
       "runtimeExecutable": "bun",
       "runtimeArgs": [
