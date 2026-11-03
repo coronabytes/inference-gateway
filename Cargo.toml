@@ -99,6 +99,7 @@ result_large_err = "allow"
 [profile.release]
 opt-level = 3
 lto = "thin"
-codegen-units = 1
+# The default 16 codegen units, so LLVM uses every core: `codegen-units = 1` doubled the gateway
+# crate's build time for a binary only a fifth smaller.
 strip = true
 # Unwind (the default) so a panic ends only the request that hit it, not the whole process.

@@ -116,9 +116,8 @@ jobs:
           sbom: true
           provenance: mode=max
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/inference-gateway,push-by-digest=true,name-canonical=true,push=true
-          # Per-platform scopes so the two builds don't evict each other's cache.
-          cache-from: type=gha,scope=${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          # No build cache: a tag's run can read only caches saved on its own tag or on main, so
+          # no later release could use it, and uploading it took minutes.
 
       - name: Export digest
         run: |
