@@ -299,12 +299,31 @@ function transcription(raw, res) {
   json(res, 200, { text, usage: { type: "tokens", input_tokens: 40, input_token_details: { audio_tokens: 40, text_tokens: 0 }, output_tokens: 11, total_tokens: 51 } });
 }
 
-function speech(body, res) {
-  const audio = tone();
-  // Mistral: no OpenAI voice; the audio comes base64-encoded in JSON.
-  if (!body.voice) return json(res, 200, { audio_data: audio.toString("base64") });
+async function speech(body, res) {
+  const audio = tone(0.6, 24_000);
+  // Mistral: no OpenAI voice; the audio comes base64-encoded in JSON, or with `stream` in
+  // `speech.audio.delta` events (its pcm is 32-bit float samples, the rest of the formats this WAV).
+  if (!body.voice && !body.stream) return json(res, 200, { audio_data: audio.toString("base64") });
+  if (!body.voice) {
+    const samples = audio.subarray(44);
+    const pcm = Buffer.alloc((samples.length / 2) * 4);
+    for (let i = 0; i < samples.length / 2; i++) pcm.writeFloatLE(samples.readInt16LE(i * 2) / 32768, i * 4);
+    const out = body.response_format === "pcm" ? pcm : audio;
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const half = Math.floor(out.length / 8) * 4;
+    for (const part of [out.subarray(0, half), out.subarray(half)]) {
+      sse(res, "speech.audio.delta", { type: "speech.audio.delta", audio_data: part.toString("base64") });
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    sse(res, "speech.audio.done", { type: "speech.audio.done", usage: { prompt_tokens: 12, total_tokens: 12, completion_tokens: 0 } });
+    return res.end();
+  }
+  // OpenAI streams the audio as it is made.
   res.writeHead(200, { "content-type": "audio/wav" });
-  res.end(audio);
+  const half = Math.floor(audio.length / 2);
+  res.write(audio.subarray(0, half));
+  await new Promise((r) => setTimeout(r, 200));
+  res.end(audio.subarray(half));
 }
 
 function json(res, status, body) {

@@ -5,17 +5,20 @@
 //! Transcriptions bill the audio's minutes or the tokens the upstream reports. A client asking
 //! for `text`, `srt` or `vtt` gets them made from the JSON the gateway asks the upstream for, so
 //! the usage is always there to bill. Speech bills the characters of its input. Its audio is
-//! returned in one piece: `stream_format: "sse"` is not supported yet.
+//! streamed: sent on as the upstream makes it, as is or as OpenAI's `speech.audio.delta` events
+//! (`stream_format: "sse"`).
 
-use std::sync::Arc;
+use std::{collections::VecDeque, pin::Pin, sync::Arc};
 
 use axum::{
+    body::Body,
     extract::State,
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
 use base64::Engine;
 use bytes::Bytes;
+use futures::{Stream, StreamExt};
 use serde_json::{Value, json};
 
 use crate::{
@@ -26,7 +29,8 @@ use crate::{
     labels::{ClientLabels, Labels},
     model::{Deployment, Mode, ProviderKind, VirtualKey},
     multipart::{self, Part},
-    providers::{self, Op},
+    providers::{self, ByteStream, Op},
+    sse::SseParser,
     state::AppState,
 };
 
@@ -82,11 +86,13 @@ pub async fn serve_transcription(
 
 /// Speak text
 ///
-/// Text to speech, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Returns the audio.
-/// Also served at `/audio/speech`.
+/// Text to speech, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Returns the audio,
+/// streamed as it is made, or `speech.audio.delta` events with `stream_format: "sse"`. Also served
+/// at `/audio/speech`.
 #[utoipa::path(post, path = "/v1/audio/speech", tag = "Inference", request_body = crate::openapi::SpeechRequest,
     responses(
-        (status = 200, description = "The audio, in the requested format.", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 200, description = "The audio, in the requested format, or server-sent events with `stream_format: \"sse\"`.",
+            content((Vec<u8> = "application/octet-stream"), (String = "text/event-stream"))),
         (status = 400, description = "Invalid request.", body = crate::error::OpenAiError),
         (status = 401, description = "Missing, invalid, disabled or expired key.", body = crate::error::OpenAiError),
         (status = 403, description = "The key may not use this model.", body = crate::error::OpenAiError),
@@ -335,6 +341,8 @@ struct Speech {
     voice: Option<String>,
     /// `mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm`.
     format: String,
+    /// `stream_format: "sse"`: the audio as `speech.audio.delta` events rather than as is.
+    sse: bool,
     /// The request as sent, for OpenAI-compatible upstreams.
     raw: Value,
 }
@@ -366,10 +374,12 @@ fn parse_speech(raw: Value) -> Result<Speech, GatewayError> {
         Some(Value::String(f)) if matches!(f.as_str(), "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm") => f.clone(),
         Some(_) => return Err(GatewayError::invalid("response_format must be mp3, opus, aac, flac, wav or pcm")),
     };
-    if raw.get("stream_format").and_then(Value::as_str) == Some("sse") {
-        return Err(GatewayError::invalid("stream_format sse is not supported; the audio comes in one piece"));
-    }
-    Ok(Speech { model, input, voice, format, raw })
+    let sse = match raw.get("stream_format").and_then(|v| if v.is_null() { Some("audio") } else { v.as_str() }) {
+        None | Some("audio") => false,
+        Some("sse") => true,
+        Some(_) => return Err(GatewayError::invalid("stream_format must be audio or sse")),
+    };
+    Ok(Speech { model, input, voice, format, sse, raw })
 }
 
 async fn speak(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &Bytes) -> Result<Response, GatewayError> {
@@ -387,7 +397,7 @@ async fn speak(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &B
         }
     }
 
-    let mut tracker = Tracker::new(state, Some(&key), labels, &req.model, "speech", false);
+    let mut tracker = Tracker::new(state, Some(&key), labels, &req.model, "speech", req.sse);
     if let Some(c) = tracker.log() {
         c.request(crate::capture::Body::Bytes(body.clone()));
     }
@@ -396,16 +406,97 @@ async fn speak(state: &AppState, key: Arc<VirtualKey>, labels: &Labels, body: &B
         return Err(e);
     }
     let req = &req;
-    let (audio, kind) =
+    let (first, rest, kind) =
         super::with_failover(state, &candidates, &req.model, &mut tracker, |d| async move { call_speech(state, &d, req).await }).await?;
+    // The provider bills the input once it speaks, whether or not the client hears all of it.
     tracker.set_usage(Usage { characters: req.input.chars().count() as u64, ..Default::default() });
-    if let Some(c) = tracker.log() {
-        c.response(crate::capture::Body::Json(json!({ "content_type": kind, "bytes": audio.len() })));
-    }
-    let kind = HeaderValue::from_str(&kind).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
-    let mut resp = ([(header::CONTENT_TYPE, kind)], audio).into_response();
-    resp.headers_mut().insert("x-request-id", HeaderValue::from_str(&tracker.id.to_string()).expect("uuid header"));
+    tracker.first_token();
+    let request_id = HeaderValue::from_str(&tracker.id.to_string()).expect("uuid header");
+    let audio = Body::from_stream(send_audio(first, rest, tracker, kind.clone(), req.sse));
+    let mut resp = if req.sse {
+        super::sse_response(audio)
+    } else {
+        let kind = HeaderValue::from_str(&kind).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+        ([(header::CONTENT_TYPE, kind)], audio).into_response()
+    };
+    resp.headers_mut().insert("x-request-id", request_id);
     Ok(resp)
+}
+
+/// The audio of a speech request as the upstream makes it.
+type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, GatewayError>> + Send>>;
+
+/// The audio sent on as it arrives: as is, or as `speech.audio.delta` events ending with
+/// `speech.audio.done`. Audio that fails partway ends the response early: an `error` event, or a
+/// body cut short. The log keeps the audio's type and size, once it ends or the client goes away.
+fn send_audio(
+    first: Bytes,
+    rest: AudioStream,
+    tracker: Tracker,
+    kind: String,
+    sse: bool,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    struct St {
+        first: Option<Bytes>,
+        rest: AudioStream,
+        tracker: Tracker,
+        kind: String,
+        sse: bool,
+        bytes: usize,
+        /// The audio ended, or failed.
+        done: bool,
+        complete: bool,
+    }
+    impl Drop for St {
+        fn drop(&mut self) {
+            let logged = json!({ "content_type": self.kind, "bytes": self.bytes });
+            let complete = self.complete;
+            if let Some(c) = self.tracker.log() {
+                c.response(crate::capture::Body::Json(logged));
+                if !complete {
+                    c.incomplete();
+                }
+            }
+        }
+    }
+    let st = St { first: Some(first), rest, tracker, kind, sse, bytes: 0, done: false, complete: false };
+    futures::stream::unfold(st, |mut st| async move {
+        if st.done {
+            return None;
+        }
+        let next = match st.first.take() {
+            Some(audio) => Some(Ok(audio)),
+            None => st.rest.next().await,
+        };
+        let chunk = match next {
+            Some(Ok(audio)) => {
+                st.bytes += audio.len();
+                if !st.sse {
+                    return Some((Ok(audio), st));
+                }
+                let data = base64::engine::general_purpose::STANDARD.encode(&audio);
+                super::sse_event("speech.audio.delta", &json!({ "type": "speech.audio.delta", "audio": data }))
+            }
+            None => {
+                st.done = true;
+                st.complete = true;
+                st.tracker.stream_ended();
+                if !st.sse {
+                    return None;
+                }
+                super::sse_event("speech.audio.done", &json!({ "type": "speech.audio.done" }))
+            }
+            Some(Err(e)) => {
+                st.done = true;
+                st.tracker.fail(&e);
+                if !st.sse {
+                    return Some((Err(std::io::Error::other(e.message)), st));
+                }
+                super::sse_event("error", &json!({ "type": "error", "error": e.body(Dialect::OpenAi)["error"] }))
+            }
+        };
+        Some((Ok(chunk), st))
+    })
 }
 
 /// The voices deployments list, each once, in their order.
@@ -424,54 +515,186 @@ fn voice_for<'a>(d: &'a Deployment, req: &'a Speech) -> Option<&'a str> {
     req.voice.as_deref().or_else(|| d.config.default_voice())
 }
 
-/// The audio and its content type.
-async fn call_speech(state: &AppState, d: &Deployment, req: &Speech) -> Result<(Bytes, String), GatewayError> {
+/// The audio's first chunk, the rest as it comes, and its content type. Upstreams are always asked
+/// to stream; waiting for the first chunk lets one that fails before any audio be retried elsewhere.
+async fn call_speech(state: &AppState, d: &Deployment, req: &Speech) -> Result<(Bytes, AudioStream, String), GatewayError> {
     let mistral = d.provider == ProviderKind::Mistral;
     let body = if mistral { mistral_speech(d, req)? } else { openai_speech(d, req) };
     let url = providers::url(state, d, Op::Speech).await?;
     let resp = providers::post(state, d, &url, providers::headers(d)?, providers::json_bytes(&body)).await?;
-    if mistral {
-        let v: Value = resp.json().await.map_err(|e| GatewayError::from_reqwest(&e))?;
-        return Ok((mistral_audio(&v)?, audio_type(&req.format).to_string()));
+    let (mut audio, kind) = if mistral {
+        let mut audio = mistral_stream(providers::body_stream(resp));
+        if req.format == "pcm" {
+            let mut pcm = Pcm16::default();
+            audio = audio.map(move |r| r.map(|chunk| pcm.convert(&chunk))).boxed();
+        }
+        (audio, audio_type(&req.format).to_string())
+    } else {
+        let kind = resp.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(str::to_string);
+        let audio: AudioStream = providers::body_stream(resp).map(|r| r.map_err(|e| GatewayError::from_reqwest(&e))).boxed();
+        (audio, kind.unwrap_or_else(|| audio_type(&req.format).to_string()))
+    };
+    loop {
+        match audio.next().await {
+            Some(Ok(first)) if first.is_empty() => continue,
+            Some(Ok(first)) => return Ok((first, audio, kind)),
+            Some(Err(e)) => return Err(e),
+            None => return Err(GatewayError::upstream_stream(ErrorKind::Upstream, "the speech model returned no audio")),
+        }
     }
-    let kind = resp.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(str::to_string);
-    let audio = resp.bytes().await.map_err(|e| GatewayError::from_reqwest(&e))?;
-    if audio.is_empty() {
-        return Err(GatewayError::upstream_stream(ErrorKind::Upstream, "the speech model returned no audio"));
-    }
-    Ok((audio, kind.unwrap_or_else(|| audio_type(&req.format).to_string())))
 }
 
+/// The request as sent, for the deployment's model and voice. The audio comes back as is: with
+/// `stream_format: "sse"` the gateway makes the events itself.
 fn openai_speech(d: &Deployment, req: &Speech) -> Value {
     let mut body = req.raw.clone();
     body["model"] = d.upstream_model.clone().into();
     body["voice"] = voice_for(d, req).unwrap_or(DEFAULT_VOICE).into();
+    if let Some(o) = body.as_object_mut() {
+        o.remove("stream_format");
+    }
     body
 }
 
-/// Mistral's request. Without a voice of Mistral's (none, or one of OpenAI's names) it speaks in
-/// `MISTRAL_VOICE`; `instructions` and `speed` have no counterpart and are not sent.
+/// Mistral's request, streamed. Without a voice of Mistral's (none, or one of OpenAI's names) it
+/// speaks in `MISTRAL_VOICE`; `instructions` and `speed` have no counterpart and are not sent.
 fn mistral_speech(d: &Deployment, req: &Speech) -> Result<Value, GatewayError> {
     if req.format == "aac" {
         return Err(GatewayError::invalid("Mistral speaks mp3, opus, flac, wav or pcm"));
     }
-    Ok(
-        json!({ "model": d.upstream_model, "input": req.input, "voice_id": mistral_voice(voice_for(d, req)), "response_format": req.format }),
-    )
+    Ok(json!({
+        "model": d.upstream_model,
+        "input": req.input,
+        "voice_id": mistral_voice(voice_for(d, req)),
+        "response_format": req.format,
+        "stream": true,
+    }))
 }
 
 fn mistral_voice(voice: Option<&str>) -> &str {
     voice.filter(|v| !OPENAI_VOICES.contains(v)).unwrap_or(MISTRAL_VOICE)
 }
 
-/// Mistral returns the audio base64-encoded in JSON.
-fn mistral_audio(v: &Value) -> Result<Bytes, GatewayError> {
-    let data = v["audio_data"].as_str().filter(|s| !s.is_empty());
-    let data = data.ok_or_else(|| GatewayError::upstream_stream(ErrorKind::Upstream, "the speech model returned no audio"))?;
-    let audio = base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .map_err(|_| GatewayError::upstream_stream(ErrorKind::Upstream, "the speech model's audio is not base64"))?;
-    Ok(Bytes::from(audio))
+/// One event of Mistral's streamed speech.
+#[derive(Debug, PartialEq)]
+enum MistralPiece {
+    Audio(Bytes),
+    Done,
+    Other,
+}
+
+/// Mistral's events: `speech.audio.delta` with base64 `audio_data`, then `speech.audio.done`.
+fn mistral_piece(event: Option<&str>, data: &str) -> Result<MistralPiece, GatewayError> {
+    let failed = |m: &str| GatewayError::upstream_stream(ErrorKind::Upstream, m.to_string());
+    if data.trim() == "[DONE]" {
+        return Ok(MistralPiece::Done);
+    }
+    let v: Value = serde_json::from_str(data).map_err(|_| failed("the speech model sent an event that is not JSON"))?;
+    match v["type"].as_str().or(event) {
+        Some("speech.audio.delta") => {
+            let data = v["audio_data"].as_str().unwrap_or_default();
+            let audio =
+                base64::engine::general_purpose::STANDARD.decode(data).map_err(|_| failed("the speech model's audio is not base64"))?;
+            Ok(MistralPiece::Audio(Bytes::from(audio)))
+        }
+        Some("speech.audio.done") => Ok(MistralPiece::Done),
+        kind if kind == Some("error") || v.get("error").is_some() || v["object"] == "error" => {
+            let message = v.pointer("/error/message").or_else(|| v.get("message")).and_then(Value::as_str);
+            Err(failed(message.unwrap_or("the speech model failed")))
+        }
+        _ => Ok(MistralPiece::Other),
+    }
+}
+
+/// Mistral's streamed speech as audio. It ends at `speech.audio.done`; an upstream that closes
+/// before it fails, as the audio may be cut short.
+fn mistral_stream(body: ByteStream) -> AudioStream {
+    struct St {
+        body: ByteStream,
+        parser: SseParser,
+        pending: VecDeque<Result<Bytes, GatewayError>>,
+        /// No more to read: the audio is done, or failed.
+        ended: bool,
+    }
+    fn take(st: &mut St, events: Vec<crate::sse::SseEvent>) {
+        for ev in events {
+            if st.ended {
+                return;
+            }
+            match mistral_piece(ev.event.as_deref(), &ev.data) {
+                Ok(MistralPiece::Audio(a)) => st.pending.push_back(Ok(a)),
+                Ok(MistralPiece::Done) => st.ended = true,
+                Ok(MistralPiece::Other) => {}
+                Err(e) => {
+                    st.pending.push_back(Err(e));
+                    st.ended = true;
+                }
+            }
+        }
+    }
+    let st = St { body, parser: SseParser::default(), pending: VecDeque::new(), ended: false };
+    futures::stream::unfold(st, |mut st| async move {
+        loop {
+            if let Some(item) = st.pending.pop_front() {
+                return Some((item, st));
+            }
+            if st.ended {
+                return None;
+            }
+            match st.body.next().await {
+                Some(Ok(chunk)) => {
+                    let events = st.parser.feed(&chunk);
+                    take(&mut st, events);
+                    if st.parser.too_large() && !st.ended {
+                        st.pending.push_back(Err(GatewayError::upstream_stream(
+                            ErrorKind::Upstream,
+                            "the speech model sent an event too large to read",
+                        )));
+                        st.ended = true;
+                    }
+                }
+                Some(Err(e)) => {
+                    st.pending.push_back(Err(GatewayError::from_reqwest(&e)));
+                    st.ended = true;
+                }
+                None => {
+                    let events = st.parser.finish();
+                    take(&mut st, events);
+                    if !st.ended {
+                        st.pending.push_back(Err(GatewayError::upstream_stream(
+                            ErrorKind::Upstream,
+                            "the speech stream ended before its audio was complete",
+                        )));
+                        st.ended = true;
+                    }
+                }
+            }
+        }
+    })
+    .boxed()
+}
+
+/// Mistral's `pcm` as OpenAI's: Mistral's samples are 32-bit floats, OpenAI's (which clients
+/// expect) 16-bit integers, both little-endian, mono at 24 kHz. A sample may span two chunks.
+#[derive(Default)]
+struct Pcm16 {
+    /// The start of a sample the last chunk cut off.
+    rest: Vec<u8>,
+}
+
+impl Pcm16 {
+    fn convert(&mut self, chunk: &[u8]) -> Bytes {
+        self.rest.extend_from_slice(chunk);
+        let whole = self.rest.len() / 4 * 4;
+        let mut out = Vec::with_capacity(whole / 2);
+        for s in self.rest[..whole].as_chunks::<4>().0 {
+            let v = f32::from_le_bytes(*s);
+            let v = if v.is_nan() { 0.0 } else { v.clamp(-1.0, 1.0) };
+            out.extend_from_slice(&((v * 32767.0).round() as i16).to_le_bytes());
+        }
+        self.rest.drain(..whole);
+        Bytes::from(out)
+    }
 }
 
 /// The content type of a speech `response_format`, as OpenAI sends it.
@@ -503,8 +726,12 @@ pub async fn probe_transcription(state: &AppState, d: &Deployment) -> Result<(St
 pub async fn probe_speech(state: &AppState, d: &Deployment) -> Result<(usize, String, Usage), GatewayError> {
     let raw = json!({ "model": d.model_name, "input": "Health check from the inference gateway." });
     let req = parse_speech(raw)?;
-    let (audio, kind) = call_speech(state, d, &req).await?;
-    Ok((audio.len(), kind, Usage { characters: req.input.chars().count() as u64, ..Default::default() }))
+    let (first, mut rest, kind) = call_speech(state, d, &req).await?;
+    let mut bytes = first.len();
+    while let Some(audio) = rest.next().await {
+        bytes += audio?.len();
+    }
+    Ok((bytes, kind, Usage { characters: req.input.chars().count() as u64, ..Default::default() }))
 }
 
 /// A WAV file of `seconds` of silence: 16 kHz, mono, 16 bit.
@@ -596,23 +823,64 @@ mod tests {
         let r = parse_speech(json!({ "model": "tts", "input": "Hi", "voice": { "id": "voice_478" }, "response_format": "wav" })).unwrap();
         assert_eq!((r.voice.as_deref(), r.format.as_str()), (Some("voice_478"), "wav"));
         assert_eq!(parse_speech(json!({ "model": "tts", "input": "Hi" })).unwrap().format, "mp3");
+        assert!(parse_speech(json!({ "model": "tts", "input": "Hi", "stream_format": "sse" })).unwrap().sse);
+        assert!(!parse_speech(json!({ "model": "tts", "input": "Hi", "stream_format": "audio" })).unwrap().sse);
         for bad in [
             json!({ "input": "Hi" }),
             json!({ "model": "tts", "input": " " }),
             json!({ "model": "tts", "input": "Hi", "response_format": "ogg" }),
-            json!({ "model": "tts", "input": "Hi", "stream_format": "sse" }),
+            json!({ "model": "tts", "input": "Hi", "stream_format": "chunks" }),
             json!({ "model": "tts", "input": "x".repeat(MAX_SPEECH_CHARS + 1) }),
         ] {
             assert!(parse_speech(bad.clone()).is_err(), "accepted {bad}");
         }
-        assert_eq!(mistral_audio(&json!({ "audio_data": "SUQz" })).unwrap(), Bytes::from_static(b"ID3"));
-        assert!(mistral_audio(&json!({ "audio_data": "" })).is_err());
         assert_eq!(audio_type("opus"), "audio/ogg");
         // Mistral needs a voice of its own.
         assert_eq!(
             [mistral_voice(None), mistral_voice(Some("alloy")), mistral_voice(Some("voice_478"))],
             [MISTRAL_VOICE, MISTRAL_VOICE, "voice_478"]
         );
+    }
+
+    fn upstream(chunks: &[&str]) -> ByteStream {
+        let chunks: Vec<_> = chunks.iter().map(|c| Ok(Bytes::from(c.to_string()))).collect();
+        futures::stream::iter(chunks).boxed()
+    }
+
+    async fn audio(chunks: &[&str]) -> Vec<Result<Bytes, String>> {
+        mistral_stream(upstream(chunks)).map(|r| r.map_err(|e| e.message)).collect().await
+    }
+
+    #[tokio::test]
+    async fn mistral_streams_become_audio() {
+        let delta =
+            |b64: &str| format!("event: speech.audio.delta\ndata: {{\"type\":\"speech.audio.delta\",\"audio_data\":\"{b64}\"}}\n\n");
+        let done = "event: speech.audio.done\ndata: {\"type\":\"speech.audio.done\",\"usage\":{\"prompt_tokens\":3}}\n\n";
+        // Events split across chunks; each delta decodes on its own.
+        let all = format!("{}{}{done}", delta("SUQz"), delta("AAE="));
+        let (a, b) = all.split_at(30);
+        assert_eq!(audio(&[a, b]).await, [Ok(Bytes::from_static(b"ID3")), Ok(Bytes::from_static(&[0, 1]))]);
+        // Nothing after `speech.audio.done` is read.
+        assert_eq!(audio(&[&format!("{}{done}{}", delta("SUQz"), delta("AAE="))]).await.len(), 1);
+        // Closed before it was done, or failed: the audio ends in an error.
+        let cut = audio(&[&delta("SUQz")]).await;
+        assert!(cut[0].is_ok() && cut[1].as_ref().is_err_and(|e| e.contains("ended before")));
+        let failed = audio(&["data: {\"object\":\"error\",\"message\":\"Voice 'x' not found.\"}\n\n"]).await;
+        assert!(failed.len() == 1 && failed[0].as_ref().is_err_and(|e| e.ends_with("Voice 'x' not found.")));
+        assert!(mistral_piece(None, "{\"type\":\"speech.audio.delta\",\"audio_data\":\"%%\"}").is_err());
+    }
+
+    #[test]
+    fn mistral_pcm_becomes_16_bit() {
+        let samples: Vec<u8> = [0.5f32, -1.0, 2.0, f32::NAN].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let mut pcm = Pcm16::default();
+        // Split inside the second sample: it comes out with the next chunk.
+        let (a, b) = samples.split_at(6);
+        let mut out = pcm.convert(a).to_vec();
+        assert_eq!(out.len(), 2);
+        out.extend_from_slice(&pcm.convert(b));
+        let got: Vec<i16> = out.as_chunks::<2>().0.iter().map(|s| i16::from_le_bytes(*s)).collect();
+        assert_eq!(got, [16384, -32767, 32767, 0]);
     }
 
     #[test]

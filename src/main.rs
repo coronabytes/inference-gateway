@@ -258,7 +258,7 @@ async fn run() -> Result<(), String> {
         .layer(header("referrer-policy", "no-referrer"))
         .layer(header(
             "content-security-policy",
-            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; frame-ancestors 'none'",
         ))
         .with_state(state.clone());
 

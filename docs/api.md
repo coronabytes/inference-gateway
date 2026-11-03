@@ -111,12 +111,12 @@ Models that report tokens are billed per token, the others per minute of audio. 
 
 ## Text to speech
 
-Clients send OpenAI's speech request (`model`, `input` up to 4,096 characters, `voice`, `response_format` `mp3`, `opus`, `aac`, `flac`, `wav` or `pcm`) and get the audio. Speech is billed per character of input.
+Clients send OpenAI's speech request (`model`, `input` up to 4,096 characters, `voice`, `response_format` `mp3`, `opus`, `aac`, `flac`, `wav` or `pcm`) and get the audio, streamed: sent on as the model speaks it, so clients hear the first words before the rest is made. With `stream_format: "sse"` the audio comes as OpenAI's `speech.audio.delta` events (base64 `audio`), ending with `speech.audio.done`; audio that fails partway ends with an `error` event, and a plain audio response is cut short. `pcm` is OpenAI's: 24 kHz, mono, 16-bit little-endian, and the format that starts soonest. Speech is billed per character of input.
 
 - **OpenAI-compatible and Azure OpenAI:** passed through, with `alloy` when the request names no voice.
-- **Mistral:** Voxtral TTS, translated both ways. Mistral takes no `aac`, `instructions` or `speed`; its default voice is `gb_jane_neutral`.
+- **Mistral:** Voxtral TTS, translated both ways. Mistral takes no `aac`, `instructions` or `speed`; its default voice is `gb_jane_neutral`. Mistral's 32-bit `pcm` is sent on as 16-bit.
 
-A speech deployment can list its voices, each with a name for the playground. The first is the default; requests for other voices are refused unless the list has `*`, which lets them through. The playground offers the listed voices in a dropdown. `stream_format: "sse"` is not supported yet.
+A speech deployment can list its voices, each with a name for the playground. The first is the default; requests for other voices are refused unless the list has `*`, which lets them through. The playground offers the listed voices in a dropdown, and plays `pcm` speech (and replies read aloud) while it arrives.
 
 ## Decision models
 

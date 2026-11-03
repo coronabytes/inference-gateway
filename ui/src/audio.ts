@@ -58,11 +58,15 @@ export async function transcribe(
 
 export interface Speech {
   audio: Blob;
+  /** Until the whole audio arrived, or with a `player` until its first sound. */
   latency: number;
   requestId?: string;
 }
 
-/** Speak `text` with `model` as the key, through the admin playground. */
+/**
+ * Speak `text` with `model` as the key, through the admin playground. With a `player` the speech is
+ * `pcm`, played as it arrives, and its audio is then a WAV file of it.
+ */
 export async function speak(
   keyId: string,
   model: string,
@@ -70,12 +74,108 @@ export async function speak(
   labels: Labels,
   options: { voice?: string; response_format?: string } = {},
   signal?: AbortSignal,
+  player?: PcmPlayer,
 ): Promise<Speech> {
-  const body = { model, input: text.slice(0, MAX_SPEECH_CHARS), ...Object.fromEntries(Object.entries(options).filter(([, v]) => v)) };
+  const fields = { ...options, ...(player && { response_format: "pcm" }) };
+  const body = { model, input: text.slice(0, MAX_SPEECH_CHARS), ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v)) };
   const started = performance.now();
   const res = await adminFetch(`/playground/speech?key_id=${encodeURIComponent(keyId)}`, body, signal, labelHeaders(labels));
   if (!res.ok) throw await failure(res);
-  return { audio: await res.blob(), latency: performance.now() - started, requestId: res.headers.get("x-request-id") ?? undefined };
+  const requestId = res.headers.get("x-request-id") ?? undefined;
+  if (!player || !res.body) return { audio: await res.blob(), latency: performance.now() - started, requestId };
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+  let latency: number | undefined;
+  const reader = res.body.getReader();
+  for (let r = await reader.read(); !r.done; r = await reader.read()) {
+    latency ??= performance.now() - started;
+    player.push(r.value);
+    parts.push(r.value);
+  }
+  return { audio: wav(parts), latency: latency ?? performance.now() - started, requestId };
+}
+
+/** Speech `pcm`, as OpenAI sends it: 24 kHz, mono, 16-bit little-endian samples. */
+const PCM_RATE = 24_000;
+
+/** A WAV file of `pcm` chunks. */
+function wav(pcm: Uint8Array<ArrayBuffer>[]): Blob {
+  const size = pcm.reduce((n, c) => n + c.length, 0) & ~1;
+  const head = new DataView(new ArrayBuffer(44));
+  const text = (at: number, s: string) => [...s].forEach((c, i) => head.setUint8(at + i, c.charCodeAt(0)));
+  text(0, "RIFF");
+  head.setUint32(4, 36 + size, true);
+  text(8, "WAVEfmt ");
+  head.setUint32(16, 16, true);
+  head.setUint16(20, 1, true); // PCM
+  head.setUint16(22, 1, true); // mono
+  head.setUint32(24, PCM_RATE, true);
+  head.setUint32(28, PCM_RATE * 2, true);
+  head.setUint16(32, 2, true);
+  head.setUint16(34, 16, true);
+  text(36, "data");
+  head.setUint32(40, size, true);
+  return new Blob([head, ...pcm], { type: "audio/wav" });
+}
+
+/**
+ * Plays `pcm` speech while it arrives: each chunk is queued right after the one before, so the
+ * first words sound while the rest is still being spoken by the model.
+ */
+export class PcmPlayer {
+  private ctx = new AudioContext({ sampleRate: PCM_RATE });
+  /** When the queued audio ends, on the context's clock. */
+  private end = 0;
+  /** The byte of a sample split across two chunks. */
+  private odd: number | null = null;
+  private last: AudioBufferSourceNode | null = null;
+  private started = false;
+
+  /** `onStart` runs when the first sound plays. */
+  constructor(private onStart?: () => void) {}
+
+  push(bytes: Uint8Array) {
+    if (this.ctx.state === "closed") return;
+    let data = bytes;
+    if (this.odd !== null) {
+      data = new Uint8Array(bytes.length + 1);
+      data[0] = this.odd;
+      data.set(bytes, 1);
+      this.odd = null;
+    }
+    if (data.length % 2) this.odd = data[data.length - 1];
+    const n = data.length >> 1;
+    if (!n) return;
+    const view = new DataView(data.buffer, data.byteOffset, n * 2);
+    const buffer = this.ctx.createBuffer(1, n, PCM_RATE);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < n; i++) samples[i] = view.getInt16(i * 2, true) / 0x8000;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.ctx.destination);
+    // A little ahead of now, so a chunk that arrives late starts cleanly instead of clipped.
+    const at = Math.max(this.end, this.ctx.currentTime + 0.05);
+    source.start(at);
+    this.end = at + buffer.duration;
+    this.last = source;
+    if (!this.started) {
+      this.started = true;
+      this.onStart?.();
+    }
+  }
+
+  /** Resolves once everything pushed so far has played. */
+  finished(): Promise<void> {
+    const last = this.last;
+    if (!last || this.ctx.state === "closed" || this.ctx.currentTime >= this.end) return Promise.resolve();
+    return new Promise((resolve) => {
+      last.onended = () => resolve();
+      this.ctx.addEventListener("statechange", () => this.ctx.state === "closed" && resolve());
+    });
+  }
+
+  close() {
+    this.ctx.close().catch(() => {});
+  }
 }
 
 /** Records from the microphone: `start` asks for it, `stop` resolves with the recording. */
@@ -124,25 +224,30 @@ export function useRecorder() {
 /** Plays one sound at a time; `playing` is the id of what plays. */
 export function usePlayer() {
   const [playing, setPlaying] = useState<string | null>(null);
-  const audio = useRef<HTMLAudioElement | null>(null);
+  const current = useRef<{ player: PcmPlayer; abort: AbortController } | null>(null);
 
   const stop = useCallback(() => {
-    if (audio.current) {
-      audio.current.pause();
-      URL.revokeObjectURL(audio.current.src);
-      audio.current = null;
-    }
+    current.current?.abort.abort();
+    current.current?.player.close();
+    current.current = null;
     setPlaying(null);
   }, []);
 
+  /**
+   * Plays the speech `fetch` streams into the player it is given, and resolves once it has
+   * played; `playing` is `id` from its first sound. Stopping it aborts `fetch`.
+   */
   const play = useCallback(
-    async (id: string, blob: Blob) => {
+    async (id: string, fetch: (player: PcmPlayer, signal: AbortSignal) => Promise<unknown>) => {
       stop();
-      const a = new Audio(URL.createObjectURL(blob));
-      audio.current = a;
-      a.onended = () => audio.current === a && stop();
-      setPlaying(id);
-      await a.play();
+      const s = { player: new PcmPlayer(() => current.current === s && setPlaying(id)), abort: new AbortController() };
+      current.current = s;
+      try {
+        await fetch(s.player, s.abort.signal);
+        await s.player.finished();
+      } finally {
+        if (current.current === s) stop();
+      }
     },
     [stop],
   );
@@ -186,41 +291,6 @@ export async function isSilent(audio: Blob): Promise<boolean> {
 
 /** OpenAI's rate for realtime transcription, which the gateway passes on to the model. */
 const LIVE_RATE = 24_000;
-
-/**
- * Captures the microphone as PCM16 at `rate`, in chunks of 100 ms, posted to the main thread.
- * Each output sample averages the input samples it covers, which keeps resampling from aliasing.
- */
-const CAPTURE_WORKLET = `
-class PcmCapture extends AudioWorkletProcessor {
-  constructor(options) {
-    super();
-    this.ratio = sampleRate / options.processorOptions.rate;
-    this.size = Math.round(options.processorOptions.rate / 10);
-    this.out = new Int16Array(this.size);
-    this.n = 0; this.sum = 0; this.count = 0; this.acc = 0; this.last = 0;
-  }
-  process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (!ch) return true;
-    for (let i = 0; i < ch.length; i++) {
-      this.sum += ch[i]; this.count++; this.acc += 1;
-      while (this.acc >= this.ratio) {
-        this.acc -= this.ratio;
-        if (this.count) { this.last = this.sum / this.count; this.sum = 0; this.count = 0; }
-        const v = Math.max(-1, Math.min(1, this.last));
-        this.out[this.n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
-        if (this.n === this.size) {
-          this.port.postMessage(this.out.buffer, [this.out.buffer]);
-          this.out = new Int16Array(this.size); this.n = 0;
-        }
-      }
-    }
-    return true;
-  }
-}
-registerProcessor("pcm-capture", PcmCapture);
-`;
 
 function base64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
@@ -311,9 +381,7 @@ export function useLiveTranscription() {
             },
           }),
         );
-        const url = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: "text/javascript" }));
-        await ctx.audioWorklet.addModule(url);
-        URL.revokeObjectURL(url);
+        await ctx.audioWorklet.addModule("/pcm-capture.js");
         const capture = new AudioWorkletNode(ctx, "pcm-capture", { processorOptions: { rate: LIVE_RATE } });
         capture.port.onmessage = (e) => {
           if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: base64(e.data) }));

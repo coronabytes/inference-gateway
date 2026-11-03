@@ -583,15 +583,14 @@ export function Playground() {
   /** Reads a reply aloud with the speech model, or stops it while it plays. A ref, so the bubbles keep one callback. */
   const readAloud = useRef<(index: number, text: string) => void>(() => {});
   readAloud.current = async (index, text) => {
-    if (player.playing === String(index)) return player.stop();
+    if (player.playing === String(index) || loadingAudio === index) return player.stop();
     if (!tts || !keyId) return;
-    player.stop();
     setLoadingAudio(index);
     try {
-      const s = await speak(keyId, tts, text, labels, { voice: audio.voice });
-      await player.play(String(index), s.audio);
+      // Streamed, so the reply is heard from its first words while the rest is still being spoken.
+      await player.play(String(index), (p, signal) => speak(keyId, tts, text, labels, { voice: audio.voice }, signal, p));
     } catch (e) {
-      setError(`Could not read the reply aloud: ${(e as Error).message}`);
+      if ((e as Error).name !== "AbortError") setError(`Could not read the reply aloud: ${(e as Error).message}`);
     } finally {
       setLoadingAudio((i) => (i === index ? null : i));
     }

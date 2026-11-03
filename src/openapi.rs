@@ -243,8 +243,10 @@ mod schemas {
         voice: Option<String>,
         /// How to speak (OpenAI's gpt-4o-mini-tts).
         instructions: Option<String>,
-        /// `mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm`.
+        /// `mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm` (24 kHz, mono, 16-bit little-endian).
         response_format: Option<String>,
+        /// `audio` (default): the audio as it is made; `sse`: `speech.audio.delta` events.
+        stream_format: Option<String>,
         /// 0.25 to 4.0 (OpenAI).
         speed: Option<f64>,
     }

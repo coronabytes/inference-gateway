@@ -9,7 +9,9 @@ import {
   speak,
   transcribe,
   useLiveTranscription,
+  usePlayer,
   useRecorder,
+  type Speech,
   type Transcript,
 } from "../audio";
 import { labelHeaders, type Labels } from "../labels";
@@ -740,7 +742,10 @@ export function TranscriptionPanel({ keyId, model, labels }: PanelProps) {
 
 // ---------------------------------------------------------------- text to speech
 
-const SPEECH_FORMATS = ["mp3", "wav", "opus", "flac"].map((f) => ({ value: f, label: f }));
+const SPEECH_FORMATS = [
+  { value: "pcm", label: "pcm", note: "streamed" },
+  ...["mp3", "wav", "opus", "flac"].map((f) => ({ value: f, label: f })),
+];
 
 export function SpeechPanel({ keyId, keyName, model, labels, voices }: PanelProps & { voices: Voice[] }) {
   const [text, setText] = useState("Hello! This is the inference gateway, reading text aloud.");
@@ -750,21 +755,31 @@ export function SpeechPanel({ keyId, keyName, model, labels, voices }: PanelProp
   const [choice, setChoice] = useState(listed[0]?.id ?? ANY_VOICE);
   const [typed, setTyped] = useState("");
   const voice = choice === ANY_VOICE ? typed : choice;
-  const [format, setFormat] = useState("mp3");
+  const [format, setFormat] = useState("pcm");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ audio: Blob; meta: Meta; characters: number } | null>(null);
+  const [result, setResult] = useState<{ audio: Blob; meta: Meta; characters: number; streamed: boolean } | null>(null);
+  const player = usePlayer();
   const url = useObjectUrl(result?.audio ?? null);
   const body = { model, input: text, ...(voice.trim() && { voice: voice.trim() }), response_format: format };
 
   const submit = async () => {
     setBusy(true);
     setError(null);
+    const done = (s: Speech, streamed: boolean) =>
+      setResult({ audio: s.audio, characters: [...text].length, streamed, meta: { model, latency: s.latency, requestId: s.requestId } });
     try {
-      const s = await speak(keyId, model, text, labels, { voice: voice.trim(), response_format: format });
-      setResult({ audio: s.audio, characters: [...text].length, meta: { model, latency: s.latency, requestId: s.requestId } });
+      if (format === "pcm") {
+        // Plays while it arrives; the audio shows here once all of it has.
+        await player.play("speech", async (p, signal) => {
+          done(await speak(keyId, model, text, labels, { voice: voice.trim() }, signal, p), true);
+          setBusy(false);
+        });
+      } else {
+        done(await speak(keyId, model, text, labels, { voice: voice.trim(), response_format: format }), false);
+      }
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error).name !== "AbortError") setError((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -801,13 +816,25 @@ export function SpeechPanel({ keyId, keyName, model, labels, voices }: PanelProp
               placeholder="default"
             />
           )}
-          <Select caption="Format" value={format} onChange={setFormat} options={SPEECH_FORMATS} />
+          <Select
+            caption="Format"
+            hint="pcm plays while it arrives, from the first words on; the other formats play once all of the audio has."
+            value={format}
+            onChange={setFormat}
+            options={SPEECH_FORMATS}
+          />
         </div>
         <div className="panel-actions">
           <CurlButton request={() => ({ path: "/v1/audio/speech", body, labels })} keyName={keyName} disabled={!text.trim()} />
-          <Button variant="primary" onClick={submit} disabled={busy || !text.trim()}>
-            {busy ? "Speaking…" : "Speak"}
-          </Button>
+          {player.playing ? (
+            <Button variant="primary" onClick={player.stop}>
+              Stop
+            </Button>
+          ) : (
+            <Button variant="primary" onClick={submit} disabled={busy || !text.trim()}>
+              {busy ? "Speaking…" : "Speak"}
+            </Button>
+          )}
         </div>
       </div>
       <div className="card">
@@ -815,9 +842,12 @@ export function SpeechPanel({ keyId, keyName, model, labels, voices }: PanelProp
         {!result && !error && <div className="muted">The audio plays here.</div>}
         {result && url && (
           <>
-            <MetaLine meta={result.meta} extra={`${compact(result.characters)} characters · ${bytes(result.audio.size)}`} />
-            <audio className="audio-preview" controls autoPlay src={url} />
-            <a className="small" href={url} download={`speech.${format}`}>
+            <MetaLine
+              meta={result.meta}
+              extra={`${result.streamed ? "to first sound · " : ""}${compact(result.characters)} characters · ${bytes(result.audio.size)}`}
+            />
+            <audio className="audio-preview" controls autoPlay={!result.streamed} src={url} />
+            <a className="small" href={url} download={`speech.${result.audio.type === "audio/wav" ? "wav" : format}`}>
               Download
             </a>
           </>
