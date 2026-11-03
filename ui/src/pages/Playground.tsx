@@ -5,7 +5,7 @@ import { Banner, Button, FileButton, MenuButton, MessageInput, MultiSelect, Spli
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { LabelEditor } from "../components/LabelInput";
 import { SearchSelect } from "../components/SearchSelect";
-import { AttachIcon, EffortIcon, ErrorBanner, GlobeIcon, MicIcon, PlugIcon, SpeakerIcon, StopIcon } from "../components/ui";
+import { AttachIcon, EffortIcon, ErrorBanner, GearIcon, GlobeIcon, MicIcon, PlugIcon, SpeakerIcon, StopIcon } from "../components/ui";
 import { EFFORTS } from "../efforts";
 import { bytes, compact, ms } from "../format";
 import { labelHeaders, type Labels } from "../labels";
@@ -13,6 +13,7 @@ import { sse } from "../sse";
 import { KeySignIns, takeSignInResult } from "./KeySignIns";
 import { MODES } from "./DeploymentForm";
 import { AgentPanel } from "./PlaygroundAgent";
+import { AudioSettingsDialog, audioModels, useAudioSettings } from "./playground/audio";
 import { DecisionPanel, EmbeddingPanel, LiveTranscriptionPanel, RerankPanel, SpeechPanel, TranscriptionPanel } from "./PlaygroundPanels";
 import {
   APIS,
@@ -334,7 +335,9 @@ export function Playground() {
   /** Guardrails to apply on top of those enforced on the key. */
   const [pickedGuardrails, setPickedGuardrails] = useState<string[]>([]);
   const abort = useRef<AbortController | null>(null);
-  // Dictation and reading aloud, with the key's speech to text and text to speech models.
+  // Dictation and reading aloud, with the speech to text and text to speech models of the audio settings.
+  const [audioSettings, saveAudioSettings] = useAudioSettings();
+  const [audioOpen, setAudioOpen] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [loadingAudio, setLoadingAudio] = useState<number | null>(null);
   const recorder = useRecorder();
@@ -399,13 +402,14 @@ export function Playground() {
   // Sorted by name; the A2A agents after the models.
   const models = useMemo(() => [...options.models.map((m) => m.name), ...options.a2a_agents.map((a) => AGENT + a.name)], [options]);
   const chosen = options.models.find((m) => m.name === model);
-  // The key's first speech to text and text to speech models, for dictating and reading aloud.
-  // Dictation streams to a realtime model, where the key has one, so words appear as they are said;
-  // otherwise it records, then sends the recording to a transcription model.
-  const sttLive = options.models.find((m) => m.mode === "transcription" && m.realtime)?.name;
-  const stt = sttLive ?? options.models.find((m) => m.mode === "transcription")?.name;
+  // The speech to text and text to speech models for dictating and reading aloud: the audio
+  // settings', else the key's first. Dictation streams to a realtime model so words appear as they
+  // are said; with any other it records, then sends the recording.
+  const audio = audioModels(options.models, audioSettings);
+  const stt = audio.stt;
+  const sttLive = audio.live ? audio.stt : undefined;
   const dictating = recorder.recording || liveMic.live;
-  const tts = options.models.find((m) => m.mode === "speech")?.name;
+  const tts = audio.tts;
   /** The A2A agent chosen instead of a model. */
   const agent = model.startsWith(AGENT) ? model.slice(AGENT.length) : null;
   const mode: Mode | "agent" = agent ? "agent" : (chosen?.mode ?? "chat");
@@ -584,7 +588,7 @@ export function Playground() {
     player.stop();
     setLoadingAudio(index);
     try {
-      const s = await speak(keyId, tts, text, labels);
+      const s = await speak(keyId, tts, text, labels, { voice: audio.voice });
       await player.play(String(index), s.audio);
     } catch (e) {
       setError(`Could not read the reply aloud: ${(e as Error).message}`);
@@ -606,13 +610,13 @@ export function Playground() {
       }
       return;
     }
-    const audio = await recorder.stop();
-    if (!audio || !stt) return;
+    const recording = await recorder.stop();
+    if (!recording || !stt) return;
     setTranscribing(true);
     try {
       // Silence would come back as an empty transcript, with nothing to say why.
-      if (await isSilent(audio)) return setError(SILENT_RECORDING);
-      const text = (await transcribe(keyId, stt, audio, labels)).text.trim();
+      if (await isSilent(recording)) return setError(SILENT_RECORDING);
+      const text = (await transcribe(keyId, stt, recording, labels)).text.trim();
       if (text) setInput((cur) => (cur.trim() ? `${cur.trimEnd()} ${text}` : text));
       composer.current?.focus();
     } catch (e) {
@@ -943,6 +947,16 @@ export function Playground() {
                   <EffortIcon />
                 </MenuButton>
               )}
+              {(stt || tts) && (
+                <Button
+                  className="icon-btn composer-attach"
+                  aria-label="Audio settings"
+                  title={`Audio settings: dictation by ${stt ?? "none"}, replies read aloud by ${tts ?? "none"}${audio.voice ? ` in voice ${audio.voice}` : ""}`}
+                  onClick={() => setAudioOpen(true)}
+                >
+                  <GearIcon />
+                </Button>
+              )}
               <MessageInput
                 ref={composer}
                 value={input}
@@ -1006,6 +1020,9 @@ export function Playground() {
         </>
       )}
       {curlShown && <CurlDialog request={curlShown} keyName={key?.name} onClose={() => setCurlShown(null)} />}
+      {audioOpen && (
+        <AudioSettingsDialog models={options.models} value={audioSettings} onSave={saveAudioSettings} onClose={() => setAudioOpen(false)} />
+      )}
     </div>
   );
 }

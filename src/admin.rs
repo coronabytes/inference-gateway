@@ -108,6 +108,7 @@ pub fn router(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         .routes(routes!(settings::cluster))
         .routes(routes!(settings::get_settings, settings::put_settings))
         .routes(routes!(playground::playground_options))
+        .routes(routes!(playground::get_audio_settings, playground::put_audio_settings))
         .routes(routes!(playground::playground_realtime))
         .routes(routes!(playground::playground))
         .routes(routes!(playground::playground_a2a))

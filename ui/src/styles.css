@@ -3175,19 +3175,50 @@ a.button.primary:hover {
 .logo-edit:focus-visible .vendor-mark {
   border-color: var(--link);
 }
+/* The name, with the mode and capability icons on a line below it. */
 .hub-tile-title {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* The name, then the button that copies the model's name for requests. */
+.hub-tile-name {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.hub-tile-name .copy-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+}
+.hub-tile-name .copy-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.copy-btn.copied,
+.copy-btn.copied:hover:not(:disabled) {
+  color: var(--good-text);
+}
+/* Pulled left by the icon's inset so the first glyph lines up with the name. */
+.hub-tile-icons {
+  display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: -4px;
 }
-.hub-tile-title > .cap-icons {
+.hub-tile-icons > .cap-icons {
   flex: none;
   flex-wrap: nowrap;
 }
-.hub-tile-title > .mode-icon {
+/* The mode, in colour, so it reads apart from the capabilities after it. */
+.hub-tile .hub-tile-icons > .mode-icon {
   margin-right: -4px;
+  color: var(--series-1);
 }
 .hub-tile-title .clip {
   overflow: hidden;
@@ -3219,14 +3250,6 @@ a.button.primary:hover {
 .vendor-mark.logo svg {
   width: 22px;
   height: 22px;
-}
-.hub-tile-description {
-  margin: 0;
-  color: var(--text-secondary);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 .hub-tile-alias {
   margin: 0;

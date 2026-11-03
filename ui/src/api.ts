@@ -242,6 +242,9 @@ export type PlaygroundOptions = S["PlaygroundOptions"];
 
 export type PlaygroundUpstream = S["PlaygroundUpstream"];
 
+/** The playground's audio settings of the person signed in (`GET /playground/audio-settings`). */
+export type AudioSettings = S["AudioSettings"];
+
 /** Puts a list filter in a query as `a,b`, with `none` (a value that cannot be an id or a tag) sent as `-`. */
 export function setListParam(q: URLSearchParams, name: string, values: string[], none?: string) {
   if (values.length) q.set(name, values.map((v) => (v === none ? "-" : v)).join(","));

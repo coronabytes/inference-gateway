@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM playground_audio_settings WHERE subject = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b74e635c9fb7309a399a67a2731f333877aaac78e371b5eb2d3bc485d0a66dad"
+}
