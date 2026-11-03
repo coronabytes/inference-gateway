@@ -1376,6 +1376,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/playground/audio-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Playground: audio settings
+         * @description The audio settings of the person signed in; all empty until they save some.
+         */
+        get: operations["get_audio_settings"];
+        /**
+         * Playground: save audio settings
+         * @description Saves the audio settings of the person signed in.
+         */
+        put: operations["put_audio_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/playground/options": {
         parameters: {
             query?: never;
@@ -2613,6 +2637,18 @@ export interface components {
              * @description The key the client acts as: one the person may use, with the inference scope.
              */
             key_id: string;
+        };
+        /**
+         * @description The playground's audio settings, kept for the person signed in: the models the chat dictates
+         *     and reads replies aloud with, and the voice. Empty leaves each to the key's models.
+         */
+        AudioSettings: {
+            /** @description The transcription model for dictation. */
+            stt: string;
+            /** @description The speech model that reads replies aloud. */
+            tts: string;
+            /** @description The speech model's voice; empty for its default. */
+            voice: string;
         };
         /** @description An audit log entry (see `audit`). */
         AuditEntry: {
@@ -8001,6 +8037,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": Record<string, unknown>;
+                };
+            };
+        };
+    };
+    get_audio_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudioSettings"];
+                };
+            };
+        };
+    };
+    put_audio_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AudioSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudioSettings"];
+                };
+            };
+            /** @description A value is too long. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
                 };
             };
         };

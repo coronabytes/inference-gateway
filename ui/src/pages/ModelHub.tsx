@@ -17,6 +17,7 @@ import {
   AliasIcon,
   BracesIcon,
   ChatIcon,
+  CopyButton,
   DecisionIcon,
   DocumentIcon,
   EmbeddingIcon,
@@ -910,7 +911,7 @@ function LogoButton({ model: m, onEdit }: { model: HubModel; onEdit: () => void 
   );
 }
 
-/** A model as a card: who makes it (its logo, which edits it), what it is for and can do, what it
+/** A model as a card: who makes it (its logo, which edits it), what it can do, what it
  *  costs, and how it ran today. */
 function ModelTile({
   model: m,
@@ -933,11 +934,16 @@ function ModelTile({
       <div className="hub-tile-head">
         <LogoButton model={m} onEdit={onEdit} />
         <div className="hub-tile-title">
-          <ModeIcon model={m} />
-          <div className="hub-name clip" title={name === m.name ? name : `${name} (${m.name})`}>
-            {name}
+          <div className="hub-tile-name">
+            <div className="hub-name clip" title={name === m.name ? name : `${name} (${m.name})`}>
+              {name}
+            </div>
+            <CopyButton text={m.name} label={`Copy ${m.name}`} />
           </div>
-          {capabilitiesOf(m).length > 0 && <CapabilityIcons m={m} picked={caps} onPick={onCap} />}
+          <div className="hub-tile-icons">
+            <ModeIcon model={m} />
+            {capabilitiesOf(m).length > 0 && <CapabilityIcons m={m} picked={caps} onPick={onCap} />}
+          </div>
         </div>
         <div className="hub-tile-actions">
           <PlayButton model={m.name} keyId={keyId} />
@@ -951,7 +957,6 @@ function ModelTile({
           Alias of <span className="mono">{m.target}</span>
         </p>
       )}
-      {m.metadata.description && <p className="hub-tile-description">{m.metadata.description}</p>}
       <div className="hub-tile-facts small">
         {m.max_input_tokens != null && m.max_input_tokens === m.max_output_tokens ? (
           <span title={`${m.max_input_tokens.toLocaleString()} input and output tokens`}>

@@ -40,6 +40,15 @@ impl Actor {
         Self { kind: "system", id: None, name: Some("Gateway".into()) }
     }
 
+    /// Who, for what is kept per person, such as the playground's settings: `kind:id`, or the
+    /// kind alone for the sign-ins without an id (the master key, Dev Login).
+    pub fn subject(&self) -> String {
+        match self.id {
+            Some(id) => format!("{}:{id}", self.kind),
+            None => self.kind.to_string(),
+        }
+    }
+
     /// An actor kept between requests by its parts, such as during an upstream sign-in.
     pub fn restore(kind: &str, id: Option<Uuid>, name: Option<String>) -> Self {
         let kind = ["master_key", "virtual_key", "session", "dev"].into_iter().find(|k| *k == kind).unwrap_or("system");

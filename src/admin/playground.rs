@@ -11,6 +11,7 @@ use uuid::Uuid;
 use super::{R, sees_key};
 use crate::{
     admin::auth::Access,
+    audit::Actor,
     db,
     error::AdminError,
     model::{Mode, VirtualKey},
@@ -136,6 +137,55 @@ pub(super) async fn playground_options(
     mcp_servers.sort_by(|a, b| a.name.cmp(&b.name));
     a2a_agents.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(PlaygroundOptions { models, guardrails, mcp_servers, a2a_agents }))
+}
+
+/// The playground's audio settings, kept for the person signed in: the models the chat dictates
+/// and reads replies aloud with, and the voice. Empty leaves each to the key's models.
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+pub(crate) struct AudioSettings {
+    /// The transcription model for dictation.
+    stt: String,
+    /// The speech model that reads replies aloud.
+    tts: String,
+    /// The speech model's voice; empty for its default.
+    voice: String,
+}
+
+/// Longest model name or voice id the settings keep.
+const MAX_AUDIO_SETTING: usize = 200;
+
+/// Playground: audio settings
+///
+/// The audio settings of the person signed in; all empty until they save some.
+#[utoipa::path(get, path = "/playground/audio-settings", tag = "Playground",
+    responses((status = 200, description = "The settings.", body = AudioSettings)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn get_audio_settings(State(state): State<AppState>, Extension(actor): Extension<Actor>) -> R<Json<AudioSettings>> {
+    let s = db::get_audio_settings(&state.db, &actor.subject()).await?.unwrap_or_default();
+    Ok(Json(AudioSettings { stt: s.stt, tts: s.tts, voice: s.voice }))
+}
+
+/// Playground: save audio settings
+///
+/// Saves the audio settings of the person signed in.
+#[utoipa::path(put, path = "/playground/audio-settings", tag = "Playground", request_body = AudioSettings,
+    responses(
+        (status = 200, description = "Saved.", body = AudioSettings),
+        (status = 400, description = "A value is too long.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn put_audio_settings(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Json(s): Json<AudioSettings>,
+) -> R<Json<AudioSettings>> {
+    let s = AudioSettings { stt: s.stt.trim().to_string(), tts: s.tts.trim().to_string(), voice: s.voice.trim().to_string() };
+    if [&s.stt, &s.tts, &s.voice].iter().any(|v| v.chars().count() > MAX_AUDIO_SETTING) {
+        return Err(AdminError::bad_request(format!("a model name or voice can be up to {MAX_AUDIO_SETTING} characters")));
+    }
+    let row = db::AudioSettingsRow { stt: s.stt, tts: s.tts, voice: s.voice };
+    db::save_audio_settings(&state.db, &actor.subject(), &row).await?;
+    Ok(Json(AudioSettings { stt: row.stt, tts: row.tts, voice: row.voice }))
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]

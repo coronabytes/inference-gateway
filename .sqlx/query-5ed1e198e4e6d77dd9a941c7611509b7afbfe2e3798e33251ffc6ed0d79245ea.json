@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT stt, tts, voice FROM playground_audio_settings WHERE subject = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "stt",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "playground_audio_settings",
+            "name": "stt"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "tts",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "playground_audio_settings",
+            "name": "tts"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "voice",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "playground_audio_settings",
+            "name": "voice"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5ed1e198e4e6d77dd9a941c7611509b7afbfe2e3798e33251ffc6ed0d79245ea"
+}

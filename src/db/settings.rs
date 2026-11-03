@@ -112,6 +112,38 @@ pub async fn list_admin_users(pool: &PgPool) -> sqlx::Result<Vec<AdminUserRow>> 
 }
 
 pub async fn delete_admin_user(pool: &PgPool, id: Uuid) -> sqlx::Result<bool> {
-    let r = sqlx::query!("DELETE FROM admin_users WHERE id = $1", id).execute(pool).await?;
+    let mut tx = pool.begin().await?;
+    // Their playground settings go with them (`Actor::subject`).
+    sqlx::query!("DELETE FROM playground_audio_settings WHERE subject = $1", format!("session:{id}")).execute(&mut *tx).await?;
+    let r = sqlx::query!("DELETE FROM admin_users WHERE id = $1", id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(r.rows_affected() > 0)
+}
+
+/// The playground's audio settings of one person (`subject`); empty fields leave the choice to the key.
+#[derive(Default)]
+pub struct AudioSettingsRow {
+    pub stt: String,
+    pub tts: String,
+    pub voice: String,
+}
+
+pub async fn get_audio_settings(pool: &PgPool, subject: &str) -> sqlx::Result<Option<AudioSettingsRow>> {
+    sqlx::query_as!(AudioSettingsRow, "SELECT stt, tts, voice FROM playground_audio_settings WHERE subject = $1", subject)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn save_audio_settings(pool: &PgPool, subject: &str, s: &AudioSettingsRow) -> sqlx::Result<()> {
+    sqlx::query!(
+        "INSERT INTO playground_audio_settings (subject, stt, tts, voice, updated_at) VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (subject) DO UPDATE SET stt = EXCLUDED.stt, tts = EXCLUDED.tts, voice = EXCLUDED.voice, updated_at = now()",
+        subject,
+        s.stt,
+        s.tts,
+        s.voice,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }

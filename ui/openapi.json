@@ -5078,6 +5078,90 @@
         ]
       }
     },
+    "/admin/api/playground/audio-settings": {
+      "get": {
+        "tags": [
+          "Playground"
+        ],
+        "summary": "Playground: audio settings",
+        "description": "The audio settings of the person signed in; all empty until they save some.",
+        "operationId": "get_audio_settings",
+        "responses": {
+          "200": {
+            "description": "The settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AudioSettings"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Playground"
+        ],
+        "summary": "Playground: save audio settings",
+        "description": "Saves the audio settings of the person signed in.",
+        "operationId": "put_audio_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AudioSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AudioSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A value is too long.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/playground/options": {
       "get": {
         "tags": [
@@ -9309,6 +9393,29 @@
             "type": "string",
             "format": "uuid",
             "description": "The key the client acts as: one the person may use, with the inference scope."
+          }
+        }
+      },
+      "AudioSettings": {
+        "type": "object",
+        "description": "The playground's audio settings, kept for the person signed in: the models the chat dictates\nand reads replies aloud with, and the voice. Empty leaves each to the key's models.",
+        "required": [
+          "stt",
+          "tts",
+          "voice"
+        ],
+        "properties": {
+          "stt": {
+            "type": "string",
+            "description": "The transcription model for dictation."
+          },
+          "tts": {
+            "type": "string",
+            "description": "The speech model that reads replies aloud."
+          },
+          "voice": {
+            "type": "string",
+            "description": "The speech model's voice; empty for its default."
           }
         }
       },
