@@ -1,11 +1,13 @@
 //! Public inference endpoints and the shared request pipeline.
 
 pub mod anthropic;
+pub mod audio;
 pub mod chat;
 pub mod decisions;
 pub mod embeddings;
 pub(crate) mod guard;
 pub mod models;
+pub mod realtime;
 pub mod rerank;
 pub mod responses;
 pub mod routing;

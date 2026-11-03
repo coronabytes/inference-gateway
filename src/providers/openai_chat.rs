@@ -162,6 +162,8 @@ pub fn usage(u: &Value) -> Usage {
         cache_write_tokens: 0,
         reasoning_tokens: g("/completion_tokens_details/reasoning_tokens").max(g("/output_tokens_details/reasoning_tokens")),
         search_units: 0,
+        audio_seconds: 0,
+        characters: 0,
     }
 }
 

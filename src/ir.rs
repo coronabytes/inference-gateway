@@ -272,6 +272,10 @@ pub struct Usage {
     /// Searches billed at the deployment's price per 1,000: a rerank query over up to 100
     /// documents, or one web search a chat model ran.
     pub search_units: u64,
+    /// Seconds of input audio a transcription model bills at the deployment's price per minute.
+    pub audio_seconds: u64,
+    /// Characters of input text a speech model bills at the deployment's price per 1M.
+    pub characters: u64,
 }
 
 impl Usage {
@@ -291,6 +295,8 @@ impl Usage {
         self.cache_write_tokens = self.cache_write_tokens.max(o.cache_write_tokens);
         self.reasoning_tokens = self.reasoning_tokens.max(o.reasoning_tokens);
         self.search_units = self.search_units.max(o.search_units);
+        self.audio_seconds = self.audio_seconds.max(o.audio_seconds);
+        self.characters = self.characters.max(o.characters);
     }
 
     /// Add another request's usage (a routed request sums its calls).
@@ -301,6 +307,8 @@ impl Usage {
         self.cache_write_tokens += o.cache_write_tokens;
         self.reasoning_tokens += o.reasoning_tokens;
         self.search_units += o.search_units;
+        self.audio_seconds += o.audio_seconds;
+        self.characters += o.characters;
     }
 }
 

@@ -225,6 +225,27 @@ async fn lookup(policy: &Policy, host: &str) -> Result<Vec<SocketAddr>, Box<dyn 
     Ok(allowed)
 }
 
+/// A TCP connection to `host` for clients other than reqwest (realtime WebSockets), to the first
+/// of its addresses this policy allows that answers.
+pub async fn connect(policy: &Policy, host: &str, port: u16) -> Result<tokio::net::TcpStream, String> {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let addrs = match host.parse::<IpAddr>() {
+        Ok(ip) => match policy.deny_reason(ip) {
+            Some(why) => return Err(format!("{ip} is {why}")),
+            None => vec![SocketAddr::new(ip, port)],
+        },
+        Err(_) => lookup(policy, host).await.map_err(|e| e.to_string())?.into_iter().map(|a| SocketAddr::new(a.ip(), port)).collect(),
+    };
+    let mut last = None;
+    for addr in addrs {
+        match tokio::net::TcpStream::connect(addr).await {
+            Ok(s) => return Ok(s),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.map_or_else(|| format!("{host} did not resolve"), |e| format!("could not connect to {host}: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

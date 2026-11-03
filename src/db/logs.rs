@@ -40,6 +40,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
     let mut guardrail_costs = Vec::with_capacity(batch.len());
     let mut searches = Vec::with_capacity(batch.len());
     let mut search_costs = Vec::with_capacity(batch.len());
+    let mut audio_seconds = Vec::with_capacity(batch.len());
+    let mut characters = Vec::with_capacity(batch.len());
     let mut bodies = Vec::with_capacity(batch.len());
     let mut mcp_tools = Vec::with_capacity(batch.len());
     let mut task_states = Vec::with_capacity(batch.len());
@@ -70,6 +72,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         guardrail_costs.push(r.guardrail_cost_usd);
         searches.push(r.usage.search_units as i64);
         search_costs.push(r.search_cost_usd);
+        audio_seconds.push(r.usage.audio_seconds as i64);
+        characters.push(r.usage.characters as i64);
         bodies.push(r.bodies_status.map(str::to_string));
         mcp_tools.push(r.tool.clone());
         task_states.push(r.task_state.clone());
@@ -83,11 +87,12 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         "INSERT INTO request_logs (id, ts, key_id, model_name, deployment_id, provider, api, stream,
              status_code, latency_ms, ttft_ms, input_tokens, output_tokens, cache_read_tokens,
              cache_write_tokens, cost_usd, attempts, error, parent_id, project_id, labels, guardrails, guardrail_cost_usd,
-             searches, search_cost_usd, bodies, tool, task_state, context_id)
+             searches, search_cost_usd, bodies, tool, task_state, context_id, audio_seconds, characters)
          SELECT * FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::text[], $5::uuid[],
              $6::text[], $7::text[], $8::bool[], $9::int[], $10::int[], $11::int[], $12::bigint[],
              $13::bigint[], $14::bigint[], $15::bigint[], $16::float8[], $17::int[], $18::text[], $19::uuid[],
-             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[], $26::text[], $27::text[], $28::text[], $29::text[])",
+             $20::uuid[], $21::jsonb[], $22::jsonb[], $23::float8[], $24::bigint[], $25::float8[], $26::text[], $27::text[], $28::text[], $29::text[],
+             $30::bigint[], $31::bigint[])",
         &ids,
         &ts,
         &key_ids as _,
@@ -117,6 +122,8 @@ pub async fn write_request_batch(pool: &PgPool, batch: &[RequestRecord]) -> sqlx
         &mcp_tools as _,
         &task_states as _,
         &context_ids as _,
+        &audio_seconds,
+        &characters,
     )
     .execute(&mut *tx)
     .await?;
@@ -273,6 +280,10 @@ pub struct LogRow {
     pub searches: i64,
     /// The searches' part of `cost_usd`.
     pub search_cost_usd: f64,
+    /// Seconds of audio a transcription model was billed for.
+    pub audio_seconds: i64,
+    /// Characters of text a speech model spoke.
+    pub characters: i64,
     /// Whether its bodies were logged: `stored`, `truncated` (cut to the size limit), `expired`
     /// (past their retention), `dropped` (could not be kept) or `deleted`; none when not logged.
     #[schema(required)]
@@ -333,7 +344,7 @@ pub async fn recent_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<L
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.audio_seconds, l.characters, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)
@@ -358,7 +369,7 @@ async fn error_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<LogRow
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.audio_seconds, l.characters, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $12)
@@ -403,7 +414,7 @@ async fn all_logs(pool: &PgPool, f: &LogFilter<'_>) -> sqlx::Result<Vec<LogRow>>
         r#"SELECT l.id, l.ts, l.key_id, k.name AS "key_name?", l.model_name, l.deployment_id, l.provider,
                   l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.audio_seconds, l.characters, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", b.tool_calls AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $12)
@@ -451,7 +462,7 @@ async fn logs_by_id(pool: &PgPool, ids: &[Uuid], body_days: u32) -> sqlx::Result
         r#"SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS "key_name?", l.model_name,
                   l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,
                   l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,
-                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,
+                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.audio_seconds, l.characters, l.tool, l.task_state, l.context_id,
                   (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS "upstream_model?",
                   (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS "credential_name?", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS "tool_calls?",
                   CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)

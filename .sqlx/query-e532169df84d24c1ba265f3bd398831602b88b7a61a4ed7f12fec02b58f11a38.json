@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, model_name, mode, provider, upstream_model, config AS \"config: Json<DeploymentConfig>\",\n                  credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,\n                  output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,\n                  long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,\n                  long_cache_write_cost_per_mtok, cost_per_k_searches, base_model, tags, project_ids, enabled,\n                  created_at, updated_at\n           FROM deployments ORDER BY model_name, priority, created_at",
+  "query": "SELECT id, model_name, mode, provider, upstream_model, config AS \"config: Json<DeploymentConfig>\",\n                  credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,\n                  output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,\n                  long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,\n                  long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,\n                  base_model, tags, project_ids, enabled, created_at, updated_at\n           FROM deployments ORDER BY model_name, priority, created_at",
   "describe": {
     "columns": [
       {
@@ -247,6 +247,28 @@
       },
       {
         "ordinal": 22,
+        "name": "cost_per_audio_minute",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "cost_per_audio_minute"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "cost_per_m_characters",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "cost_per_m_characters"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
         "name": "base_model",
         "type_info": "Text",
         "origin": {
@@ -257,7 +279,7 @@
         }
       },
       {
-        "ordinal": 23,
+        "ordinal": 25,
         "name": "tags",
         "type_info": "TextArray",
         "origin": {
@@ -268,7 +290,7 @@
         }
       },
       {
-        "ordinal": 24,
+        "ordinal": 26,
         "name": "project_ids",
         "type_info": "UuidArray",
         "origin": {
@@ -279,7 +301,7 @@
         }
       },
       {
-        "ordinal": 25,
+        "ordinal": 27,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -290,7 +312,7 @@
         }
       },
       {
-        "ordinal": 26,
+        "ordinal": 28,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -301,7 +323,7 @@
         }
       },
       {
-        "ordinal": 27,
+        "ordinal": 29,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -339,6 +361,8 @@
       true,
       true,
       true,
+      true,
+      true,
       false,
       false,
       false,
@@ -346,5 +370,5 @@
       false
     ]
   },
-  "hash": "2e153e3dd09f84697ba27eee4e40d4a4b9925660469bf238002d10753cd23249"
+  "hash": "e532169df84d24c1ba265f3bd398831602b88b7a61a4ed7f12fec02b58f11a38"
 }

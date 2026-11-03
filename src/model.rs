@@ -65,12 +65,13 @@ impl ProviderKind {
         use ApiStyle::*;
         matches!(
             (self, style),
-            (Self::Openai, Chat | Responses | Embeddings | Rerank)
-                | (Self::Azure, Chat | Responses | Anthropic | Systemone | Embeddings | Rerank)
+            (Self::Openai, Chat | Responses | Embeddings | Rerank | Transcription | Speech)
+                | (Self::Azure, Chat | Responses | Anthropic | Systemone | Embeddings | Rerank | Transcription | Speech)
                 | (Self::Anthropic, Anthropic)
                 | (Self::Bedrock, Converse | Anthropic | Embeddings | Rerank)
                 | (Self::Typesafe, Systemone)
-                | (Self::Mistral | Self::Gemini, Chat | Embeddings)
+                | (Self::Mistral, Chat | Embeddings | Transcription | Speech)
+                | (Self::Gemini, Chat | Embeddings)
                 | (Self::Vertex, Chat | Anthropic | Embeddings)
         )
     }
@@ -89,6 +90,10 @@ pub enum Mode {
     Decision,
     /// `/v1/rerank`.
     Rerank,
+    /// `/v1/audio/transcriptions`: speech to text.
+    Transcription,
+    /// `/v1/audio/speech`: text to speech.
+    Speech,
 }
 
 impl Mode {
@@ -98,6 +103,8 @@ impl Mode {
             Self::Embedding => "embedding",
             Self::Decision => "decision",
             Self::Rerank => "rerank",
+            Self::Transcription => "transcription",
+            Self::Speech => "speech",
         }
     }
 
@@ -107,6 +114,8 @@ impl Mode {
             "embedding" => Some(Self::Embedding),
             "decision" => Some(Self::Decision),
             "rerank" => Some(Self::Rerank),
+            "transcription" => Some(Self::Transcription),
+            "speech" => Some(Self::Speech),
             _ => None,
         }
     }
@@ -118,16 +127,18 @@ impl Mode {
             Self::Embedding => "/v1/embeddings",
             Self::Decision => "/v1/decisions or /v1/systemone",
             Self::Rerank => "/v1/rerank",
+            Self::Transcription => "/v1/audio/transcriptions",
+            Self::Speech => "/v1/audio/speech",
         }
     }
 
     /// The upstream protocol of a deployment. Only chat deployments choose one (`api_style`);
-    /// embedding, decision and rerank deployments each have exactly one.
+    /// the other modes each have exactly one.
     pub fn style(self, provider: ProviderKind, configured: Option<ApiStyle>) -> Result<ApiStyle, String> {
         let style = match self {
             Self::Chat => {
                 let s = configured.unwrap_or_else(|| provider.default_style());
-                if matches!(s, ApiStyle::Embeddings | ApiStyle::Systemone | ApiStyle::Rerank) {
+                if matches!(s, ApiStyle::Embeddings | ApiStyle::Systemone | ApiStyle::Rerank | ApiStyle::Transcription | ApiStyle::Speech) {
                     return Err(match configured {
                         Some(_) => format!("api_style {s:?} is not a chat protocol"),
                         None => format!("provider {} does not serve chat models", provider.as_str()),
@@ -138,6 +149,8 @@ impl Mode {
             Self::Embedding => ApiStyle::Embeddings,
             Self::Decision => ApiStyle::Systemone,
             Self::Rerank => ApiStyle::Rerank,
+            Self::Transcription => ApiStyle::Transcription,
+            Self::Speech => ApiStyle::Speech,
         };
         if !provider.supports(style) {
             return Err(format!("provider {} does not serve {} models", provider.as_str(), self.as_str()));
@@ -166,6 +179,10 @@ pub enum ApiStyle {
     /// Rerank, for rerank models: Cohere's API (Azure AI Foundry, OpenAI-compatible servers) or
     /// Bedrock's Rerank API.
     Rerank,
+    /// OpenAI's audio transcriptions, for speech to text models (Mistral's translated).
+    Transcription,
+    /// OpenAI's audio speech, for text to speech models (Mistral's translated).
+    Speech,
 }
 
 /// Where and how to reach a provider: stored with the credential, because an Azure key only works
@@ -235,7 +252,31 @@ pub struct DeploymentConfig {
     /// Bedrock with the Anthropic Messages protocol: how Claude is called (see `BedrockApi`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bedrock_api: Option<BedrockApi>,
+    /// Speech: the voices the deployment speaks, the first being the one of requests that name
+    /// none. `*` lets any other voice through. Empty: any voice, and the provider's default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub voices: Vec<Voice>,
+    /// Transcription: a realtime model, which takes audio as it is spoken over a WebSocket
+    /// (`/v1/realtime?intent=transcription`) instead of files (`/v1/audio/transcriptions`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub realtime: bool,
 }
+
+/// A voice of a speech deployment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Voice {
+    /// The voice as the provider names it (`alloy`, `voice_478`), or `*` for any other voice.
+    pub id: String,
+    /// What the playground shows for it, such as `Sheila (English, US)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// The voice entry that lets voices not listed through.
+pub const ANY_VOICE: &str = "*";
+/// The most voices a deployment lists.
+const MAX_VOICES: usize = 500;
 
 /// Where a credential without stored secrets gets its identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -288,6 +329,20 @@ impl DeploymentConfig {
     /// Checked when a deployment is saved (admin API and import).
     pub fn check(&self) -> Result<(), String> {
         self.check_stored()?;
+        if self.voices.len() > MAX_VOICES {
+            return Err(format!("a deployment lists at most {MAX_VOICES} voices"));
+        }
+        for (i, v) in self.voices.iter().enumerate() {
+            if v.id.trim().is_empty() || v.id.trim() != v.id || v.id.len() > 200 {
+                return Err(format!("voice '{}' needs an id without surrounding spaces, up to 200 characters", v.id));
+            }
+            if self.voices[..i].iter().any(|w| w.id == v.id) {
+                return Err(format!("voice '{}' is listed twice", v.id));
+            }
+        }
+        if self.voices.len() == 1 && self.voices[0].id == ANY_VOICE {
+            return Err("list a voice besides *, or none for any voice".into());
+        }
         if let Some(h) = self.headers.keys().find(|h| credential_header(h)) {
             return Err(format!(
                 "header '{h}' carries a credential, which deployments store in plain text; put the secret in the \
@@ -307,6 +362,16 @@ impl DeploymentConfig {
             }
         }
         c
+    }
+
+    /// Speech: whether the deployment speaks `voice`, a voice a request names.
+    pub fn speaks(&self, voice: &str) -> bool {
+        self.voices.is_empty() || self.voices.iter().any(|v| v.id == voice || v.id == ANY_VOICE)
+    }
+
+    /// Speech: the voice of requests that name none, if the deployment lists one.
+    pub fn default_voice(&self) -> Option<&str> {
+        self.voices.iter().map(|v| v.id.as_str()).find(|v| *v != ANY_VOICE)
     }
 
     /// Credential headers in a stored config, which `check` refuses on save.
@@ -425,6 +490,10 @@ pub struct DeploymentRow {
     pub long_cache_write_cost_per_mtok: Option<f64>,
     /// USD per 1,000 searches: rerank queries, or the web searches a chat model runs.
     pub cost_per_k_searches: Option<f64>,
+    /// USD per minute of input audio, for transcription models priced by the minute.
+    pub cost_per_audio_minute: Option<f64>,
+    /// USD per 1M characters of input text, for speech models.
+    pub cost_per_m_characters: Option<f64>,
     /// Price catalog key this deployment corresponds to (e.g. `azure/gpt-4o`).
     pub base_model: Option<String>,
     /// Permission tags (e.g. `azure`, `cheap`); see `VirtualKey::holds_all`.
@@ -464,7 +533,8 @@ impl Rates {
     }
 }
 
-/// USD per 1M tokens, with an optional long-context tier, and per 1,000 rerank searches.
+/// USD per 1M tokens, with an optional long-context tier, per 1,000 rerank searches, per minute of
+/// transcribed audio and per 1M spoken characters.
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct Pricing {
     pub standard: Rates,
@@ -472,6 +542,8 @@ pub struct Pricing {
     /// threshold are billed entirely at these rates.
     pub long_context: Option<(u64, Rates)>,
     pub per_k_searches: f64,
+    pub per_audio_minute: f64,
+    pub per_m_characters: f64,
 }
 
 impl Pricing {
@@ -490,6 +562,8 @@ impl Pricing {
             + u.cache_write_tokens as f64 * r.cache_write)
             / 1_000_000.0
             + self.search_cost(u)
+            + u.audio_seconds as f64 * self.per_audio_minute / 60.0
+            + u.characters as f64 * self.per_m_characters / 1_000_000.0
     }
 
     /// The searches' part of `cost`.
@@ -656,7 +730,7 @@ mod tests {
         let p = Pricing {
             standard: Rates::new(3.0, 15.0, Some(0.3), None),
             long_context: Some((200_000, Rates::new(6.0, 22.5, None, None))),
-            per_k_searches: 0.0,
+            ..Default::default()
         };
         // 150K uncached + 50K cached = 200K: not above the threshold, standard rates.
         let at = Usage { input_tokens: 150_000, cache_read_tokens: 50_000, output_tokens: 1_000, ..Default::default() };
@@ -670,10 +744,40 @@ mod tests {
     }
 
     #[test]
+    fn speech_voices() {
+        let voice = |id: &str| Voice { id: id.into(), name: None };
+        let listed = DeploymentConfig { voices: vec![voice("voice_478"), voice("voice_592")], ..Default::default() };
+        assert!(listed.speaks("voice_592") && !listed.speaks("alloy"));
+        assert_eq!(listed.default_voice(), Some("voice_478"));
+        // `*` lets other voices through; it is never the default.
+        let open = DeploymentConfig { voices: vec![voice("*"), voice("voice_478")], ..Default::default() };
+        assert!(open.speaks("anything") && open.default_voice() == Some("voice_478"));
+        // Without a list, any voice and the provider's default.
+        assert!(DeploymentConfig::default().speaks("alloy") && DeploymentConfig::default().default_voice().is_none());
+        assert!(listed.check().is_ok() && open.check().is_ok());
+        for bad in [vec![voice("a"), voice("a")], vec![voice(" a")], vec![voice("")], vec![voice("*")]] {
+            assert!(DeploymentConfig { voices: bad.clone(), ..Default::default() }.check().is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
     fn searches_are_priced_per_thousand() {
-        let p = Pricing { standard: Rates::new(1.0, 0.0, None, None), long_context: None, per_k_searches: 2.0 };
+        let p = Pricing { standard: Rates::new(1.0, 0.0, None, None), per_k_searches: 2.0, ..Default::default() };
         let u = Usage { input_tokens: 1_000, search_units: 3, ..Default::default() };
         assert!((p.cost(&u) - (0.001 + 0.006)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn audio_is_priced_per_minute_and_per_character() {
+        let p =
+            Pricing { standard: Rates::new(2.0, 10.0, None, None), per_audio_minute: 0.006, per_m_characters: 15.0, ..Default::default() };
+        let heard = Usage { audio_seconds: 90, ..Default::default() };
+        assert!((p.cost(&heard) - 0.009).abs() < 1e-12);
+        let spoken = Usage { characters: 2_000, ..Default::default() };
+        assert!((p.cost(&spoken) - 0.03).abs() < 1e-12);
+        // Transcription models that report tokens are billed for them.
+        let tokens = Usage { input_tokens: 1_000, output_tokens: 100, ..Default::default() };
+        assert!((p.cost(&tokens) - 0.003).abs() < 1e-12);
     }
 }
 

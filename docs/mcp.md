@@ -143,7 +143,7 @@ With many servers, a [tool router](#tool-routers) gives each request only the to
 
 ## In the playground
 
-The playground (**Models → Playground**) offers the MCP servers the chosen key may use under **MCP**. The chosen servers' tools go with every chat request, and each reply shows what ran before its text: the tools each server offered, and each call, with its arguments and result. Click one to unfold it. On Chat Completions, which has no place for the calls, they are only in the request log.
+The **Playground** offers the MCP servers the chosen key may use under **MCP**. The chosen servers' tools go with every chat request, and each reply shows what ran before its text: the tools each server offered, and each call, with its arguments and result. Click one to unfold it. On Chat Completions, which has no place for the calls, they are only in the request log.
 
 A server where each key signs in itself is marked **sign in** while the key has not signed in yet. **Sign in** in the warning above the chat starts it, and the sign-in comes back to the playground.
 

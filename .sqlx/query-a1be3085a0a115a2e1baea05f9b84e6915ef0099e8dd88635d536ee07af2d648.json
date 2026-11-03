@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.parent_id = ANY($1) ORDER BY l.ts",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.audio_seconds, l.characters, l.tool, l.task_state, l.context_id,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n           WHERE l.parent_id = ANY($1) ORDER BY l.ts",
   "describe": {
     "columns": [
       {
@@ -280,6 +280,28 @@
       },
       {
         "ordinal": 25,
+        "name": "audio_seconds",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "audio_seconds"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
+        "name": "characters",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "characters"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
         "name": "tool",
         "type_info": "Text",
         "origin": {
@@ -290,7 +312,7 @@
         }
       },
       {
-        "ordinal": 26,
+        "ordinal": 28,
         "name": "task_state",
         "type_info": "Text",
         "origin": {
@@ -301,7 +323,7 @@
         }
       },
       {
-        "ordinal": 27,
+        "ordinal": 29,
         "name": "context_id",
         "type_info": "Text",
         "origin": {
@@ -312,25 +334,25 @@
         }
       },
       {
-        "ordinal": 28,
+        "ordinal": 30,
         "name": "upstream_model?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 29,
+        "ordinal": 31,
         "name": "credential_name?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 30,
+        "ordinal": 32,
         "name": "tool_calls?",
         "type_info": "TextArray",
         "origin": "Expression"
       },
       {
-        "ordinal": 31,
+        "ordinal": 33,
         "name": "bodies?",
         "type_info": "Text",
         "origin": "Expression"
@@ -368,6 +390,8 @@
       false,
       false,
       false,
+      false,
+      false,
       true,
       true,
       true,
@@ -377,5 +401,5 @@
       null
     ]
   },
-  "hash": "6c045b11d7339d25671bdee3956f5b7d0c83e13bc7fd33d2020bf5452995d11d"
+  "hash": "a1be3085a0a115a2e1baea05f9b84e6915ef0099e8dd88635d536ee07af2d648"
 }

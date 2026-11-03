@@ -291,7 +291,8 @@ pub(crate) struct HubDeployment {
     prices: HubPrices,
 }
 
-/// USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches.
+/// USD per 1M tokens; `per_k_searches` per 1,000 rerank queries or web searches, `per_audio_minute` per
+/// minute of transcribed audio, `per_m_characters` per 1M spoken characters.
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct HubPrices {
     input: f64,
@@ -315,6 +316,8 @@ pub(crate) struct HubPrices {
     #[schema(nullable = false)]
     long_cache_write: Option<f64>,
     per_k_searches: f64,
+    per_audio_minute: f64,
+    per_m_characters: f64,
 }
 
 fn prices(d: &Deployment) -> HubPrices {
@@ -331,6 +334,8 @@ fn prices(d: &Deployment) -> HubPrices {
         long_cache_read: long.map(|r| r.cache_read),
         long_cache_write: long.map(|r| r.cache_write),
         per_k_searches: p.per_k_searches,
+        per_audio_minute: p.per_audio_minute,
+        per_m_characters: p.per_m_characters,
     }
 }
 

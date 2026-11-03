@@ -53,6 +53,12 @@ pub(crate) struct PlaygroundModel {
     router: bool,
     /// Requests may have it search the web: it has a web search, and the key and its project allow it.
     web_search: bool,
+    /// Speech: the voices its deployments list, the default first; `*` when they let others through.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    voices: Vec<crate::model::Voice>,
+    /// Transcription: a realtime model, streamed to over `/playground/realtime`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    realtime: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -90,7 +96,17 @@ pub(super) async fn playground_options(
                 crate::api::models::deployments(&snap, Some(key), name).first().map_or(Mode::Chat, |d| d.mode)
             };
             let web_search = mode == Mode::Chat && crate::api::models::web_search(&snap, key, name);
-            PlaygroundModel { name: name.clone(), mode, router, web_search }
+            let mut voices: Vec<crate::model::Voice> = Vec::new();
+            if mode == Mode::Speech {
+                for v in crate::api::models::deployments(&snap, Some(key), name).iter().flat_map(|d| &d.config.voices) {
+                    if !voices.iter().any(|w| w.id == v.id) {
+                        voices.push(v.clone());
+                    }
+                }
+            }
+            let realtime =
+                mode == Mode::Transcription && crate::api::models::deployments(&snap, Some(key), name).iter().any(|d| d.config.realtime);
+            PlaygroundModel { name: name.clone(), mode, router, web_search, voices, realtime }
         })
         .collect();
     let project = key.project_id.and_then(|p| snap.projects.get(&p));
@@ -120,6 +136,64 @@ pub(super) async fn playground_options(
     mcp_servers.sort_by(|a, b| a.name.cmp(&b.name));
     a2a_agents.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(PlaygroundOptions { models, guardrails, mcp_servers, a2a_agents }))
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct RealtimeQuery {
+    key_id: Uuid,
+    /// The realtime transcription model, instead of naming it in `session.update`.
+    model: Option<String>,
+}
+
+/// Playground: realtime transcription
+///
+/// A transcription session as a chosen virtual key, as at `/v1/realtime?intent=transcription`:
+/// OpenAI Realtime events over a WebSocket, logged and billed to the key.
+#[utoipa::path(get, path = "/playground/realtime", tag = "Playground", params(RealtimeQuery),
+    responses(
+        (status = 101, description = "The session: OpenAI Realtime events over a WebSocket."),
+        (status = 403, description = "Opened from another site.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn playground_realtime(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<RealtimeQuery>,
+    headers: axum::http::HeaderMap,
+    ws: axum::extract::ws::WebSocketUpgrade,
+) -> Response {
+    // Browsers send the console's cookie with a WebSocket from any site, and no CSRF header: only
+    // the console's own pages may open one.
+    if !same_origin(&headers) {
+        return AdminError::forbidden("the session must be opened from the console").into_response();
+    }
+    let key = match playground_key(&state, &access, q.key_id) {
+        Ok(key) => key,
+        Err(r) => return r,
+    };
+    let labels = match crate::labels::Labels::from_headers(&headers) {
+        Ok(labels) if !labels.is_empty() => labels,
+        Ok(_) => crate::labels::Labels::parse("app=playground").expect("valid labels"),
+        Err(e) => return e.into_response_for(crate::error::Dialect::OpenAi),
+    };
+    crate::api::realtime::serve(state, key, labels, Some("transcription"), q.model, ws)
+}
+
+/// Whether a browser's request comes from the page's own origin: its `Origin`, if any, names the
+/// host it was sent to.
+fn same_origin(headers: &axum::http::HeaderMap) -> bool {
+    let Some(origin) = headers.get(axum::http::header::ORIGIN).and_then(|v| v.to_str().ok()) else {
+        return true;
+    };
+    let host = headers.get(axum::http::header::HOST).and_then(|v| v.to_str().ok());
+    let origin_host = reqwest::Url::parse(origin).ok().and_then(|u| {
+        u.host_str().map(|h| match u.port() {
+            Some(p) => format!("{h}:{p}"),
+            None => h.to_string(),
+        })
+    });
+    origin_host.is_some() && origin_host.as_deref() == host
 }
 
 /// The key the playground plays as: for a user, only an inference key of their projects; others
@@ -180,8 +254,8 @@ pub(super) async fn playground_a2a_card(
 /// Playground
 ///
 /// Runs an inference request as a chosen virtual key, with its limits, budget and logging.
-/// `api` is `chat`, `responses`, `messages`, `embeddings`, `rerank`, `decisions` or `systemone`; the
-/// body is that endpoint's. `models` and `models-extended` list the key's models as
+/// `api` is `chat`, `responses`, `messages`, `embeddings`, `rerank`, `decisions`, `systemone`,
+/// `transcriptions` (a `multipart/form-data` body) or `speech`; the body is that endpoint's. `models` and `models-extended` list the key's models as
 /// `GET /v1/models` and `GET /v1/models-extended` do; their body is ignored.
 #[utoipa::path(post, path = "/playground/{api}", tag = "Playground",
     params(("api" = String, Path), PlaygroundQuery),
@@ -216,7 +290,7 @@ pub(super) async fn playground(
                 Err(e) => e.into_response_for(crate::error::Dialect::OpenAi),
             };
         }
-        "embeddings" | "rerank" | "decisions" | "systemone" => {
+        "embeddings" | "rerank" | "decisions" | "systemone" | "transcriptions" | "speech" => {
             let key = match crate::auth::key_by_id(&state, q.key_id) {
                 Ok(key) => key,
                 Err(e) => return e.into_response_for(crate::error::Dialect::OpenAi),
@@ -228,6 +302,12 @@ pub(super) async fn playground(
                 "rerank" => crate::api::rerank::serve(&state, key, labels, body)
                     .await
                     .unwrap_or_else(|e| e.into_response_for(crate::error::Dialect::OpenAi)),
+                "transcriptions" => crate::api::audio::serve_transcription(&state, key, labels, &headers, body)
+                    .await
+                    .unwrap_or_else(|e| e.into_response_for(crate::error::Dialect::OpenAi)),
+                "speech" => crate::api::audio::serve_speech(&state, key, labels, body)
+                    .await
+                    .unwrap_or_else(|e| e.into_response_for(crate::error::Dialect::OpenAi)),
                 "decisions" => crate::api::decisions::serve(&state, key, labels, &headers, body, Route::Decisions).await,
                 _ => crate::api::decisions::serve(&state, key, labels, &headers, body, Route::SystemOne).await,
             };
@@ -237,5 +317,27 @@ pub(super) async fn playground(
     match crate::auth::key_by_id(&state, q.key_id) {
         Ok(key) => crate::api::serve(&state, key, labels, &headers, body, inbound).await,
         Err(e) => e.into_response_for(inbound.dialect()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn realtime_sessions_open_from_the_console_only() {
+        let headers = |origin: Option<&'static str>| {
+            let mut h = axum::http::HeaderMap::new();
+            h.insert(axum::http::header::HOST, "localhost:5173".parse().unwrap());
+            if let Some(o) = origin {
+                h.insert(axum::http::header::ORIGIN, o.parse().unwrap());
+            }
+            h
+        };
+        assert!(same_origin(&headers(Some("http://localhost:5173"))));
+        assert!(same_origin(&headers(None)), "not a browser");
+        assert!(!same_origin(&headers(Some("https://evil.example"))));
+        assert!(!same_origin(&headers(Some("http://localhost:8080"))));
+        assert!(!same_origin(&headers(Some("null"))));
     }
 }

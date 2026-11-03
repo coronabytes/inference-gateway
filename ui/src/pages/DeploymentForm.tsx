@@ -22,6 +22,7 @@ import { compact } from "../format";
 import { catalogScope, deploymentPrices, suggestModelName, upstreamFromKey } from "../pricing";
 import { PROVIDER_LABEL } from "../providers";
 import { connectionSummary, usesEntra } from "./Credentials";
+import { duplicateVoices, savedVoices, VoiceEditor, voiceRows } from "../components/VoiceEditor";
 
 /**
  * A protocol choice. Bedrock offers Claude's Messages API two ways, both `anthropic` upstream:
@@ -29,7 +30,7 @@ import { connectionSummary, usesEntra } from "./Credentials";
  */
 type StyleChoice = ApiStyle | "invoke";
 
-/** Chat protocols per provider; embedding, decision and rerank deployments have one each. The note is
+/** Chat protocols per provider; deployments of the other modes have one each. The note is
  *  what the protocol is for there; it may be cut off in the button. */
 const STYLES: Record<Provider, { value: StyleChoice; label: string; note?: string }[]> = {
   openai: [
@@ -64,6 +65,8 @@ export const MODES: { value: Mode; label: string; endpoints: string }[] = [
   { value: "embedding", label: "Embedding", endpoints: "/v1/embeddings" },
   { value: "decision", label: "Decision", endpoints: "/v1/decisions and /v1/systemone" },
   { value: "rerank", label: "Rerank", endpoints: "/v1/rerank" },
+  { value: "transcription", label: "Speech to text", endpoints: "/v1/audio/transcriptions" },
+  { value: "speech", label: "Text to speech", endpoints: "/v1/audio/speech" },
 ];
 
 /** Providers that serve each mode. */
@@ -72,6 +75,22 @@ const MODE_PROVIDERS: Record<Mode, Provider[]> = {
   embedding: ["openai", "azure", "bedrock", "vertex", "gemini", "mistral"],
   decision: ["typesafe", "azure"],
   rerank: ["azure", "bedrock", "openai"],
+  transcription: ["azure", "openai", "mistral"],
+  speech: ["azure", "openai", "mistral"],
+};
+
+/** Upstream model examples of the audio modes, per provider. */
+const AUDIO_UPSTREAM: Partial<Record<Mode, Partial<Record<Provider, string>>>> = {
+  transcription: {
+    azure: "Your Foundry deployment name, e.g. gpt-4o-transcribe or whisper",
+    openai: "e.g. gpt-4o-transcribe or whisper-1, or a server with OpenAI's audio API",
+    mistral: "e.g. voxtral-mini-transcribe-3",
+  },
+  speech: {
+    azure: "Your Foundry deployment name, e.g. gpt-4o-mini-tts",
+    openai: "e.g. gpt-4o-mini-tts or tts-1, or a server with OpenAI's audio API",
+    mistral: "e.g. voxtral-mini-tts-3",
+  },
 };
 
 /** List price of TypeSafe Jev and Microsoft-Decision-1: $0.042 per 1M input tokens, output free. */
@@ -157,6 +176,11 @@ export function DeploymentForm({
   const [longCr, setLongCr] = useState(from?.long_cache_read_cost_per_mtok?.toString() ?? "");
   const [longCw, setLongCw] = useState(from?.long_cache_write_cost_per_mtok?.toString() ?? "");
   const [perK, setPerK] = useState(from?.cost_per_k_searches?.toString() ?? "");
+  const [perMinute, setPerMinute] = useState(from?.cost_per_audio_minute?.toString() ?? "");
+  const [perMChars, setPerMChars] = useState(from?.cost_per_m_characters?.toString() ?? "");
+  const [voiceList, setVoiceList] = useState(() => voiceRows(from?.config.voices ?? []));
+  const voices = savedVoices(voiceList.rows, voiceList.others);
+  const [realtime, setRealtime] = useState(from?.config.realtime ?? false);
   const [baseModel, setBaseModel] = useState(from?.base_model ?? "");
   const [tags, setTags] = useState<string[]>(from?.tags ?? []);
   const [projectIds, setProjectIds] = useState<string[]>(from?.project_ids ?? []);
@@ -225,9 +249,18 @@ export function DeploymentForm({
   const pricingSummary = [
     mode === "rerank"
       ? `${price(perK)} per 1K searches${optNum(inCost) ? `, ${price(inCost)} in` : ""}`
-      : mode === "embedding"
-        ? `${price(inCost)} in`
-        : `${price(inCost)} in / ${price(outCost)} out`,
+      : mode === "speech"
+        ? `${price(perMChars)} per 1M characters`
+        : mode === "transcription"
+          ? [
+              optNum(perMinute) && `${price(perMinute)} per minute`,
+              (optNum(inCost) || optNum(outCost)) && `${price(inCost)} in / ${price(outCost)} out`,
+            ]
+              .filter(Boolean)
+              .join(", ") || "free"
+          : mode === "embedding"
+            ? `${price(inCost)} in`
+            : `${price(inCost)} in / ${price(outCost)} out`,
     longOn && `long context above ${compact(Number(longThreshold) || 0)}`,
     webSearch && optNum(perK) && `${price(perK)} per 1K web searches`,
   ]
@@ -257,6 +290,8 @@ export function DeploymentForm({
   const changeUpstream = (v: string) => {
     setUpstream(v);
     if (nameAuto) setModelName(suggestModelName(v));
+    // Mistral names its realtime transcription models so (voxtral-mini-transcribe-realtime-3).
+    if (!initial && provider === "mistral") setRealtime(/realtime/i.test(v));
   };
 
   const str = (v: number | null) => (v === null ? "" : String(v));
@@ -281,6 +316,8 @@ export function DeploymentForm({
     setLongCr(str(p.long_cache_read_cost_per_mtok));
     setLongCw(str(p.long_cache_write_cost_per_mtok));
     setPerK(str(p.cost_per_k_searches));
+    setPerMinute(str(p.cost_per_audio_minute));
+    setPerMChars(str(p.cost_per_m_characters));
     setPricesTouched(false);
     setPricingNote(`Prices filled from the catalog entry ${entry.key}. Check them before saving.`);
   };
@@ -419,14 +456,16 @@ export function DeploymentForm({
           ...(from?.config.headers && { headers: from.config.headers }),
           ...(from?.config.forward_sampling != null && { forward_sampling: from.config.forward_sampling }),
           ...(from?.config.aws_service && { aws_service: from.config.aws_service }),
+          ...(mode === "speech" && voices.length > 0 && { voices }),
+          ...(mode === "transcription" && provider === "mistral" && realtime && { realtime: true }),
         },
         weight: optInt(weight) ?? 1,
         priority: parseInt(priority, 10) || 0,
         rpm_limit: optInt(rpm),
         tpm_limit: optInt(tpm),
         timeout_secs: optInt(timeout) ?? 600,
-        input_cost_per_mtok: optNum(inCost) ?? 0,
-        output_cost_per_mtok: mode === "embedding" || mode === "rerank" ? 0 : (optNum(outCost) ?? 0),
+        input_cost_per_mtok: mode === "speech" ? 0 : (optNum(inCost) ?? 0),
+        output_cost_per_mtok: mode === "embedding" || mode === "rerank" || mode === "speech" ? 0 : (optNum(outCost) ?? 0),
         cache_read_cost_per_mtok: chat ? optNum(crCost) : null,
         cache_write_cost_per_mtok: chat ? optNum(cwCost) : null,
         long_context_threshold: longOn ? optInt(longThreshold) : null,
@@ -435,6 +474,8 @@ export function DeploymentForm({
         long_cache_read_cost_per_mtok: longOn ? optNum(longCr) : null,
         long_cache_write_cost_per_mtok: longOn ? optNum(longCw) : null,
         cost_per_k_searches: mode === "rerank" || webSearch ? optNum(perK) : null,
+        cost_per_audio_minute: mode === "transcription" ? optNum(perMinute) : null,
+        cost_per_m_characters: mode === "speech" ? optNum(perMChars) : null,
         base_model: baseModel.trim() || null,
         tags,
         project_ids: projectIds,
@@ -462,7 +503,14 @@ export function DeploymentForm({
           <Button onClick={onClose}>Cancel</Button>
           <Button
             variant="primary"
-            disabled={busy || !modelName.trim() || !upstream.trim() || !available.some((c) => c.id === credentialId) || longIncomplete}
+            disabled={
+              busy ||
+              !modelName.trim() ||
+              !upstream.trim() ||
+              !available.some((c) => c.id === credentialId) ||
+              longIncomplete ||
+              (mode === "speech" && duplicateVoices(voiceList.rows).size > 0)
+            }
             onClick={submit}
           >
             {initial ? "Save" : "Add deployment"}
@@ -599,39 +647,41 @@ export function DeploymentForm({
               required
               autoFocus
               hint={
-                provider === "bedrock" && mode === "embedding"
-                  ? `Amazon Titan Text Embeddings V2: ${TITAN_MODEL}`
-                  : provider === "bedrock" && mode === "rerank"
-                    ? "amazon.rerank-v1:0 or cohere.rerank-v3-5:0 (or a model ARN)"
-                    : provider === "azure" && mode === "rerank"
-                      ? "Your Cohere rerank deployment, e.g. Cohere-rerank-v4.0-pro"
-                      : mode === "rerank"
-                        ? "A model of a server with Cohere's rerank API, e.g. rerank-v3.5 (Cohere) or BAAI/bge-reranker-v2-m3 (vLLM)"
-                        : provider === "bedrock"
-                          ? "Model or inference profile ID, e.g. anthropic.claude-opus-5-5"
-                          : provider === "typesafe"
-                            ? "TypeSafe model, e.g. jev-latest"
-                            : provider === "vertex" && mode === "embedding"
-                              ? "Google embedding model, e.g. gemini-embedding-001"
-                              : provider === "vertex" && style === "anthropic"
-                                ? "Claude model with its version, e.g. claude-sonnet-4-5@20250929"
-                                : provider === "vertex"
-                                  ? "Gemini model, e.g. gemini-2.5-flash (sent as google/gemini-2.5-flash), or publisher/model for Model Garden"
-                                  : provider === "gemini"
-                                    ? mode === "embedding"
-                                      ? "e.g. gemini-embedding-001"
-                                      : "e.g. gemini-2.5-flash"
-                                    : provider === "mistral"
+                AUDIO_UPSTREAM[mode]?.[provider]
+                  ? AUDIO_UPSTREAM[mode]![provider]
+                  : provider === "bedrock" && mode === "embedding"
+                    ? `Amazon Titan Text Embeddings V2: ${TITAN_MODEL}`
+                    : provider === "bedrock" && mode === "rerank"
+                      ? "amazon.rerank-v1:0 or cohere.rerank-v3-5:0 (or a model ARN)"
+                      : provider === "azure" && mode === "rerank"
+                        ? "Your Cohere rerank deployment, e.g. Cohere-rerank-v4.0-pro"
+                        : mode === "rerank"
+                          ? "A model of a server with Cohere's rerank API, e.g. rerank-v3.5 (Cohere) or BAAI/bge-reranker-v2-m3 (vLLM)"
+                          : provider === "bedrock"
+                            ? "Model or inference profile ID, e.g. anthropic.claude-opus-5-5"
+                            : provider === "typesafe"
+                              ? "TypeSafe model, e.g. jev-latest"
+                              : provider === "vertex" && mode === "embedding"
+                                ? "Google embedding model, e.g. gemini-embedding-001"
+                                : provider === "vertex" && style === "anthropic"
+                                  ? "Claude model with its version, e.g. claude-sonnet-4-5@20250929"
+                                  : provider === "vertex"
+                                    ? "Gemini model, e.g. gemini-2.5-flash (sent as google/gemini-2.5-flash), or publisher/model for Model Garden"
+                                    : provider === "gemini"
                                       ? mode === "embedding"
-                                        ? "e.g. mistral-embed"
-                                        : "e.g. mistral-large-latest"
-                                      : provider === "azure" && mode === "decision"
-                                        ? "Your Microsoft-Decision-1 deployment name (Azure does not allow naming it Microsoft-Decision-1)"
-                                        : provider === "azure"
-                                          ? "Your Foundry deployment name. A catalog pick only suggests it; change it if your deployment is named differently."
-                                          : mode === "embedding"
-                                            ? "The model the provider serves, e.g. text-embedding-3-large"
-                                            : "The model the provider serves, as its API names it."
+                                        ? "e.g. gemini-embedding-001"
+                                        : "e.g. gemini-2.5-flash"
+                                      : provider === "mistral"
+                                        ? mode === "embedding"
+                                          ? "e.g. mistral-embed"
+                                          : "e.g. mistral-large-latest"
+                                        : provider === "azure" && mode === "decision"
+                                          ? "Your Microsoft-Decision-1 deployment name (Azure does not allow naming it Microsoft-Decision-1)"
+                                          : provider === "azure"
+                                            ? "Your Foundry deployment name. A catalog pick only suggests it; change it if your deployment is named differently."
+                                            : mode === "embedding"
+                                              ? "The model the provider serves, e.g. text-embedding-3-large"
+                                              : "The model the provider serves, as its API names it."
               }
               value={upstream}
               onChange={changeUpstream}
@@ -671,21 +721,50 @@ export function DeploymentForm({
                 onChange={(s) => setStyle(s as StyleChoice)}
                 options={STYLES[provider]}
               />
+            ) : mode === "transcription" && provider === "mistral" ? (
+              <Select
+                caption="Protocol"
+                hint={
+                  <ul className="hint-list">
+                    <li>
+                      <strong>Transcriptions</strong>: audio files sent to <span className="mono">/v1/audio/transcriptions</span>, such as{" "}
+                      <span className="mono">voxtral-mini-transcribe-3</span>.
+                    </li>
+                    <li>
+                      <strong>Realtime</strong>: a realtime model, such as <span className="mono">voxtral-mini-transcribe-realtime-3</span>.
+                      Clients stream audio to it over <span className="mono">/v1/realtime?intent=transcription</span> (OpenAI&apos;s
+                      Realtime protocol) and get the words as they are spoken. It takes no files.
+                    </li>
+                  </ul>
+                }
+                value={realtime ? "realtime" : "files"}
+                onChange={(v) => setRealtime(v === "realtime")}
+                options={[
+                  { value: "files", label: "Transcriptions", note: "audio files" },
+                  { value: "realtime", label: "Realtime", note: "WebSocket" },
+                ]}
+              />
             ) : (
               <TextInput
                 caption="Protocol"
                 value={
-                  mode === "decision"
-                    ? "System One"
-                    : mode === "rerank"
-                      ? provider === "bedrock"
-                        ? "Bedrock Rerank API"
-                        : "Cohere rerank (v2)"
-                      : provider === "bedrock"
-                        ? "Titan Embeddings V2"
-                        : provider === "vertex"
-                          ? "Vertex AI predict"
-                          : "OpenAI embeddings"
+                  mode === "transcription"
+                    ? "OpenAI audio transcriptions"
+                    : mode === "speech"
+                      ? provider === "mistral"
+                        ? "Mistral speech"
+                        : "OpenAI audio speech"
+                      : mode === "decision"
+                        ? "System One"
+                        : mode === "rerank"
+                          ? provider === "bedrock"
+                            ? "Bedrock Rerank API"
+                            : "Cohere rerank (v2)"
+                          : provider === "bedrock"
+                            ? "Titan Embeddings V2"
+                            : provider === "vertex"
+                              ? "Vertex AI predict"
+                              : "OpenAI embeddings"
                 }
                 hint={
                   provider === "bedrock" && mode === "embedding" ? "Amazon Titan Text Embeddings V2, called with InvokeModel." : undefined
@@ -724,11 +803,20 @@ export function DeploymentForm({
               placeholder={
                 nameAuto
                   ? "from the upstream model"
-                  : `e.g. ${mode === "embedding" ? "text-embedding" : mode === "decision" ? "jev" : mode === "rerank" ? "rerank" : "claude-opus"}`
+                  : `e.g. ${mode === "embedding" ? "text-embedding" : mode === "decision" ? "jev" : mode === "rerank" ? "rerank" : mode === "transcription" ? "transcribe" : mode === "speech" ? "tts" : "claude-opus"}`
               }
             />
           </div>
         </fieldset>
+
+        {mode === "speech" && (
+          <VoiceEditor
+            provider={provider}
+            rows={voiceList.rows}
+            others={voiceList.others}
+            onChange={(rows, others) => setVoiceList({ rows, others })}
+          />
+        )}
 
         <TagEditor
           caption="Tags"
@@ -820,9 +908,32 @@ export function DeploymentForm({
           </div>
         </Section>
 
-        <Section title={mode === "rerank" ? "Pricing (USD)" : "Pricing (USD per 1M tokens)"} summary={pricingSummary}>
+        <Section
+          title={mode === "rerank" || mode === "transcription" || mode === "speech" ? "Pricing (USD)" : "Pricing (USD per 1M tokens)"}
+          summary={pricingSummary}
+        >
           {pricingNote && <p className="muted small">{pricingNote}</p>}
           <div className="row four">
+            {mode === "transcription" && (
+              <TextInput
+                caption="Per audio minute"
+                hint="For models billed by the length of the audio (Whisper, Voxtral). Billed per second."
+                inputMode="decimal"
+                value={perMinute}
+                onChange={priceInput(setPerMinute)}
+                placeholder="0"
+              />
+            )}
+            {mode === "speech" && (
+              <TextInput
+                caption="Per 1M characters"
+                hint="Speech is billed by the characters of its input. For models priced per second of audio (gpt-4o-mini-tts), the catalog's price is converted at 15 characters a second."
+                inputMode="decimal"
+                value={perMChars}
+                onChange={priceInput(setPerMChars)}
+                placeholder="0"
+              />
+            )}
             {mode === "rerank" && (
               <TextInput
                 caption="Per 1K searches"
@@ -833,15 +944,28 @@ export function DeploymentForm({
                 placeholder="0"
               />
             )}
-            <TextInput
-              caption={mode === "rerank" ? "Input per 1M tokens" : "Input"}
-              hint={mode === "rerank" ? "For rerankers billed by token." : undefined}
-              inputMode="decimal"
-              value={inCost}
-              onChange={priceInput(setInCost)}
-            />
-            {mode !== "embedding" && mode !== "rerank" && (
-              <TextInput caption="Output" inputMode="decimal" value={outCost} onChange={priceInput(setOutCost)} />
+            {mode !== "speech" && (
+              <TextInput
+                caption={mode === "rerank" || mode === "transcription" ? "Input per 1M tokens" : "Input"}
+                hint={
+                  mode === "rerank"
+                    ? "For rerankers billed by token."
+                    : mode === "transcription"
+                      ? "For models that report tokens (gpt-4o-transcribe): the price of audio input tokens."
+                      : undefined
+                }
+                inputMode="decimal"
+                value={inCost}
+                onChange={priceInput(setInCost)}
+              />
+            )}
+            {mode !== "embedding" && mode !== "rerank" && mode !== "speech" && (
+              <TextInput
+                caption={mode === "transcription" ? "Output per 1M tokens" : "Output"}
+                inputMode="decimal"
+                value={outCost}
+                onChange={priceInput(setOutCost)}
+              />
             )}
             {chat && (
               <>

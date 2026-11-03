@@ -241,6 +241,7 @@ pub fn usage(v: &Value) -> Usage {
         cache_write_tokens: g("cache_creation_input_tokens"),
         reasoning_tokens: 0,
         search_units: v.pointer("/server_tool_use/web_search_requests").and_then(Value::as_u64).unwrap_or(0),
+        ..Default::default()
     }
 }
 

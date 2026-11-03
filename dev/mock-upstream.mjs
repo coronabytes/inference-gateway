@@ -1,6 +1,7 @@
 // Mock upstream for local end-to-end testing. Speaks OpenAI Chat Completions, OpenAI
 // Responses and Anthropic Messages (streaming and not), System One decisions, OpenAI
-// embeddings, and rerank (Cohere v2, and Bedrock's Rerank API). No real model is called.
+// embeddings, rerank (Cohere v2, and Bedrock's Rerank API), and audio transcriptions and speech
+// (OpenAI's, and Mistral's when the request has no `response_format` or `voice`). No real model is called.
 //
 //   bun dev/mock-upstream.mjs            # listens on :9999
 //
@@ -253,6 +254,59 @@ function applyGuardrail(body, res) {
   });
 }
 
+/** A WAV file of a short tone: what the mock "speaks". */
+function tone(seconds = 0.6, rate = 16000) {
+  const n = Math.round(seconds * rate);
+  const b = Buffer.alloc(44 + n * 2);
+  b.write("RIFF", 0);
+  b.writeUInt32LE(36 + n * 2, 4);
+  b.write("WAVEfmt ", 8);
+  b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20);
+  b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(rate, 24);
+  b.writeUInt32LE(rate * 2, 28);
+  b.writeUInt16LE(2, 32);
+  b.writeUInt16LE(16, 34);
+  b.write("data", 36);
+  b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(8000 * Math.sin((2 * Math.PI * 440 * i) / rate)), 44 + i * 2);
+  return b;
+}
+
+/** A multipart form's text fields (the file's bytes are not needed). */
+function formFields(raw) {
+  const fields = {};
+  for (const m of raw.matchAll(/name="([^"]+)"(?:; filename="[^"]*")?\r\n(?:Content-Type: [^\r]*\r\n)?\r\n([^\r]*)/g)) fields[m[1]] ??= m[2];
+  return fields;
+}
+
+function transcription(raw, res) {
+  const f = formFields(raw);
+  console.log(`POST transcriptions model=${f.model} format=${f.response_format ?? "(mistral)"}`);
+  if (String(f.model).includes("fail")) return json(res, 503, { error: { message: "mock upstream overloaded" } });
+  const text = "This is a mock transcript of your recording.";
+  const segments = [
+    { id: 0, start: 0, end: 1.5, text: " This is a mock transcript" },
+    { id: 1, start: 1.5, end: 3, text: " of your recording." },
+  ];
+  // Mistral: no response_format; it reports the audio's seconds.
+  if (!f.response_format) {
+    return json(res, 200, { model: f.model, text, language: "en", segments: f.timestamp_granularities ? segments : [], usage: { prompt_audio_seconds: 3, prompt_tokens: 4, completion_tokens: 12, total_tokens: 16 } });
+  }
+  if (f.response_format === "verbose_json") return json(res, 200, { task: "transcribe", language: "english", duration: 3.2, text, segments, usage: { type: "duration", seconds: 4 } });
+  if (f.model.includes("whisper")) return json(res, 200, { text, usage: { type: "duration", seconds: 4 } });
+  json(res, 200, { text, usage: { type: "tokens", input_tokens: 40, input_token_details: { audio_tokens: 40, text_tokens: 0 }, output_tokens: 11, total_tokens: 51 } });
+}
+
+function speech(body, res) {
+  const audio = tone();
+  // Mistral: no OpenAI voice; the audio comes base64-encoded in JSON.
+  if (!body.voice) return json(res, 200, { audio_data: audio.toString("base64") });
+  res.writeHead(200, { "content-type": "audio/wav" });
+  res.end(audio);
+}
+
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -261,8 +315,9 @@ function json(res, status, body) {
 http
   .createServer((req, res) => {
     let raw = "";
-    req.on("data", (c) => (raw += c));
+    req.on("data", (c) => (raw += c.toString("latin1")));
     req.on("end", () => {
+      if (req.url.split("?")[0].endsWith("/audio/transcriptions")) return transcription(raw, res);
       let body = {};
       try {
         body = JSON.parse(raw || "{}");
@@ -282,6 +337,7 @@ http
       if (/\/model\/[^/]+\/invoke$/.test(req.url)) return titan(body, req, res);
       if (/\/guardrail\/[^/]+\/version\/[^/]+\/apply$/.test(req.url)) return applyGuardrail(body, res);
       if (req.url.split("?")[0].endsWith("/rerank")) return rerank(body, res);
+      if (req.url.split("?")[0].endsWith("/audio/speech")) return speech(body, res);
       json(res, 404, { error: { message: `no route ${req.url}` } });
     });
   })

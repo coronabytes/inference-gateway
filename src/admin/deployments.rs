@@ -64,6 +64,10 @@ pub(crate) struct DeploymentView {
     #[schema(required)]
     cost_per_k_searches: Option<f64>,
     #[schema(required)]
+    cost_per_audio_minute: Option<f64>,
+    #[schema(required)]
+    cost_per_m_characters: Option<f64>,
+    #[schema(required)]
     base_model: Option<String>,
     tags: Vec<String>,
     project_ids: Vec<Uuid>,
@@ -120,6 +124,8 @@ fn view(r: DeploymentRow, credential_name: Option<String>, cooldown: Option<i64>
         long_cache_read_cost_per_mtok: r.long_cache_read_cost_per_mtok,
         long_cache_write_cost_per_mtok: r.long_cache_write_cost_per_mtok,
         cost_per_k_searches: r.cost_per_k_searches,
+        cost_per_audio_minute: r.cost_per_audio_minute,
+        cost_per_m_characters: r.cost_per_m_characters,
         base_model: r.base_model,
         tags: r.tags,
         project_ids: r.project_ids,
@@ -163,7 +169,7 @@ async fn deployment_health(state: &AppState, rows: &[DeploymentRow]) -> HashMap<
 #[serde(deny_unknown_fields)]
 pub(crate) struct DeploymentInput {
     pub(super) model_name: String,
-    /// chat (default), embedding, decision or rerank.
+    /// chat (default), embedding, decision, rerank, transcription or speech.
     #[serde(default)]
     pub(super) mode: Mode,
     #[schema(value_type = crate::model::ProviderKind)]
@@ -196,6 +202,10 @@ pub(crate) struct DeploymentInput {
     /// USD per 1,000 searches: for rerank models a query over up to 100 documents, for chat
     /// models a web search the model ran.
     cost_per_k_searches: Option<f64>,
+    /// USD per minute of input audio, for transcription models priced by the minute.
+    cost_per_audio_minute: Option<f64>,
+    /// USD per 1M characters of input text, for speech models.
+    cost_per_m_characters: Option<f64>,
     /// Price catalog key, e.g. `azure/gpt-4o` for an Azure deployment with its own name.
     #[serde(default)]
     base_model: Option<String>,
@@ -277,6 +287,8 @@ pub(super) fn check_deployment(i: &DeploymentInput) -> R<ProviderKind> {
         i.long_cache_read_cost_per_mtok,
         i.long_cache_write_cost_per_mtok,
         i.cost_per_k_searches,
+        i.cost_per_audio_minute,
+        i.cost_per_m_characters,
     ];
     if prices.into_iter().flatten().any(|p| !p.is_finite() || p < 0.0) {
         return Err(AdminError::bad_request("prices must be non-negative numbers"));
@@ -329,8 +341,14 @@ pub(super) fn to_row(id: Uuid, i: DeploymentInput, created: DateTime<Utc>) -> De
         mode: i.mode.as_str().into(),
         provider: i.provider,
         upstream_model: i.upstream_model.trim().to_string(),
-        // Only chat deployments choose a protocol.
-        config: sqlx::types::Json(DeploymentConfig { api_style: i.config.api_style.filter(|_| i.mode == Mode::Chat), ..i.config }),
+        // Only chat deployments choose a protocol, only speech deployments list voices, only
+        // transcription deployments are realtime.
+        config: sqlx::types::Json(DeploymentConfig {
+            api_style: i.config.api_style.filter(|_| i.mode == Mode::Chat),
+            voices: if i.mode == Mode::Speech { i.config.voices } else { Vec::new() },
+            realtime: i.config.realtime && i.mode == Mode::Transcription,
+            ..i.config
+        }),
         credential_id: i.credential_id,
         weight: i.weight,
         priority: i.priority,
@@ -349,6 +367,8 @@ pub(super) fn to_row(id: Uuid, i: DeploymentInput, created: DateTime<Utc>) -> De
         long_cache_write_cost_per_mtok: i.long_context_threshold.and(i.long_cache_write_cost_per_mtok),
         // Rerank models bill their searches, chat models the web searches they run.
         cost_per_k_searches: i.cost_per_k_searches.filter(|_| matches!(i.mode, Mode::Rerank | Mode::Chat)),
+        cost_per_audio_minute: i.cost_per_audio_minute.filter(|_| i.mode == Mode::Transcription),
+        cost_per_m_characters: i.cost_per_m_characters.filter(|_| i.mode == Mode::Speech),
         base_model: i.base_model.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()),
         tags: i.tags,
         project_ids: i.project_ids.unwrap_or_default(),
@@ -367,7 +387,8 @@ async fn credential_names(state: &AppState) -> R<HashMap<Uuid, String>> {
 pub(crate) struct DeploymentQuery {
     /// Just the deployments whose model name contains this text, ignoring case.
     q: Option<String>,
-    /// Just the deployments of this mode: `chat`, `embedding`, `decision` or `rerank`.
+    /// Just the deployments of this mode: `chat`, `embedding`, `decision`, `rerank`, `transcription`
+    /// or `speech`.
     mode: Option<String>,
     /// Just the deployments carrying any of these tags, as `azure,cheap`; `-` stands for none.
     tags: Option<String>,
@@ -644,6 +665,35 @@ pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Pat
             Err(e) => DeploymentTest::failed(latency_ms, e),
         }));
     }
+    if d.mode == Mode::Transcription {
+        let start = std::time::Instant::now();
+        let result = if d.config.realtime {
+            crate::api::realtime::probe(&state, &d).await
+        } else {
+            crate::api::audio::probe_transcription(&state, &d).await
+        };
+        let latency_ms = start.elapsed().as_millis() as u64;
+        return Ok(Json(match result {
+            Ok((text, usage)) => {
+                let heard = if text.is_empty() {
+                    "silence transcribed (no words)".to_string()
+                } else {
+                    format!("silence heard as \"{}\"", crate::util::truncate(&text, 100))
+                };
+                DeploymentTest::passed(latency_ms, heard, Some(usage.input_tokens), Some(usage.output_tokens))
+            }
+            Err(e) => DeploymentTest::failed(latency_ms, e),
+        }));
+    }
+    if d.mode == Mode::Speech {
+        let start = std::time::Instant::now();
+        let result = crate::api::audio::probe_speech(&state, &d).await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+        return Ok(Json(match result {
+            Ok((bytes, kind, _)) => DeploymentTest::passed(latency_ms, format!("{} KB of {kind}", bytes.div_ceil(1024)), None, None),
+            Err(e) => DeploymentTest::failed(latency_ms, e),
+        }));
+    }
     if d.mode == Mode::Decision {
         let start = std::time::Instant::now();
         let result = crate::api::decisions::probe(&state, &d).await;
@@ -693,7 +743,8 @@ pub(super) async fn test_deployment(State(state): State<AppState>, Path(id): Pat
 pub(crate) struct DeploymentTest {
     ok: bool,
     latency_ms: u64,
-    /// The model's reply (chat), dimensions (embeddings), the ranking (rerank) or an answer (decisions).
+    /// The model's reply (chat), dimensions (embeddings), the ranking (rerank), an answer (decisions), a
+    /// transcript (transcription) or the audio's size (speech).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     text: Option<String>,

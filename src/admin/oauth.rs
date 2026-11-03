@@ -534,7 +534,7 @@ pub(crate) struct CallbackQuery {
 fn back_to(page: Back, key: Option<Uuid>, param: &str, message: &str) -> Response {
     let q = percent_encoding::utf8_percent_encode(message, percent_encoding::NON_ALPHANUMERIC);
     Redirect::to(&match (page, key) {
-        (Back::Playground, Some(key)) => format!("/#/models/playground?key={key}&{param}={q}"),
+        (Back::Playground, Some(key)) => format!("/#/playground?key={key}&{param}={q}"),
         _ => format!("/#/access?{param}={q}"),
     })
     .into_response()

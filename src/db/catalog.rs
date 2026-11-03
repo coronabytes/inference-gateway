@@ -22,8 +22,8 @@ pub async fn list_deployments(pool: &PgPool) -> sqlx::Result<Vec<DeploymentRow>>
                   credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,
                   output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,
                   long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,
-                  long_cache_write_cost_per_mtok, cost_per_k_searches, base_model, tags, project_ids, enabled,
-                  created_at, updated_at
+                  long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,
+                  base_model, tags, project_ids, enabled, created_at, updated_at
            FROM deployments ORDER BY model_name, priority, created_at"#
     )
     .fetch_all(pool)
@@ -47,8 +47,8 @@ pub async fn search_deployments(
                   credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,
                   output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,
                   long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,
-                  long_cache_write_cost_per_mtok, cost_per_k_searches, base_model, tags, project_ids, enabled,
-                  created_at, updated_at
+                  long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,
+                  base_model, tags, project_ids, enabled, created_at, updated_at
            FROM deployments
            WHERE ($1::text IS NULL OR strpos(lower(model_name), $1) > 0)
              AND ($2::text IS NULL OR mode = $2)
@@ -77,8 +77,8 @@ pub async fn get_deployment(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Depl
                   credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,
                   output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,
                   long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,
-                  long_cache_write_cost_per_mtok, cost_per_k_searches, base_model, tags, project_ids, enabled,
-                  created_at, updated_at
+                  long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,
+                  base_model, tags, project_ids, enabled, created_at, updated_at
            FROM deployments WHERE id = $1"#,
         id
     )
@@ -92,8 +92,9 @@ pub async fn upsert_deployment(db: impl PgExecutor<'_>, d: &DeploymentRow) -> sq
              rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok, output_cost_per_mtok,
              cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold, long_input_cost_per_mtok,
              long_output_cost_per_mtok, long_cache_read_cost_per_mtok, long_cache_write_cost_per_mtok,
-             cost_per_k_searches, base_model, tags, project_ids, enabled, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,now())
+             cost_per_k_searches, base_model, tags, project_ids, enabled, created_at, cost_per_audio_minute,
+             cost_per_m_characters, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,now())
          ON CONFLICT (id) DO UPDATE SET
              model_name = EXCLUDED.model_name, mode = EXCLUDED.mode, provider = EXCLUDED.provider,
              upstream_model = EXCLUDED.upstream_model, config = EXCLUDED.config,
@@ -109,6 +110,8 @@ pub async fn upsert_deployment(db: impl PgExecutor<'_>, d: &DeploymentRow) -> sq
              long_cache_read_cost_per_mtok = EXCLUDED.long_cache_read_cost_per_mtok,
              long_cache_write_cost_per_mtok = EXCLUDED.long_cache_write_cost_per_mtok,
              cost_per_k_searches = EXCLUDED.cost_per_k_searches,
+             cost_per_audio_minute = EXCLUDED.cost_per_audio_minute,
+             cost_per_m_characters = EXCLUDED.cost_per_m_characters,
              base_model = EXCLUDED.base_model, tags = EXCLUDED.tags, project_ids = EXCLUDED.project_ids,
              enabled = EXCLUDED.enabled,
              updated_at = now()",
@@ -139,6 +142,8 @@ pub async fn upsert_deployment(db: impl PgExecutor<'_>, d: &DeploymentRow) -> sq
         &d.project_ids,
         d.enabled,
         d.created_at,
+        d.cost_per_audio_minute,
+        d.cost_per_m_characters,
     )
     .execute(db)
     .await?;
@@ -153,7 +158,8 @@ pub async fn accept_catalog_prices(pool: &PgPool, id: Uuid, seen: DateTime<Utc>,
         "UPDATE deployments SET input_cost_per_mtok = $3, output_cost_per_mtok = $4, cache_read_cost_per_mtok = $5,
              cache_write_cost_per_mtok = $6, long_context_threshold = $7, long_input_cost_per_mtok = $8,
              long_output_cost_per_mtok = $9, long_cache_read_cost_per_mtok = $10, long_cache_write_cost_per_mtok = $11,
-             cost_per_k_searches = $12, base_model = COALESCE(base_model, $13), updated_at = now()
+             cost_per_k_searches = $12, cost_per_audio_minute = $14, cost_per_m_characters = $15,
+             base_model = COALESCE(base_model, $13), updated_at = now()
          WHERE id = $1 AND updated_at = $2",
         id,
         seen,
@@ -168,6 +174,8 @@ pub async fn accept_catalog_prices(pool: &PgPool, id: Uuid, seen: DateTime<Utc>,
         p.long_cache_write_cost_per_mtok,
         p.cost_per_k_searches,
         key,
+        p.cost_per_audio_minute,
+        p.cost_per_m_characters,
     )
     .execute(pool)
     .await?;

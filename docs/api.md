@@ -20,6 +20,9 @@ The `model` in a request is the model name you chose in the gateway, not the pro
 | `POST /v1/messages`, `POST /v1/messages/count_tokens` | Anthropic Messages |
 | `POST /v1/embeddings` | OpenAI embeddings |
 | `POST /v1/rerank` | Rerank (Cohere's API; also `/v2/rerank` and `/rerank`) |
+| `POST /v1/audio/transcriptions` | Speech to text (OpenAI's API) |
+| `POST /v1/audio/speech` | Text to speech (OpenAI's API) |
+| `GET /v1/realtime?intent=transcription` | Live speech to text over a WebSocket (OpenAI's Realtime API) |
 | `POST /v1/decisions`, `POST /v1/systemone` | Decision models |
 | `GET /v1/models` | The models this key may use |
 
@@ -88,6 +91,32 @@ Rerank models order documents by relevance to a query, for search and retrieval-
 - **OpenAI-compatible:** any server with Cohere's rerank API at `{base}/rerank`: Cohere itself (`https://api.cohere.com/v2`), Jina, vLLM and others.
 
 Rerank models are priced per 1,000 searches (one query over up to 100 documents), and optionally per input token.
+
+## Speech to text
+
+Clients send OpenAI's transcription request (multipart: `file`, `model`, optional `language`, `prompt`, `response_format`) and get OpenAI's answer: `json`, `text`, `verbose_json` (with segments), `srt` or `vtt`.
+
+- **OpenAI-compatible and Azure OpenAI:** gpt-4o-transcribe, gpt-transcribe, Whisper and others, passed through. For `text`, `srt` and `vtt` the gateway asks for JSON and makes the format itself, so the usage is always billed.
+- **Mistral:** Voxtral transcription models, translated both ways. Mistral takes no `prompt` or `diarized_json`.
+
+Models that report tokens are billed per token, the others per minute of audio. The console's playground rejects recordings that are silent (a muted or wrong microphone), which would transcribe to nothing.
+
+## Realtime speech to text
+
+`GET /v1/realtime?intent=transcription` speaks OpenAI's Realtime API for transcription sessions over a WebSocket: configure the model with `session.update` (`session.audio.input.transcription.model`), stream mono PCM16 with `input_audio_buffer.append` (24 kHz, or the `rate` given in `session.audio.input.format`), and get `conversation.item.input_audio_transcription.delta` events while speaking. `input_audio_buffer.commit` ends the item and its `.completed` event carries the whole transcript; the session can go on with the next one. Browsers send their key as the `openai-insecure-api-key.<key>` subprotocol, as with OpenAI.
+
+- Realtime models are transcription deployments marked **Realtime**, such as Mistral's `voxtral-mini-transcribe-realtime-3`, spoken to in Mistral's own protocol.
+- Turn detection is not offered (`turn_detection` is `null`): items end when the client commits them.
+- A session is one request log entry, billed for the seconds of audio it streamed, at the deployment's price per minute. Sessions end after 60 minutes.
+
+## Text to speech
+
+Clients send OpenAI's speech request (`model`, `input` up to 4,096 characters, `voice`, `response_format` `mp3`, `opus`, `aac`, `flac`, `wav` or `pcm`) and get the audio. Speech is billed per character of input.
+
+- **OpenAI-compatible and Azure OpenAI:** passed through, with `alloy` when the request names no voice.
+- **Mistral:** Voxtral TTS, translated both ways. Mistral takes no `aac`, `instructions` or `speed`; its default voice is `gb_jane_neutral`.
+
+A speech deployment can list its voices, each with a name for the playground. The first is the default; requests for other voices are refused unless the list has `*`, which lets them through. The playground offers the listed voices in a dropdown. `stream_format: "sse"` is not supported yet.
 
 ## Decision models
 

@@ -1,10 +1,22 @@
-import { useState } from "react";
-import { adminFetch } from "../api";
+import { useEffect, useState } from "react";
+import { adminFetch, type Voice } from "../api";
+import { ANY_VOICE } from "../voices";
+import {
+  isSilent,
+  MAX_SPEECH_CHARS,
+  microphoneError,
+  SILENT_RECORDING,
+  speak,
+  transcribe,
+  useLiveTranscription,
+  useRecorder,
+  type Transcript,
+} from "../audio";
 import { labelHeaders, type Labels } from "../labels";
-import { Button, Segmented, Select, TextArea, TextInput } from "../components/controls";
+import { Banner, Button, FileButton, Segmented, Select, TextArea, TextInput } from "../components/controls";
 import { CurlButton } from "../components/CurlButton";
-import { ErrorBanner, IconButton, TrashIcon } from "../components/ui";
-import { compact, ms } from "../format";
+import { ErrorBanner, IconButton, MicIcon, StopIcon, TrashIcon } from "../components/ui";
+import { bytes, compact, ms } from "../format";
 
 interface Meta {
   model: string;
@@ -609,6 +621,285 @@ export function DecisionPanel({ keyId, keyName, model, labels }: PanelProps) {
             </details>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- speech to text
+
+const TRANSCRIPT_FORMATS = [
+  { value: "json", label: "JSON" },
+  { value: "text", label: "Text" },
+  { value: "verbose_json", label: "Segments" },
+  { value: "srt", label: "SRT" },
+];
+
+export function TranscriptionPanel({ keyId, model, labels }: PanelProps) {
+  const recorder = useRecorder();
+  const [audio, setAudio] = useState<Blob | null>(null);
+  const [language, setLanguage] = useState("");
+  const [format, setFormat] = useState("json");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ transcript: Transcript; meta: Meta } | null>(null);
+  const url = useObjectUrl(audio);
+  // A silent recording or file transcribes to nothing: said before it is sent.
+  const [silent, setSilent] = useState(false);
+  useEffect(() => {
+    setSilent(false);
+    if (!audio) return;
+    let live = true;
+    isSilent(audio).then((s) => live && setSilent(s));
+    return () => {
+      live = false;
+    };
+  }, [audio]);
+
+  const record = async () => {
+    setError(null);
+    try {
+      if (recorder.recording) setAudio(await recorder.stop());
+      else await recorder.start();
+    } catch (e) {
+      setError(microphoneError(e));
+    }
+  };
+
+  const submit = async () => {
+    if (!audio) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const t = await transcribe(keyId, model, audio, labels, { language: language.trim(), response_format: format });
+      setResult({ transcript: t, meta: { model, latency: t.latency, requestId: t.requestId } });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const usage = result?.transcript.usage;
+  return (
+    <div className="panel-grid">
+      <div className="card form">
+        <div className="audio-source">
+          <Button onClick={record} disabled={!recorder.supported} aria-pressed={recorder.recording}>
+            {recorder.recording ? <StopIcon /> : <MicIcon />} {recorder.recording ? "Stop recording" : "Record"}
+          </Button>
+          <FileButton label="Choose an audio file" accept="audio/*,video/mp4,video/webm" onFile={setAudio}>
+            Choose a file
+          </FileButton>
+          {audio && (
+            <span className="muted small">
+              {audio instanceof File ? audio.name : "Recording"} · {bytes(audio.size)}
+            </span>
+          )}
+        </div>
+        {url && <audio className="audio-preview" controls src={url} />}
+        {silent && <Banner tone="warning">{SILENT_RECORDING}</Banner>}
+        <div className="row">
+          <TextInput
+            caption="Language"
+            hint="The audio's language as an ISO-639-1 code, e.g. en or de. Optional; it improves accuracy."
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            placeholder="detect"
+          />
+          <Select caption="Format" value={format} onChange={setFormat} options={TRANSCRIPT_FORMATS} />
+        </div>
+        <div className="panel-actions">
+          <Button variant="primary" onClick={submit} disabled={busy || !audio || recorder.recording}>
+            {busy ? "Transcribing…" : "Transcribe"}
+          </Button>
+        </div>
+      </div>
+      <div className="card">
+        <ErrorBanner error={error} onDismiss={() => setError(null)} />
+        {!result && !error && <div className="muted">Record or choose audio, and its transcript appears here.</div>}
+        {result && (
+          <>
+            <MetaLine
+              meta={result.meta}
+              extra={
+                usage?.type === "duration"
+                  ? `${usage.seconds} s of audio`
+                  : usage?.type === "tokens"
+                    ? `${compact(usage.input_tokens ?? 0)} in / ${compact(usage.output_tokens ?? 0)} out`
+                    : undefined
+              }
+            />
+            <pre className="transcript">{format === "json" || format === "text" ? result.transcript.text : result.transcript.raw}</pre>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- text to speech
+
+const SPEECH_FORMATS = ["mp3", "wav", "opus", "flac"].map((f) => ({ value: f, label: f }));
+
+export function SpeechPanel({ keyId, keyName, model, labels, voices }: PanelProps & { voices: Voice[] }) {
+  const [text, setText] = useState("Hello! This is the inference gateway, reading text aloud.");
+  // The voices the model's deployments list: a choice among them, and any other one where `*` lets it through.
+  const listed = voices.filter((v) => v.id !== ANY_VOICE);
+  const open = !listed.length || voices.some((v) => v.id === ANY_VOICE);
+  const [choice, setChoice] = useState(listed[0]?.id ?? ANY_VOICE);
+  const [typed, setTyped] = useState("");
+  const voice = choice === ANY_VOICE ? typed : choice;
+  const [format, setFormat] = useState("mp3");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ audio: Blob; meta: Meta; characters: number } | null>(null);
+  const url = useObjectUrl(result?.audio ?? null);
+  const body = { model, input: text, ...(voice.trim() && { voice: voice.trim() }), response_format: format };
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const s = await speak(keyId, model, text, labels, { voice: voice.trim(), response_format: format });
+      setResult({ audio: s.audio, characters: [...text].length, meta: { model, latency: s.latency, requestId: s.requestId } });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="panel-grid">
+      <div className="card form">
+        <TextArea caption="Text" rows={6} value={text} onChange={(e) => setText(e.target.value)} maxLength={MAX_SPEECH_CHARS} />
+        <div className="row">
+          {listed.length > 0 && (
+            <Select
+              caption="Voice"
+              hint="The voices the model's deployments list, the default first."
+              value={choice}
+              onChange={setChoice}
+              options={[
+                ...listed.map((v) => ({ value: v.id, label: v.name ?? v.id, note: v.name ? v.id : undefined })),
+                ...(open ? [{ value: ANY_VOICE, label: "Other voice…" }] : []),
+              ]}
+            />
+          )}
+          {choice === ANY_VOICE && (
+            <TextInput
+              caption={listed.length ? "Voice id" : "Voice"}
+              hint={
+                listed.length
+                  ? "Passed to the provider as is."
+                  : "OpenAI's voices by name (alloy, coral, marin, …); for Mistral a voice id such as voice_478. Empty for the default voice: alloy on OpenAI, gb_jane_neutral on Mistral. List the voices on the deployment to pick them here."
+              }
+              mono
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder="default"
+            />
+          )}
+          <Select caption="Format" value={format} onChange={setFormat} options={SPEECH_FORMATS} />
+        </div>
+        <div className="panel-actions">
+          <CurlButton request={() => ({ path: "/v1/audio/speech", body, labels })} keyName={keyName} disabled={!text.trim()} />
+          <Button variant="primary" onClick={submit} disabled={busy || !text.trim()}>
+            {busy ? "Speaking…" : "Speak"}
+          </Button>
+        </div>
+      </div>
+      <div className="card">
+        <ErrorBanner error={error} onDismiss={() => setError(null)} />
+        {!result && !error && <div className="muted">The audio plays here.</div>}
+        {result && url && (
+          <>
+            <MetaLine meta={result.meta} extra={`${compact(result.characters)} characters · ${bytes(result.audio.size)}`} />
+            <audio className="audio-preview" controls autoPlay src={url} />
+            <a className="small" href={url} download={`speech.${format}`}>
+              Download
+            </a>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** An object URL for `blob` while it is shown, revoked after. */
+function useObjectUrl(blob: Blob | null): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!blob) return setUrl(null);
+    const u = URL.createObjectURL(blob);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [blob]);
+  return url;
+}
+
+// ---------------------------------------------------------------- realtime speech to text
+
+/** A realtime transcription model: the microphone streams to it, and the words appear as they are said. */
+export function LiveTranscriptionPanel({ keyId, model }: PanelProps) {
+  const live = useLiveTranscription();
+  const [language, setLanguage] = useState("");
+  const [text, setText] = useState("");
+  const [final, setFinal] = useState<{ transcript: string; seconds: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [started, setStarted] = useState(0);
+
+  const toggle = async () => {
+    setError(null);
+    if (!live.live) {
+      setText("");
+      setFinal(null);
+      try {
+        await live.start(keyId, model, setText, setError, language.trim() || undefined);
+        setStarted(performance.now());
+      } catch (e) {
+        setError(microphoneError(e));
+      }
+      return;
+    }
+    setBusy(true);
+    try {
+      const transcript = await live.stop();
+      setFinal({ transcript: transcript ?? text, seconds: (performance.now() - started) / 1000 });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="panel-grid">
+      <div className="card form">
+        <div className="audio-source">
+          <Button variant={live.live ? undefined : "primary"} onClick={toggle} disabled={!live.supported || busy} aria-pressed={live.live}>
+            {live.live ? <StopIcon /> : <MicIcon />} {live.live ? "Stop" : busy ? "Finishing…" : "Start speaking"}
+          </Button>
+          {live.live && <span className="muted small">Listening: the words appear as you speak.</span>}
+        </div>
+        <TextInput
+          caption="Language"
+          hint="The audio's language as an ISO-639-1 code, e.g. en or de. Optional; it improves accuracy. Fixed while listening."
+          value={language}
+          onChange={(e) => setLanguage(e.target.value)}
+          placeholder="detect"
+          disabled={live.live}
+        />
+        <p className="muted small">
+          Streams to <span className="mono">/v1/realtime?intent=transcription</span> with OpenAI&apos;s Realtime protocol, as PCM16 at 24
+          kHz.
+        </p>
+      </div>
+      <div className="card">
+        <ErrorBanner error={error} onDismiss={() => setError(null)} />
+        {!text && !final && !error && <div className="muted">Start speaking, and the transcript appears here as you talk.</div>}
+        {final && <MetaLine meta={{ model, latency: final.seconds * 1000 }} extra="final transcript" />}
+        {(text || final) && <pre className="transcript">{final?.transcript ?? text}</pre>}
       </div>
     </div>
   );

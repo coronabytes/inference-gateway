@@ -130,6 +130,12 @@ pub enum Op {
     Embeddings,
     /// Rerank (rerank deployments).
     Rerank,
+    /// Audio transcriptions (transcription deployments).
+    Transcriptions,
+    /// Audio speech (speech deployments).
+    Speech,
+    /// Realtime transcription over WebSocket (realtime transcription deployments), as an HTTP URL.
+    RealtimeTranscription,
 }
 
 /// RFC 3986 unreserved characters stay literal; everything else is percent-encoded.
@@ -284,6 +290,9 @@ pub async fn url(state: &AppState, d: &Deployment, op: Op) -> Result<String, Gat
         Op::Messages | Op::MessagesOnce => format!("{base}/messages"),
         Op::CountTokens => format!("{base}/messages/count_tokens"),
         Op::Embeddings => format!("{base}/embeddings"),
+        Op::Transcriptions => format!("{base}/audio/transcriptions"),
+        Op::Speech => format!("{base}/audio/speech"),
+        Op::RealtimeTranscription => format!("{base}/audio/transcriptions/realtime"),
         Op::SystemOne | Op::Rerank => unreachable!("handled above"),
     };
     if d.provider == ProviderKind::Azure
@@ -425,7 +434,7 @@ pub async fn stream_chat(state: &AppState, d: &Deployment, req: &ChatRequest) ->
         ApiStyle::Anthropic if d.bedrock_invoke() => bedrock::send_invoke(state, d, req).await,
         ApiStyle::Anthropic => anthropic::send(state, d, req).await,
         ApiStyle::Converse => bedrock::send(state, d, req).await,
-        ApiStyle::Systemone | ApiStyle::Embeddings | ApiStyle::Rerank => {
+        ApiStyle::Systemone | ApiStyle::Embeddings | ApiStyle::Rerank | ApiStyle::Transcription | ApiStyle::Speech => {
             Err(GatewayError::invalid(format!("'{}' is a {} model; call {}", d.model_name, d.mode.as_str(), d.mode.endpoints())))
         }
     }

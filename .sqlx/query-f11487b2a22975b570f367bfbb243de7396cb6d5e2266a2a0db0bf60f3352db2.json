@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.id, l.ts, l.key_id, (SELECT k.name FROM virtual_keys k WHERE k.id = l.key_id) AS \"key_name?\", l.model_name,\n                  l.deployment_id, l.provider, l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.tool, l.task_state, l.context_id,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", (SELECT b.tool_calls FROM request_bodies b WHERE b.id = l.id) AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $2)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l\n           WHERE l.id = ANY($1)",
+  "query": "SELECT l.id, l.ts, l.key_id, k.name AS \"key_name?\", l.model_name, l.deployment_id, l.provider,\n                  l.api, l.stream, l.status_code, l.latency_ms, l.ttft_ms, l.input_tokens, l.output_tokens,\n                  l.cache_read_tokens, l.cache_write_tokens, l.cost_usd, l.attempts, l.error, l.parent_id, l.labels,\n                  l.guardrails, l.guardrail_cost_usd, l.searches, l.search_cost_usd, l.audio_seconds, l.characters, l.tool, l.task_state, l.context_id,\n                  (SELECT d.upstream_model FROM deployments d WHERE d.id = l.deployment_id) AS \"upstream_model?\",\n                  (SELECT c.name FROM deployments d JOIN credentials c ON c.id = d.credential_id WHERE d.id = l.deployment_id) AS \"credential_name?\", b.tool_calls AS \"tool_calls?\",\n                  CASE WHEN l.bodies IN ('stored', 'truncated') AND l.ts < now() - make_interval(days => $12)\n                       THEN 'expired' ELSE l.bodies END AS \"bodies?\"\n           FROM request_logs l LEFT JOIN virtual_keys k ON k.id = l.key_id\n                LEFT JOIN request_bodies b ON b.id = l.id\n           WHERE ($2::text IS NULL OR strpos(lower(l.model_name), lower($2)) > 0)\n             AND ($3::uuid IS NULL OR l.key_id = $3)\n             AND ($4::timestamptz IS NULL OR l.ts >= $4)\n             AND ($5::timestamptz IS NULL OR l.ts < $5)\n             AND ($6::uuid[] IS NULL OR l.project_id = ANY($6))\n             AND ($7::jsonb IS NULL OR l.labels @> $7)\n             AND (NOT $8 OR (l.key_id IS NOT NULL AND k.id IS NULL))\n             AND (NOT $9 OR b.id IS NOT NULL)\n             AND ($10::text IS NULL OR b.search @@ websearch_to_tsquery('simple', $10))\n             AND ($11::text IS NULL OR b.tool_calls @> ARRAY[$11::text] OR l.tool = $11)\n             AND ($13::text[] IS NULL OR l.guardrails->>'action' = ANY($13))\n           ORDER BY l.ts DESC LIMIT $1",
   "describe": {
     "columns": [
       {
@@ -40,7 +40,12 @@
         "ordinal": 3,
         "name": "key_name?",
         "type_info": "Text",
-        "origin": "Expression"
+        "origin": {
+          "Table": {
+            "table": "virtual_keys",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 4,
@@ -275,6 +280,28 @@
       },
       {
         "ordinal": 25,
+        "name": "audio_seconds",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "audio_seconds"
+          }
+        }
+      },
+      {
+        "ordinal": 26,
+        "name": "characters",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "request_logs",
+            "name": "characters"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
         "name": "tool",
         "type_info": "Text",
         "origin": {
@@ -285,7 +312,7 @@
         }
       },
       {
-        "ordinal": 26,
+        "ordinal": 28,
         "name": "task_state",
         "type_info": "Text",
         "origin": {
@@ -296,7 +323,7 @@
         }
       },
       {
-        "ordinal": 27,
+        "ordinal": 29,
         "name": "context_id",
         "type_info": "Text",
         "origin": {
@@ -307,25 +334,30 @@
         }
       },
       {
-        "ordinal": 28,
+        "ordinal": 30,
         "name": "upstream_model?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 29,
+        "ordinal": 31,
         "name": "credential_name?",
         "type_info": "Text",
         "origin": "Expression"
       },
       {
-        "ordinal": 30,
+        "ordinal": 32,
         "name": "tool_calls?",
         "type_info": "TextArray",
-        "origin": "Expression"
+        "origin": {
+          "Table": {
+            "table": "request_bodies",
+            "name": "tool_calls"
+          }
+        }
       },
       {
-        "ordinal": 31,
+        "ordinal": 33,
         "name": "bodies?",
         "type_info": "Text",
         "origin": "Expression"
@@ -333,44 +365,57 @@
     ],
     "parameters": {
       "Left": [
+        "Int8",
+        "Text",
+        "Uuid",
+        "Timestamptz",
+        "Timestamptz",
         "UuidArray",
-        "Int4"
+        "Jsonb",
+        "Bool",
+        "Bool",
+        "Text",
+        "Text",
+        "Int4",
+        "TextArray"
       ]
     },
     "nullable": [
       false,
       false,
       true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      null,
       null,
       false,
-      true,
-      true,
-      false,
-      false,
-      false,
-      false,
-      true,
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
-      true,
-      true,
-      true,
-      true,
-      false,
-      false,
-      false,
-      true,
-      true,
-      true,
-      null,
-      null,
-      null,
       null
     ]
   },
-  "hash": "937f729becf88dffbb68c883bcc3f01ee27e6d0c04d079f35d332c47c8fd8453"
+  "hash": "f11487b2a22975b570f367bfbb243de7396cb6d5e2266a2a0db0bf60f3352db2"
 }
