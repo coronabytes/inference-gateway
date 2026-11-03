@@ -773,7 +773,7 @@ fn with_history(turn: &ChatRequest, raw: &Value, h: &History, provider: Provider
     req
 }
 
-fn sse_response(body: Body) -> Response {
+pub(crate) fn sse_response(body: Body) -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")

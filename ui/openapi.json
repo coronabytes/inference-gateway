@@ -7524,7 +7524,7 @@
           "Inference"
         ],
         "summary": "Speak text",
-        "description": "Text to speech, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Returns the audio.\nAlso served at `/audio/speech`.",
+        "description": "Text to speech, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Returns the audio,\nstreamed as it is made, or `speech.audio.delta` events with `stream_format: \"sse\"`. Also served\nat `/audio/speech`.",
         "operationId": "speech",
         "parameters": [
           {
@@ -7552,7 +7552,7 @@
         },
         "responses": {
           "200": {
-            "description": "The audio, in the requested format.",
+            "description": "The audio, in the requested format, or server-sent events with `stream_format: \"sse\"`.",
             "content": {
               "application/octet-stream": {
                 "schema": {
@@ -7562,6 +7562,11 @@
                     "format": "int32",
                     "minimum": 0
                   }
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -15234,7 +15239,14 @@
               "string",
               "null"
             ],
-            "description": "`mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm`."
+            "description": "`mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm` (24 kHz, mono, 16-bit little-endian)."
+          },
+          "stream_format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`audio` (default): the audio as it is made; `sse`: `speech.audio.delta` events."
           },
           "speed": {
             "type": [

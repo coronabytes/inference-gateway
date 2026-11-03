@@ -2135,8 +2135,9 @@ export interface paths {
         put?: never;
         /**
          * Speak text
-         * @description Text to speech, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Returns the audio.
-         *     Also served at `/audio/speech`.
+         * @description Text to speech, on OpenAI-compatible, Azure OpenAI and Mistral deployments. Returns the audio,
+         *     streamed as it is made, or `speech.audio.delta` events with `stream_format: "sse"`. Also served
+         *     at `/audio/speech`.
          */
         post: operations["speech"];
         delete?: never;
@@ -4850,8 +4851,10 @@ export interface components {
             voice?: string | null;
             /** @description How to speak (OpenAI's gpt-4o-mini-tts). */
             instructions?: string | null;
-            /** @description `mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm`. */
+            /** @description `mp3` (default), `opus`, `aac`, `flac`, `wav` or `pcm` (24 kHz, mono, 16-bit little-endian). */
             response_format?: string | null;
+            /** @description `audio` (default): the audio as it is made; `sse`: `speech.audio.delta` events. */
+            stream_format?: string | null;
             /**
              * Format: double
              * @description 0.25 to 4.0 (OpenAI).
@@ -9549,13 +9552,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The audio, in the requested format. */
+            /** @description The audio, in the requested format, or server-sent events with `stream_format: "sse"`. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/octet-stream": number[];
+                    "text/event-stream": string;
                 };
             };
             /** @description Invalid request. */
