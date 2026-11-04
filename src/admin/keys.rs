@@ -582,6 +582,12 @@ pub(super) async fn reset_spend(
 pub(super) async fn restart_spend(state: &AppState, who: Spender, reason: &str) {
     broadcast_reload(state, reason).await;
     state.cache.reset_period_spend(who).await;
+    // The period starts over, and so do its budget alerts.
+    let owner = match who {
+        Spender::Key(id) => db::AlertOwner::Key(id),
+        Spender::Project(id) => db::AlertOwner::Project(id),
+    };
+    crate::alerts::forget_current(state, owner).await;
     let cache = state.cache.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type BudgetPeriod, type Guardrail, type Project, type ProjectInput, type PromptLogging } from "../api";
 import { Banner, Button, MultiSelect, Segmented, Select, TextArea, TextInput, Toggle } from "../components/controls";
 import { ErrorBanner, Modal, optNum, type ConfirmRequest } from "../components/ui";
+import { BudgetAlertsEditor, saveBudgetAlerts, useBudgetAlerts } from "../components/BudgetAlerts";
 import { offerDeleteStoredPrompts } from "../components/StoredPrompts";
 
 /** The project as it is now, as input for saving it with `changes`. */
@@ -103,6 +104,8 @@ export function ProjectForm({
   const [guardrailIds, setGuardrailIds] = useState<string[]>(initial?.guardrail_ids ?? []);
   const [webSearch, setWebSearch] = useState(initial?.web_search ?? true);
   const [promptLogging, setPromptLogging] = useState<PromptLogging>(initial?.prompt_logging ?? "deny");
+  // Only admins edit projects, so the alerts are always theirs to set.
+  const alerts = useBudgetAlerts(initial ? `/projects/${initial.id}` : null, true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -129,8 +132,10 @@ export function ProjectForm({
         web_search: webSearch,
         prompt_logging: promptLogging,
       };
-      if (initial) await api(`/projects/${initial.id}`, { method: "PUT", json });
-      else await api("/projects", { method: "POST", json });
+      const saved = initial
+        ? await api<Project>(`/projects/${initial.id}`, { method: "PUT", json })
+        : await api<Project>("/projects", { method: "POST", json });
+      await saveBudgetAlerts(`/projects/${saved.id}`, alerts.pending(!!period));
       await onSaved();
       if (initial && confirm && initial.prompt_logging !== "deny" && promptLogging === "deny") {
         await offerDeleteStoredPrompts(`/projects/${initial.id}`, name, confirm);
@@ -155,7 +160,13 @@ export function ProjectForm({
         </>
       }
     >
-      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      <ErrorBanner
+        error={error ?? alerts.error}
+        onDismiss={() => {
+          setError(null);
+          alerts.clearError();
+        }}
+      />
       <div className="form">
         <TextInput
           caption="Name"
@@ -198,6 +209,7 @@ export function ProjectForm({
             <div />
           )}
         </div>
+        {period && <BudgetAlertsEditor state={alerts} noun="project" />}
         {guardrails.length > 0 && (
           <MultiSelect
             caption="Guardrails"

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO budget_alerts (project_id, key_id, thresholds, recipients, updated_at) VALUES ($1, $2, $3, $4, now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int2Array",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e6f005ae9406d6bd5f9b08ac27a04c748009b8d4aca49bfebd9e70b4533f7914"
+}

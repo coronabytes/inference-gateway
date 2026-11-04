@@ -43,6 +43,8 @@ hex = "0.4"
 http-body = "1"
 # The server loop: hyper with a timer, so header read timeouts apply (see src/server.rs).
 hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio", "http1", "http2"] }
+# Budget alert emails over SMTP (see src/mail.rs), on the build's rustls with the system's certificate roots.
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "aws-lc-rs", "rustls-platform-verifier", "hostname"] }
 openidconnect = { version = "4", default-features = false }
 # OpenTelemetry: traces, metrics and logs pushed over OTLP/HTTP (protobuf) when an OTLP endpoint is
 # configured (see src/telemetry.rs). The exporter's blocking client is the gateway's own reqwest.

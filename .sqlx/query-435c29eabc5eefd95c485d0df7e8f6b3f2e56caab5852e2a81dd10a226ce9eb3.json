@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT password FROM smtp_settings WHERE id = 1 FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "password",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "password"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "435c29eabc5eefd95c485d0df7e8f6b3f2e56caab5852e2a81dd10a226ce9eb3"
+}

@@ -30,11 +30,22 @@ Admin and inference + admin keys stay outside projects. A key in a project is an
 
 - Turning a project off blocks all its keys at once, until it is turned on again.
 - A project can have its own **budget** per day, week or month for all its keys together, on top of each key's own budget. Once spent, the project's keys get `429` until it resets.
+- [Budget alerts](#budget-alerts) email the people responsible when a project's or key's spend crosses a share of its budget.
 - Guardrails set on a project apply to every key in it.
 - Turning **web search** off on a project forbids it for every key in it, whatever the key's own setting.
 - **Prompt logging** on a project is **Deny** (the default: no key's prompts are stored, whatever the key says), **Allow** (the keys that turn it on are logged) or **Force** (every key in the project is logged). Only admins change it. Keys outside projects follow the gateway's setting under Cluster → Settings, which is Deny or Allow, never Force.
 - Each request records the project its key was in, so when a key moves, what it spent stays with the old project. Deleting a project deletes its keys too.
 - [Users](single-sign-on.md#roles) see only the projects an admin adds them to.
+
+## Budget alerts
+
+A project or key with a budget can email people when its spend in the current period reaches shares of the budget, for example 80 % and 99 %.
+
+- Set them in the project's form, or on the key form's **Limits** tab, under the budget: **Alert at** picks the thresholds, **Notify** the people. Only admins set alerts.
+- Recipients are people who signed in with [single sign-on](single-sign-on.md), at the email address their identity provider gave at their last sign-in.
+- Each threshold is sent once per budget period. When spend crosses several at once, one email names the highest. **Reset spend** starts them over.
+- Spend is checked every minute, so an alert can arrive up to a minute after the request that crossed the threshold.
+- Mail goes out through the server set under **Cluster → Email** (SMTP with STARTTLS, TLS or, for a local relay, none). **Send test email** there sends a sample alert. While email is off, no alert is sent or used up: those still due go out once it is on.
 
 ## Tags
 

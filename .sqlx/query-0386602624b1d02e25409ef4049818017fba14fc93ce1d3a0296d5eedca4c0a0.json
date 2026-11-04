@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM budget_alerts WHERE project_id IS NOT DISTINCT FROM $1 AND key_id IS NOT DISTINCT FROM $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0386602624b1d02e25409ef4049818017fba14fc93ce1d3a0296d5eedca4c0a0"
+}

@@ -4,6 +4,7 @@
 
 use sqlx::{Connection, PgPool, migrate::Migrator, postgres::PgPoolOptions};
 
+mod alerts;
 mod audit;
 mod catalog;
 mod guardrails;
@@ -17,6 +18,7 @@ mod rotation;
 mod settings;
 mod upstreams;
 
+pub use alerts::*;
 pub use audit::*;
 pub use catalog::*;
 pub use guardrails::*;

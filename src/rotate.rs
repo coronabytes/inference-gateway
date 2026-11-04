@@ -111,6 +111,16 @@ pub(crate) async fn rotate_postgres(pool: &sqlx::PgPool, sb: &SecretBox) -> Resu
         },
         None => println!("OIDC client secret: none stored"),
     }
+    match db::sealed_smtp_password(&mut *tx).await.map_err(pg)? {
+        Some(sealed) => match sb.reseal(&sealed).map_err(|e| format!("SMTP password: {e}"))? {
+            Some(v) => {
+                db::set_smtp_password(&mut *tx, &v).await.map_err(pg)?;
+                println!("SMTP password: re-encrypted");
+            }
+            None => println!("SMTP password: already under the current key"),
+        },
+        None => println!("SMTP password: none stored"),
+    }
     tx.commit().await.map_err(pg)?;
     Ok(())
 }

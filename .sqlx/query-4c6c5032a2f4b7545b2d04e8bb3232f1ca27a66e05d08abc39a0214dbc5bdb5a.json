@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM budget_alerts_sent WHERE sent_at < now() - interval '40 days'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4c6c5032a2f4b7545b2d04e8bb3232f1ca27a66e05d08abc39a0214dbc5bdb5a"
+}

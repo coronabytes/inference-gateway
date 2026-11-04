@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM budget_alerts_sent WHERE spender = $1 AND window_id = ANY($2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9ec8c0574306c917bb4603bbe77006a69df9af92532d77d9c3d510304ae6cb13"
+}

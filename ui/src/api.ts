@@ -114,6 +114,13 @@ export type OidcSettingsInput = S["OidcSettingsInput"];
 
 export type AdminUser = S["PersonView"];
 
+export type SmtpSettings = S["SmtpSettingsView"];
+
+export type SmtpSettingsInput = S["SmtpSettingsInput"];
+
+/** A project's or key's budget alerts: thresholds in percent and the people emailed. */
+export type BudgetAlerts = S["BudgetAlerts"];
+
 export type Provider = S["ProviderKind"];
 /** Upstream protocol of a chat deployment. */
 export type ApiStyle = S["ApiStyle"];
