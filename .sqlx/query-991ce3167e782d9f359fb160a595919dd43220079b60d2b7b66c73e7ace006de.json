@@ -1,18 +1,13 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT model_name AS \"subject!\", 0::bigint AS \"bucket!\",\n                  count(*) AS \"requests!\", count(*) FILTER (WHERE status_code >= 400) AS \"errors!\",\n                  sum(input_tokens)::bigint AS \"input_tokens!\", sum(output_tokens)::bigint AS \"output_tokens!\",\n                  sum(cache_read_tokens)::bigint AS \"cache_read_tokens!\", sum(cache_write_tokens)::bigint AS \"cache_write_tokens!\",\n                  sum(cost_usd) AS \"cost_usd!\", sum(latency_ms)::bigint AS \"latency_ms_sum!\",\n                  coalesce(sum(ttft_ms), 0)::bigint AS \"ttft_ms_sum!\", count(ttft_ms) AS \"ttft_count!\",\n                  percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms) AS \"p95_latency_ms?\"\n           FROM request_logs\n           WHERE ts >= $1 AND ts < $3 AND ($2::uuid IS NULL OR key_id = $2) AND ($4::uuid[] IS NULL OR project_id = ANY($4))\n             AND ($5::jsonb IS NULL OR labels @> $5)\n             AND (NOT $6 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))\n           GROUP BY model_name",
+  "query": "SELECT (CASE $7 WHEN 'project' THEN coalesce(project_id::text, '') WHEN 'key' THEN coalesce(key_id::text, '')\n                   ELSE model_name END) AS \"subject!\", 0::bigint AS \"bucket!\",\n                  count(*) AS \"requests!\", count(*) FILTER (WHERE status_code >= 400) AS \"errors!\",\n                  sum(input_tokens)::bigint AS \"input_tokens!\", sum(output_tokens)::bigint AS \"output_tokens!\",\n                  sum(cache_read_tokens)::bigint AS \"cache_read_tokens!\", sum(cache_write_tokens)::bigint AS \"cache_write_tokens!\",\n                  sum(cost_usd) AS \"cost_usd!\", sum(latency_ms)::bigint AS \"latency_ms_sum!\",\n                  coalesce(sum(ttft_ms), 0)::bigint AS \"ttft_ms_sum!\", count(ttft_ms) AS \"ttft_count!\",\n                  percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms) AS \"p95_latency_ms?\"\n           FROM request_logs\n           WHERE ts >= $1 AND ts < $3 AND ($2::uuid IS NULL OR key_id = $2) AND ($4::uuid[] IS NULL OR project_id = ANY($4))\n             AND ($5::jsonb IS NULL OR labels @> $5)\n             AND (NOT $6 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))\n             AND ($8::text[] IS NULL OR model_name = ANY($8)) AND NOT (model_name = ANY($9))\n           GROUP BY 1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
         "name": "subject!",
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "request_logs",
-            "name": "model_name"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 1,
@@ -94,11 +89,14 @@
         "Timestamptz",
         "UuidArray",
         "Jsonb",
-        "Bool"
+        "Bool",
+        "Text",
+        "TextArray",
+        "TextArray"
       ]
     },
     "nullable": [
-      false,
+      null,
       null,
       null,
       null,
@@ -113,5 +111,5 @@
       null
     ]
   },
-  "hash": "fc9199938c5548ac2adc2e92e66739a7e594a320b2b1e9cf9b188a91c4cbded2"
+  "hash": "991ce3167e782d9f359fb160a595919dd43220079b60d2b7b66c73e7ace006de"
 }

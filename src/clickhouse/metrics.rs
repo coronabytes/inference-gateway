@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::{ClickHouse, Params, logs::Where};
-use crate::db::{KeyMinute, KeyUsageRow, LogTotals, ModelHour, ModelSpeed};
+use crate::db::{Group, KeyMinute, KeyUsageRow, LogTotals, ModelHour, ModelSpeed};
 
 /// The aggregates of `LogTotals`, after its subject and bucket.
 const TOTALS: &str = "count() AS requests, countIf(status_code >= 400) AS errors,
@@ -106,11 +106,17 @@ impl ClickHouse {
         Ok(rows.into_iter().map(LogTotals::from).collect())
     }
 
-    pub async fn model_totals(&self, pg: &PgPool, s: &Selection<'_>) -> crate::logstore::Result<Vec<LogTotals>> {
-        let w = selection(pg, s, false).await?;
+    /// See `db::group_totals`.
+    pub async fn group_totals(&self, pg: &PgPool, s: &Selection<'_>, group: Group) -> crate::logstore::Result<Vec<LogTotals>> {
+        let w = selection(pg, s, true).await?;
+        let subject = match group {
+            Group::Model => "model_name",
+            Group::Project => "ifNull(toString(project_id), '')",
+            Group::Key => "ifNull(toString(key_id), '')",
+        };
         let sql = format!(
-            "SELECT model_name AS subject, 0 AS bucket, {TOTALS}, toInt32(quantileExactLow(0.95)(latency_ms)) AS p95_latency_ms
-             FROM request_logs WHERE {} GROUP BY model_name",
+            "SELECT {subject} AS subject, 0 AS bucket, {TOTALS}, toInt32(quantileExactLow(0.95)(latency_ms)) AS p95_latency_ms
+             FROM request_logs WHERE {} GROUP BY subject",
             w.sql()
         );
         let rows: Vec<Totals> = self.rows(&sql, w.into_params()).await?;

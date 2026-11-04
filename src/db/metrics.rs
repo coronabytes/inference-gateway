@@ -71,19 +71,42 @@ pub async fn selection_series(
     .await
 }
 
-/// Totals per model, with exact latency percentiles.
-pub async fn model_totals(
+/// What the Metrics table's rows total: a model, a project or a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Group {
+    Model,
+    Project,
+    Key,
+}
+
+impl Group {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Project => "project",
+            Self::Key => "key",
+        }
+    }
+}
+
+/// Totals per `group`, with exact latency percentiles. The subject is the model's name, or the
+/// project's or key's id, empty for the entries without one. Filtered as `selection_series`.
+pub async fn group_totals(
     pool: &PgPool,
+    group: Group,
     since: DateTime<Utc>,
     until: DateTime<Utc>,
     key_id: Option<Uuid>,
     deleted_keys: bool,
+    models: Option<&[String]>,
+    exclude: &[String],
     projects: Option<&[Uuid]>,
     labels: Option<&serde_json::Value>,
 ) -> sqlx::Result<Vec<LogTotals>> {
     sqlx::query_as!(
         LogTotals,
-        r#"SELECT model_name AS "subject!", 0::bigint AS "bucket!",
+        r#"SELECT (CASE $7 WHEN 'project' THEN coalesce(project_id::text, '') WHEN 'key' THEN coalesce(key_id::text, '')
+                   ELSE model_name END) AS "subject!", 0::bigint AS "bucket!",
                   count(*) AS "requests!", count(*) FILTER (WHERE status_code >= 400) AS "errors!",
                   sum(input_tokens)::bigint AS "input_tokens!", sum(output_tokens)::bigint AS "output_tokens!",
                   sum(cache_read_tokens)::bigint AS "cache_read_tokens!", sum(cache_write_tokens)::bigint AS "cache_write_tokens!",
@@ -94,13 +117,17 @@ pub async fn model_totals(
            WHERE ts >= $1 AND ts < $3 AND ($2::uuid IS NULL OR key_id = $2) AND ($4::uuid[] IS NULL OR project_id = ANY($4))
              AND ($5::jsonb IS NULL OR labels @> $5)
              AND (NOT $6 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
-           GROUP BY model_name"#,
+             AND ($8::text[] IS NULL OR model_name = ANY($8)) AND NOT (model_name = ANY($9))
+           GROUP BY 1"#,
         since,
         key_id,
         until,
         projects,
         labels,
         deleted_keys,
+        group.as_str(),
+        models,
+        exclude,
     )
     .fetch_all(pool)
     .await

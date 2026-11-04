@@ -323,8 +323,14 @@ export interface Metrics {
   to: string;
   /** The model filter's choices, by name: configured models, and removed ones with traffic. */
   models: { model: string; active: boolean }[];
-  /** The by-model table: models with requests in the range and those picked, sorted as asked (`sort`, `order`). */
-  rows: { model: string; totals: Totals }[];
+  /**
+   * The table, by `group`: models with requests in the range and those picked (`id` is the model's
+   * name), or the projects or keys with requests in the selection (`id` null for requests without
+   * one, `name` missing for one deleted since). Sorted as asked (`sort`, `order`).
+   */
+  rows: { id: string | null; name?: string; totals: Totals }[];
+  /** What `rows` total. */
+  group: "model" | "project" | "key";
   /** The picked models' totals (every model's except routers' without a pick), with exact percentiles. */
   totals: Totals;
   /** The same, per time bucket. */

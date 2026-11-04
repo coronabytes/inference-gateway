@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Metrics as MetricsData } from "../api";
 import { TimeChart } from "../components/TimeChart";
-import { MultiSelect, TimeRange, useTimeRange } from "../components/controls";
+import { MultiSelect, Segmented, TimeRange, useTimeRange } from "../components/controls";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
 import { LabelFilter } from "../components/LabelInput";
 import { ErrorBanner, SortHeader, StatTile, type Sort } from "../components/ui";
@@ -12,8 +12,38 @@ const RANGES = ["1h", "24h", "7d", "month", "last_month", "custom"] as const;
 
 const PER: Record<number, string> = { 60: "per minute", 3600: "per hour", 86400: "per day" };
 
-/** The by-model table's columns, by the names `/metrics` sorts them by. */
-type Column = "model" | "requests" | "errors" | "input" | "output" | "latency" | "p95" | "ttft" | "cost";
+/** The table's columns, by the names `/metrics` sorts them by. */
+type Column = "name" | "requests" | "errors" | "input" | "output" | "latency" | "p95" | "ttft" | "cost";
+
+/** What the table's rows total, by `/metrics`'s `group`. */
+type Group = "model" | "project" | "key";
+
+const GROUPS: { value: Group; label: string }[] = [
+  { value: "model", label: "Model" },
+  { value: "project", label: "Project" },
+  { value: "key", label: "Key" },
+];
+
+/** The `KeyFilter` value of a project's row (see `setKeyFilter`). */
+const PROJECT = "project:";
+
+const GROUP_STORE = "metrics.group";
+
+function storedGroup(): Group {
+  try {
+    const g = localStorage.getItem(GROUP_STORE);
+    return GROUPS.some((o) => o.value === g) ? (g as Group) : "model";
+  } catch {
+    return "model";
+  }
+}
+
+/** A row's name: a model's, a project's or key's, or what stands for one without a name. */
+function rowName(group: Group, row: MetricsData["rows"][number]): string {
+  if (group === "model" || row.name) return row.name ?? row.id ?? "";
+  if (row.id) return group === "project" ? "Deleted project" : "Deleted key";
+  return group === "project" ? "No project" : "No key";
+}
 
 export function Metrics() {
   const time = useTimeRange(RANGES, "month");
@@ -29,6 +59,15 @@ export function Metrics() {
   const [loading, setLoading] = useState(false);
   // Busiest first, as the server sorts by default.
   const [sort, setSort] = useState<Sort<Column>>({ by: "requests", desc: true });
+  const [group, setGroup] = useState<Group>(storedGroup);
+  const pickGroup = (g: Group) => {
+    setGroup(g);
+    try {
+      localStorage.setItem(GROUP_STORE, g);
+    } catch {
+      // Not remembered, then.
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -38,6 +77,7 @@ export function Metrics() {
       setKeyFilter(q, keyId);
       if (labelFilter) q.set("labels", labelFilter);
       if (models) q.set("models", models);
+      q.set("group", group);
       q.set("sort", sort.by);
       q.set("order", sort.desc ? "desc" : "asc");
       setData(await api<MetricsData>(`/metrics?${q}`));
@@ -47,7 +87,7 @@ export function Metrics() {
     } finally {
       setLoading(false);
     }
-  }, [rangeQuery, keyId, labelFilter, models, sort]);
+  }, [rangeQuery, keyId, labelFilter, models, group, sort]);
 
   useEffect(() => {
     load();
@@ -59,10 +99,19 @@ export function Metrics() {
 
   const toggleModel = (model: string) => setModelFilter((ms) => (ms.includes(model) ? ms.filter((m) => m !== model) : [...ms, model]));
 
-  // Models with requests in the range, and those picked in the filter, sorted by the server.
+  // The rows of the group the data was loaded for, sorted by the server.
+  const shown: Group = data?.group ?? group;
   const rows = data?.rows ?? [];
+  /** The filter a row's click sets: its model, or its project or key in the key filter. */
+  const rowFilter = (id: string) => (shown === "project" ? PROJECT + id : id);
+  const selected = (id: string | null) => id !== null && (shown === "model" ? modelFilter.includes(id) : keyId === rowFilter(id));
+  const pick = (row: MetricsData["rows"][number]) => {
+    if (row.id === null) return;
+    if (shown === "model") toggleModel(row.id);
+    else setKeyId(keyId === rowFilter(row.id) ? "" : rowFilter(row.id));
+  };
   const head = (id: Column, label: string, num = true) => (
-    <SortHeader id={id} sort={sort} onSort={setSort} num={num} ascFirst={id === "model"}>
+    <SortHeader id={id} sort={sort} onSort={setSort} num={num} ascFirst={id === "name"}>
       {label}
     </SortHeader>
   );
@@ -152,12 +201,14 @@ export function Metrics() {
 
       {data && (
         <>
-          <h3>By model</h3>
+          <div className="filters table-bar">
+            <Segmented caption="By" label="Totals by" options={GROUPS} value={group} onChange={pickGroup} />
+          </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  {head("model", "Model", false)}
+                  {head("name", GROUPS.find((g) => g.value === shown)!.label, false)}
                   {head("requests", "Requests")}
                   {head("errors", "Errors")}
                   {head("input", "Input")}
@@ -170,11 +221,15 @@ export function Metrics() {
               </thead>
               <tbody>
                 {rows.map((m) => (
-                  <tr key={m.model} className={modelFilter.includes(m.model) ? "selected" : ""}>
+                  <tr key={m.id ?? ""} className={selected(m.id) ? "selected" : ""}>
                     <td>
-                      <button type="button" className="link" onClick={() => toggleModel(m.model)}>
-                        {m.model}
-                      </button>
+                      {m.id === null ? (
+                        <span className="muted">{rowName(shown, m)}</span>
+                      ) : (
+                        <button type="button" className="link" onClick={() => pick(m)}>
+                          {rowName(shown, m)}
+                        </button>
+                      )}
                     </td>
                     <td className="num">{compact(m.totals.requests)}</td>
                     <td className="num">

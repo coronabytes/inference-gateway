@@ -99,6 +99,12 @@ pub async fn key_names(pool: &PgPool, visible: Option<&[Uuid]>, usable: bool) ->
     .await
 }
 
+/// The names of the keys of `ids` that still exist, by id.
+pub async fn key_names_of(pool: &PgPool, ids: &[Uuid]) -> sqlx::Result<std::collections::HashMap<Uuid, String>> {
+    let rows = sqlx::query!("SELECT id, name FROM virtual_keys WHERE id = ANY($1)", ids).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(|r| (r.id, r.name)).collect())
+}
+
 /// Every tag keys hold, with how many keys hold it, among the keys in `visible` projects.
 pub async fn key_tag_counts(pool: &PgPool, visible: Option<&[Uuid]>) -> sqlx::Result<HashMap<String, i64>> {
     let rows = sqlx::query!(

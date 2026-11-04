@@ -1281,7 +1281,7 @@ export interface paths {
         };
         /**
          * Metrics
-         * @description Requests, errors, tokens, latency and cost over time, and totals by model.
+         * @description Requests, errors, tokens, latency and cost over time, and totals by model, project or key.
          */
         get: operations["metrics"];
         put?: never;
@@ -8071,12 +8071,14 @@ export interface operations {
                  *     every model except auto routers, whose entries already count their calls.
                  */
                 models?: string;
+                /** @description Metrics only: what the table's rows total: `model` (the default), `project` or `key`. */
+                group?: string;
                 /**
-                 * @description Metrics only: the column the by-model rows are sorted by: `model`, `requests` (the
-                 *     default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.
+                 * @description Metrics only: the column the table's rows are sorted by: `name` (the model's, project's or
+                 *     key's), `requests` (the default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.
                  */
                 sort?: string;
-                /** @description Metrics only: `asc` or `desc`; the default is ascending for `model`, descending otherwise. */
+                /** @description Metrics only: `asc` or `desc`; the default is ascending for `name`, descending otherwise. */
                 order?: string;
                 /** @description Metrics with `range=custom`: first and last day, inclusive (UTC). */
                 from?: string;
