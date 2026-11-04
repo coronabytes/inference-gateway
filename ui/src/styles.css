@@ -664,6 +664,10 @@ a:focus-visible {
   align-items: center;
   gap: 12px;
 }
+/* A table's own choices, where a heading would go. */
+.filters.table-bar {
+  margin: 24px 0 8px;
+}
 .segmented {
   display: inline-flex;
   border: 1px solid var(--border);

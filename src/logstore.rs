@@ -157,10 +157,13 @@ pub async fn selection_series(state: &AppState, s: &Selection<'_>, step: i64) ->
     }
 }
 
-pub async fn model_totals(state: &AppState, s: &Selection<'_>) -> Result<Vec<LogTotals>> {
+pub async fn group_totals(state: &AppState, s: &Selection<'_>, group: db::Group) -> Result<Vec<LogTotals>> {
     match &state.logs {
-        LogStore::Postgres => Ok(db::model_totals(&state.db, s.since, s.until, s.key_id, s.deleted_keys, s.projects, s.labels).await?),
-        LogStore::ClickHouse(ch) => ch.model_totals(&state.db, s).await,
+        LogStore::Postgres => {
+            Ok(db::group_totals(&state.db, group, s.since, s.until, s.key_id, s.deleted_keys, s.models, s.exclude, s.projects, s.labels)
+                .await?)
+        }
+        LogStore::ClickHouse(ch) => ch.group_totals(&state.db, s, group).await,
     }
 }
 

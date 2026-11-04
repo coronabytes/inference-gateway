@@ -29,10 +29,12 @@ pub(crate) struct RangeQuery {
     /// Metrics only: the series and totals of just these models, comma-separated; omitted means
     /// every model except auto routers, whose entries already count their calls.
     models: Option<String>,
-    /// Metrics only: the column the by-model rows are sorted by: `model`, `requests` (the
-    /// default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.
+    /// Metrics only: what the table's rows total: `model` (the default), `project` or `key`.
+    group: Option<String>,
+    /// Metrics only: the column the table's rows are sorted by: `name` (the model's, project's or
+    /// key's), `requests` (the default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.
     sort: Option<String>,
-    /// Metrics only: `asc` or `desc`; the default is ascending for `model`, descending otherwise.
+    /// Metrics only: `asc` or `desc`; the default is ascending for `name`, descending otherwise.
     order: Option<String>,
     /// Metrics with `range=custom`: first and last day, inclusive (UTC).
     from: Option<chrono::NaiveDate>,
@@ -118,10 +120,10 @@ fn totals(t: Option<&db::LogTotals>) -> Totals {
     }
 }
 
-/// The by-model table's columns, by the `sort` parameter's names.
+/// The table's columns, by the `sort` parameter's names.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SortBy {
-    Model,
+    Name,
     Requests,
     Errors,
     Input,
@@ -135,7 +137,7 @@ enum SortBy {
 impl SortBy {
     fn parse(s: Option<&str>) -> Result<Self, AdminError> {
         Ok(match s.unwrap_or("requests") {
-            "model" => Self::Model,
+            "name" => Self::Name,
             "requests" => Self::Requests,
             "errors" => Self::Errors,
             "input" => Self::Input,
@@ -144,14 +146,14 @@ impl SortBy {
             "p95" => Self::P95,
             "ttft" => Self::Ttft,
             "cost" => Self::Cost,
-            _ => return Err(AdminError::bad_request("sort must be model, requests, errors, input, output, latency, p95, ttft or cost")),
+            _ => return Err(AdminError::bad_request("sort must be name, requests, errors, input, output, latency, p95, ttft or cost")),
         })
     }
 
     /// The column's value in a row, as a number; None (no latency yet) sorts last either way.
     fn value(self, t: &Totals) -> Option<f64> {
         match self {
-            Self::Model => None,
+            Self::Name => None,
             Self::Requests => Some(t.requests as f64),
             Self::Errors => Some(t.errors as f64),
             // As the table shows it: cache reads and writes are input too.
@@ -165,20 +167,44 @@ impl SortBy {
     }
 }
 
-/// Sorts the by-model rows by `by`, ties by model name; rows without a value go last.
-fn sort_rows(rows: &mut [(&str, Totals)], by: SortBy, desc: bool) {
+/// One row of the table: a model (`id` is its name), or a project or key (`id` is None for the
+/// requests without one, `name` is None for one deleted since).
+#[derive(Serialize)]
+struct Row {
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    totals: Totals,
+    /// The name the table shows and sorts by (a model's is its id); rows without one sort last.
+    #[serde(skip)]
+    label: Option<String>,
+}
+
+impl Row {
+    fn label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+}
+
+/// Sorts the rows by `by`, ties by name; rows without a value (or a name) go last.
+fn sort_rows(rows: &mut [Row], by: SortBy, desc: bool) {
     use std::cmp::Ordering;
-    rows.sort_by(|(a, ta), (b, tb)| {
+    rows.sort_by(|a, b| {
         let primary = match by {
-            SortBy::Model => a.cmp(b),
-            _ => match (by.value(ta), by.value(tb)) {
+            SortBy::Name => match (a.label(), b.label()) {
+                (Some(x), Some(y)) => x.cmp(y),
+                (Some(_), None) => return Ordering::Less,
+                (None, Some(_)) => return Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            },
+            _ => match (by.value(&a.totals), by.value(&b.totals)) {
                 (Some(x), Some(y)) => x.total_cmp(&y),
                 (Some(_), None) => return Ordering::Less,
                 (None, Some(_)) => return Ordering::Greater,
                 (None, None) => Ordering::Equal,
             },
         };
-        (if desc { primary.reverse() } else { primary }).then_with(|| a.cmp(b))
+        (if desc { primary.reverse() } else { primary }).then_with(|| a.label().cmp(&b.label())).then_with(|| a.id.cmp(&b.id))
     });
 }
 
@@ -204,13 +230,13 @@ fn series_json(stamps: &[i64], buckets: &HashMap<i64, &db::LogTotals>) -> Vec<Va
         .collect()
 }
 
-/// Metrics requests aggregating the request log at once on this replica. Each runs three scans,
+/// Metrics requests aggregating the request log at once on this replica. Each runs up to four scans,
 /// so open Metrics pages cannot take the connection pool the request path writes through.
 pub(crate) static LOG_SCANS: std::sync::LazyLock<tokio::sync::Semaphore> = std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(3));
 
 /// Metrics
 ///
-/// Requests, errors, tokens, latency and cost over time, and totals by model.
+/// Requests, errors, tokens, latency and cost over time, and totals by model, project or key.
 #[utoipa::path(get, path = "/metrics", tag = "Usage", params(RangeQuery),
     responses(
         (status = 200, description = "Totals and series for the range.", body = Object),
@@ -224,8 +250,14 @@ pub(super) async fn metrics(
     Query(q): Query<RangeQuery>,
 ) -> R<Json<Value>> {
     let sort = SortBy::parse(q.sort.as_deref())?;
+    let group = match q.group.as_deref() {
+        None | Some("model") => db::Group::Model,
+        Some("project") => db::Group::Project,
+        Some("key") => db::Group::Key,
+        Some(_) => return Err(AdminError::bad_request("group must be model, project or key")),
+    };
     let desc = match q.order.as_deref() {
-        None => sort != SortBy::Model,
+        None => sort != SortBy::Name,
         Some("asc") => false,
         Some("desc") => true,
         Some(_) => return Err(AdminError::bad_request("order must be asc or desc")),
@@ -266,9 +298,19 @@ pub(super) async fn metrics(
         projects: counted,
         labels,
     };
-    let (series, model_totals, selected) = tokio::try_join!(
+    // Every model's totals, whatever the pick: the model filter's choices, and the by-model table,
+    // from which models are picked. By project or key, the rows count the selection's traffic, as
+    // the tiles and charts do.
+    let every_model = crate::logstore::Selection { models: None, exclude: &[], ..selection };
+    let (series, model_totals, entity_totals, selected) = tokio::try_join!(
         crate::logstore::selection_series(&state, &selection, step),
-        crate::logstore::model_totals(&state, &selection),
+        crate::logstore::group_totals(&state, &every_model, db::Group::Model),
+        async {
+            match group {
+                db::Group::Model => Ok(Vec::new()),
+                _ => crate::logstore::group_totals(&state, &selection, group).await,
+            }
+        },
         crate::logstore::selection_totals(&state, &selection),
     )?;
 
@@ -285,17 +327,41 @@ pub(super) async fn metrics(
     // The model filter's choices, by name.
     let model_out: Vec<Value> =
         models.iter().map(|m| json!({ "model": m, "active": is_router(m) || snap.deployments.contains_key(snap.resolve(m)) })).collect();
-    // The by-model table: the models with requests in the range, and those picked, in the order asked for.
-    let picked = picked_models.as_deref().unwrap_or_default();
-    let mut rows: Vec<(&str, Totals)> = models
-        .iter()
-        .filter(|m| model_totals.contains_key(*m) || picked.iter().any(|p| p == *m))
-        .map(|m| (*m, totals(model_totals.get(m).copied())))
-        .collect();
+    let mut rows: Vec<Row> = match group {
+        // The models with requests in the range, and those picked.
+        db::Group::Model => {
+            let picked = picked_models.as_deref().unwrap_or_default();
+            models
+                .iter()
+                .filter(|m| model_totals.contains_key(*m) || picked.iter().any(|p| p == *m))
+                .map(|m| Row {
+                    id: Some(m.to_string()),
+                    name: None,
+                    totals: totals(model_totals.get(m).copied()),
+                    label: Some(m.to_string()),
+                })
+                .collect()
+        }
+        // The projects or keys with requests in the range, named from Postgres.
+        _ => {
+            let ids: Vec<Uuid> = entity_totals.iter().filter_map(|t| Uuid::parse_str(&t.subject).ok()).collect();
+            let names: HashMap<Uuid, String> = match group {
+                db::Group::Project => db::project_names(&state.db, Some(&ids)).await?.into_iter().map(|p| (p.id, p.name)).collect(),
+                _ => db::key_names_of(&state.db, &ids).await?,
+            };
+            entity_totals
+                .iter()
+                .map(|t| {
+                    let id = Uuid::parse_str(&t.subject).ok();
+                    let name = id.and_then(|id| names.get(&id).cloned());
+                    Row { id: id.map(|id| id.to_string()), label: name.clone(), name, totals: totals(Some(t)) }
+                })
+                .collect()
+        }
+    };
     sort_rows(&mut rows, sort, desc);
-    let rows: Vec<Value> = rows.into_iter().map(|(m, t)| json!({ "model": m, "totals": t })).collect();
     Ok(Json(json!({
-        "range": label, "step_secs": step, "from": since, "to": until, "models": model_out, "rows": rows,
+        "range": label, "step_secs": step, "from": since, "to": until, "models": model_out, "group": group.as_str(), "rows": rows,
         // The picked models', or everything except router entries.
         "totals": totals(Some(&selected)), "series": series_json(&stamps, &buckets),
     })))
@@ -487,21 +553,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn by_model_rows_sort_by_column_with_blanks_last() {
-        let row =
-            |m: &'static str, requests: i64, latency: Option<f64>| (m, Totals { requests, avg_latency_ms: latency, ..Default::default() });
+    fn rows_sort_by_column_with_blanks_last() {
+        let row = |m: Option<&str>, requests: i64, latency: Option<f64>| Row {
+            id: Some(m.unwrap_or("deleted").to_string()),
+            name: None,
+            totals: Totals { requests, avg_latency_ms: latency, ..Default::default() },
+            label: m.map(String::from),
+        };
         let order = |by, desc| {
-            let mut rows = vec![row("b", 5, Some(20.0)), row("a", 5, None), row("c", 9, Some(10.0))];
+            let mut rows = vec![row(Some("b"), 5, Some(20.0)), row(Some("a"), 5, None), row(Some("c"), 9, Some(10.0))];
             sort_rows(&mut rows, by, desc);
-            rows.iter().map(|(m, _)| *m).collect::<Vec<_>>()
+            rows.iter().map(|r| r.label().unwrap().to_string()).collect::<Vec<_>>()
         };
         // Ties go by name.
         assert_eq!(order(SortBy::Requests, true), ["c", "a", "b"]);
         assert_eq!(order(SortBy::Requests, false), ["a", "b", "c"]);
-        // A model without a latency is last whichever way.
+        // A row without a latency is last whichever way.
         assert_eq!(order(SortBy::Latency, true), ["b", "c", "a"]);
         assert_eq!(order(SortBy::Latency, false), ["c", "b", "a"]);
-        assert_eq!(order(SortBy::Model, true), ["c", "b", "a"]);
+        assert_eq!(order(SortBy::Name, true), ["c", "b", "a"]);
+        // A deleted key, without a name, is last by name either way.
+        for desc in [false, true] {
+            let mut rows = vec![row(None, 9, None), row(Some("b"), 1, None), row(Some("a"), 1, None)];
+            sort_rows(&mut rows, SortBy::Name, desc);
+            assert_eq!(rows.last().unwrap().label(), None);
+        }
         assert!(SortBy::parse(Some("speed")).is_err());
         assert_eq!(SortBy::parse(None).unwrap(), SortBy::Requests);
     }
@@ -566,6 +642,7 @@ mod tests {
             deleted_keys: None,
             labels: None,
             models: None,
+            group: None,
             sort: None,
             order: None,
             from: from.map(|d| d.parse().unwrap()),

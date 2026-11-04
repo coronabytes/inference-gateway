@@ -136,6 +136,37 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn group_totals_by_model_project_and_key(pool: PgPool) {
+        let (a, b, project) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        entry(&pool, a, Duration::minutes(3), 200, 1.0, None).await;
+        entry(&pool, a, Duration::minutes(2), 500, 0.0, None).await;
+        let (in_project, _) = entry(&pool, b, Duration::minutes(1), 200, 2.0, None).await;
+        sqlx::query("UPDATE request_logs SET project_id = $1, model_name = 'n' WHERE id = $2")
+            .bind(project)
+            .bind(in_project)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (since, until) = (Utc::now() - Duration::hours(1), Utc::now() + Duration::minutes(1));
+        let totals = |group, models: Option<Vec<String>>| {
+            let pool = pool.clone();
+            async move {
+                let mut rows = group_totals(&pool, group, since, until, None, false, models.as_deref(), &[], None, None).await.unwrap();
+                rows.sort_by(|x, y| x.subject.cmp(&y.subject));
+                rows.into_iter().map(|t| (t.subject, t.requests, t.errors)).collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(totals(Group::Model, None).await, [("m".into(), 2, 1), ("n".into(), 1, 0)]);
+        let mut keys = vec![(a.to_string(), 2, 1), (b.to_string(), 1, 0)];
+        keys.sort();
+        assert_eq!(totals(Group::Key, None).await, keys);
+        // The entries without a project are under "".
+        assert_eq!(totals(Group::Project, None).await, [(String::new(), 2, 1), (project.to_string(), 1, 0)]);
+        // Grouped by key, the model filter applies.
+        assert_eq!(totals(Group::Key, Some(vec!["n".into()])).await, [(b.to_string(), 1, 0)]);
+    }
+
+    #[sqlx::test]
     async fn retention_removes_old_entries_with_their_bodies(pool: PgPool) {
         let key = Uuid::now_v7();
         let (old, old_ts) = entry(&pool, key, Duration::days(40), 200, 0.0, None).await;

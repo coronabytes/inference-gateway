@@ -151,8 +151,14 @@ async fn the_request_log_filters_and_aggregates(pg: PgPool) {
     assert_eq!(totals.p95_latency_ms, Some(100));
     let series = ch.selection_series(&pg, &s, 3600).await.unwrap();
     assert_eq!(series.iter().map(|b| b.requests).sum::<i64>(), 3);
-    let by_model = ch.model_totals(&pg, &s).await.unwrap();
+    let by_model = ch.group_totals(&pg, &s, crate::db::Group::Model).await.unwrap();
     assert_eq!(by_model.len(), 1);
+    let by_key = ch.group_totals(&pg, &super::Selection { key_id: None, ..s }, crate::db::Group::Key).await.unwrap();
+    let key_row = by_key.iter().find(|t| t.subject == key.to_string()).unwrap();
+    assert_eq!(key_row.requests, 3);
+    let by_project = ch.group_totals(&pg, &super::Selection { key_id: None, ..s }, crate::db::Group::Project).await.unwrap();
+    assert!(by_project.iter().any(|t| t.subject == project.to_string()));
+    assert_eq!(by_project.iter().map(|t| t.requests).sum::<i64>(), by_key.iter().map(|t| t.requests).sum::<i64>());
     let empty = ch.selection_totals(&pg, &super::Selection { key_id: Some(Uuid::now_v7()), ..s }).await.unwrap();
     assert_eq!((empty.requests, empty.p95_latency_ms), (0, None));
 
