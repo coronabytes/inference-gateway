@@ -103,7 +103,7 @@ pub(super) async fn logs(
         guardrail: guardrail.as_deref(),
         body_days: state.settings.get().prompt_log_retention_days,
     };
-    Ok(Json(db::recent_logs(&state.db, &filter).await?))
+    Ok(Json(crate::logstore::recent_logs(&state, &filter).await?))
 }
 
 /// What the latest logged responses' tools are sampled from.
@@ -117,7 +117,7 @@ const TOOL_SAMPLE: i64 = 1000;
     responses((status = 200, description = "Tools, most used first.", body = Vec<crate::db::ToolUse>)),
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn log_tools(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<db::ToolUse>>> {
-    Ok(Json(db::recent_tools(&state.db, TOOL_SAMPLE, access.projects()).await?))
+    Ok(Json(crate::logstore::recent_tools(&state, TOOL_SAMPLE, access.projects()).await?))
 }
 
 /// A logged request's bodies (see `capture`).
@@ -170,8 +170,8 @@ pub(super) async fn log_bodies(
     Extension(access): Extension<Access>,
     Path(id): Path<Uuid>,
 ) -> R<Json<BodiesView>> {
-    let row = db::log_bodies(&state.db, id).await?.filter(|r| access.sees(r.project_id)).ok_or_else(AdminError::not_found)?;
-    let (previous, next) = db::turn_links(&state.db, &row, access.projects()).await?;
+    let row = crate::logstore::log_bodies(&state, id).await?.filter(|r| access.sees(r.project_id)).ok_or_else(AdminError::not_found)?;
+    let (previous, next) = crate::logstore::turn_links(&state, &row, access.projects()).await?;
     Ok(Json(BodiesView {
         request: row.request,
         screened_request: row.screened_request,
@@ -209,7 +209,7 @@ pub(super) async fn key_bodies(
 ) -> R<Json<StoredBodies>> {
     let k = db::get_key(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
     check_sees_key(&access, &k)?;
-    Ok(Json(StoredBodies { stored: db::count_bodies(&state.db, db::BodiesOf::Key(id)).await? }))
+    Ok(Json(StoredBodies { stored: crate::logstore::count_bodies(&state, db::BodiesOf::Key(id)).await? }))
 }
 
 /// Delete a key's stored prompts
@@ -244,7 +244,7 @@ pub(super) async fn delete_key_bodies(
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn project_bodies(State(state): State<AppState>, Path(id): Path<Uuid>) -> R<Json<StoredBodies>> {
     db::get_project(&state.db, id).await?.ok_or_else(AdminError::not_found)?;
-    Ok(Json(StoredBodies { stored: db::count_bodies(&state.db, db::BodiesOf::Project(id)).await? }))
+    Ok(Json(StoredBodies { stored: crate::logstore::count_bodies(&state, db::BodiesOf::Project(id)).await? }))
 }
 
 /// Delete a project's stored prompts
@@ -278,7 +278,7 @@ async fn remove_bodies(state: &AppState, of: db::BodiesOf) -> R<u64> {
     };
     let lock = 0x626f_6469_6573_0000 ^ (id.as_u128() as i64 & 0xffff_ffff); // "bodies"
     let state = state.clone();
-    let task = tokio::spawn(async move { db::with_lock(&state.db, lock, db::delete_bodies(&state.db, of)).await });
+    let task = tokio::spawn(async move { db::with_lock(&state.db, lock, crate::logstore::delete_bodies(&state, of)).await });
     let done = task.await.map_err(|e| AdminError::internal(format!("deleting the bodies failed: {e}")))?;
     match done? {
         Some(deleted) => Ok(deleted?),
@@ -315,7 +315,7 @@ pub(crate) struct LabelValue {
     security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
 pub(super) async fn log_labels(State(state): State<AppState>, Extension(access): Extension<Access>) -> R<Json<Vec<LabelKey>>> {
     let mut keys: Vec<LabelKey> = Vec::new();
-    for u in db::recent_labels(&state.db, LABEL_SAMPLE, access.projects()).await? {
+    for u in crate::logstore::recent_labels(&state, LABEL_SAMPLE, access.projects()).await? {
         if keys.last().is_none_or(|k| k.key != u.key) {
             keys.push(LabelKey { key: u.key, values: Vec::new() });
         }
@@ -358,7 +358,7 @@ pub(super) async fn audit_log(State(state): State<AppState>, Query(q): Query<Aud
     let target_type = q.target_type.as_deref().map(str::trim).filter(|t| !t.is_empty());
     let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let (since, until) = log_window(q.range.as_deref(), q.from, q.to, Utc::now())?;
-    Ok(Json(db::list_audit(&state.db, limit, target_type, search, since, until).await?))
+    Ok(Json(crate::logstore::list_audit(&state, limit, target_type, search, since, until).await?))
 }
 
 /// Where a log range starts and where it ends (exclusive); None is unbounded.

@@ -99,7 +99,7 @@ impl Event {
             target_name: self.target_name,
             details: self.details,
         };
-        if let Err(e) = db::insert_audit(&state.db, &entry).await {
+        if let Err(e) = crate::logstore::insert_audit(state, &entry).await {
             tracing::warn!(error = %e, action = %entry.action, target = %entry.target_type, "could not write the audit log");
         }
     }

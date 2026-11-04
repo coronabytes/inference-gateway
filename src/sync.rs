@@ -98,6 +98,9 @@ pub async fn run_heartbeat(state: AppState) {
             "last_seen": chrono::Utc::now(),
         });
         state.cache.heartbeat(&state.cfg.instance_id, &info.to_string(), 20).await;
+        // Valkey that came back empty gets every budget counter again, in a task of its own.
+        let s = state.clone();
+        tokio::spawn(async move { crate::budget::restore_if_lost(&s).await });
     }
 }
 
@@ -108,7 +111,7 @@ pub async fn run_maintenance(state: AppState) {
         let settings = state.settings.get();
         let (request_days, audit_days) = (settings.request_log_retention_days, settings.audit_log_retention_days);
         // Logged bodies are always pruned, so this runs whatever the other two retentions are.
-        match crate::db::prune_logs(&state.db, request_days, audit_days, settings.prompt_log_retention_days).await {
+        match crate::logstore::prune(&state, request_days, audit_days, settings.prompt_log_retention_days).await {
             Ok((requests, audit, bodies)) => {
                 if requests > 0 {
                     tracing::info!(deleted = requests, "pruned old request logs");

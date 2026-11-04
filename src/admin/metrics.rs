@@ -180,10 +180,20 @@ pub(super) async fn metrics(
         Some(_) => Vec::new(),
         None => snap.routers.keys().chain(snap.aliases.keys()).filter(|m| is_router(m)).cloned().collect(),
     };
+    let selection = crate::logstore::Selection {
+        since,
+        until,
+        key_id: q.key_id,
+        deleted_keys: deleted,
+        models: picked_models.as_deref(),
+        exclude: &exclude,
+        projects: counted,
+        labels,
+    };
     let (series, model_totals, selected) = tokio::try_join!(
-        db::selection_series(&state.db, since, until, step, q.key_id, deleted, picked_models.as_deref(), &exclude, counted, labels),
-        db::model_totals(&state.db, since, until, q.key_id, deleted, counted, labels),
-        db::selection_totals(&state.db, since, until, q.key_id, deleted, picked_models.as_deref(), &exclude, counted, labels),
+        crate::logstore::selection_series(&state, &selection, step),
+        crate::logstore::model_totals(&state, &selection),
+        crate::logstore::selection_totals(&state, &selection),
     )?;
 
     let buckets: HashMap<i64, &db::LogTotals> = series.iter().map(|b| (b.bucket, b)).collect();
@@ -232,7 +242,7 @@ pub(super) async fn key_usage(
             Some("30d") => chrono::Duration::days(30),
             _ => chrono::Duration::hours(24),
         };
-    Ok(Json(db::key_usage_since(&state.db, since, access.projects()).await?))
+    Ok(Json(crate::logstore::key_usage_since(&state, since, access.projects()).await?))
 }
 
 /// A key's busiest minute in each hour of the last 7 days, and the 95th percentiles over the
@@ -305,7 +315,7 @@ pub(super) async fn key_rates(
     let first = now - now.rem_euclid(3600) - 167 * 3600;
     let stamps: Vec<i64> = (0..168).map(|i| first + i * 3600).collect();
     let since = DateTime::from_timestamp(first, 0).unwrap_or_default();
-    let minutes = db::key_minutes(&state.db, id, since).await?;
+    let minutes = crate::logstore::key_minutes(&state, id, since).await?;
     Ok(Json(hourly_rates(&minutes, &stamps)))
 }
 
@@ -390,7 +400,7 @@ pub(super) async fn key_spend(
     let count = if period == BudgetPeriod::Day { 30 } else { 12 };
     let starts = spend_periods(period, Utc::now(), k.created_at, count);
     let since = starts.first().and_then(|&s| DateTime::from_timestamp(s, 0)).unwrap_or_else(Utc::now);
-    let days = db::key_daily_spend(&state.db, id, since).await?;
+    let days = crate::logstore::key_daily_spend(&state, id, since).await?;
     Ok(Json(spend_by_period(period, &starts, &days)))
 }
 

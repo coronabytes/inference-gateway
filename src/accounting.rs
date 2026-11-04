@@ -527,8 +527,8 @@ impl Drop for Rollup {
     }
 }
 
-/// Drains records into Valkey (limit counters) and Postgres (the request log, which also feeds
-/// the Metrics page, and spend).
+/// Drains records into Valkey (limit counters) and the log store (the request log, which also
+/// feeds the Metrics page and rebuilds budget spend; see `logstore`).
 ///
 /// Batches are written by a task of their own, so a slow write does not stop records from being
 /// taken off the queue (which drops them when full); records gather meanwhile, up to `BACKLOG`.
@@ -639,12 +639,15 @@ async fn flush(state: &AppState, batch: &mut Vec<RequestRecord>) {
     }
     // Logged bodies are trimmed and indexed off the async workers, then written after their
     // entries: a failure to store them never costs an entry or its spend.
-    let captured: Vec<_> = batch.iter_mut().filter_map(|r| r.bodies.0.take().map(|c| (r.id, r.ts, r.key_id, c))).collect();
+    let captured: Vec<_> = batch.iter_mut().filter_map(|r| r.bodies.0.take().map(|c| (r.id, r.ts, r.key_id, r.project_id, c))).collect();
     let mut stored = Vec::new();
     if !captured.is_empty() {
         let max_bytes = state.settings.get().prompt_log_max_kb as usize * 1024;
         let finished = tokio::task::spawn_blocking(move || {
-            captured.into_iter().map(|(id, ts, key, c)| (id, ts, key, (!c.is_dropped()).then(|| c.finish(max_bytes)))).collect::<Vec<_>>()
+            captured
+                .into_iter()
+                .map(|(id, ts, key, project, c)| (id, ts, key, project, (!c.is_dropped()).then(|| c.finish(max_bytes))))
+                .collect::<Vec<_>>()
         })
         .await
         .unwrap_or_else(|e| {
@@ -653,16 +656,16 @@ async fn flush(state: &AppState, batch: &mut Vec<RequestRecord>) {
         });
         let status: HashMap<Uuid, &'static str> = finished
             .iter()
-            .map(|(id, _, _, s)| (*id, s.as_ref().map_or("dropped", |s| if s.truncated { "truncated" } else { "stored" })))
+            .map(|(id, _, _, _, s)| (*id, s.as_ref().map_or("dropped", |s| if s.truncated { "truncated" } else { "stored" })))
             .collect();
         for r in batch.iter_mut() {
             if let Some(s) = status.get(&r.id) {
                 r.bodies_status = Some(s);
             }
         }
-        stored = finished.into_iter().filter_map(|(id, ts, key, s)| s.map(|s| (id, ts, key, s))).collect();
+        stored = finished.into_iter().filter_map(|(id, ts, key, project, s)| s.map(|s| (id, ts, key, project, s))).collect();
     }
-    if let Err(e) = crate::db::write_request_batch(&state.db, batch).await {
+    if let Err(e) = crate::logstore::write_request_batch(state, batch).await {
         tracing::error!(error = %e, n = batch.len(), "failed to persist request logs");
         // Keep a bounded backlog so a short database outage does not lose spend. Its bodies are
         // not kept: an outage must not hold prompts in memory.
@@ -674,14 +677,11 @@ async fn flush(state: &AppState, batch: &mut Vec<RequestRecord>) {
         }
     }
     batch.clear();
-    let ids: Vec<Uuid> = stored.iter().map(|(id, ..)| *id).collect();
-    if !stored.is_empty()
-        && let Err(e) = crate::db::write_body_batch(&state.db, stored).await
+    let n = stored.len();
+    if n > 0
+        && let Err(e) = crate::logstore::write_body_batch(state, stored).await
     {
-        tracing::error!(error = %e, n = ids.len(), "failed to persist logged bodies");
-        if let Err(e) = crate::db::mark_bodies_dropped(&state.db, &ids).await {
-            tracing::warn!(error = %e, "could not mark the logged bodies as dropped");
-        }
+        tracing::error!(error = %e, n, "failed to persist logged bodies");
     }
 }
 

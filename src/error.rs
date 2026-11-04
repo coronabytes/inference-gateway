@@ -290,6 +290,13 @@ impl From<sqlx::Error> for AdminError {
     }
 }
 
+impl From<crate::logstore::Error> for AdminError {
+    fn from(e: crate::logstore::Error) -> Self {
+        tracing::error!(error = %e, "log store error");
+        Self(StatusCode::INTERNAL_SERVER_ERROR, "database error".into())
+    }
+}
+
 impl IntoResponse for AdminError {
     fn into_response(self) -> Response {
         (self.0, Json(AdminErrorBody { error: self.1 })).into_response()

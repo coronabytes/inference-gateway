@@ -243,8 +243,8 @@ async fn stats(state: &AppState, models: &[String], key_id: Option<Uuid>, projec
     let since = chrono::DateTime::from_timestamp(first, 0).unwrap_or_default();
     let _scan = super::LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
     let (hours, speeds) = tokio::try_join!(
-        db::model_hours(&state.db, since, models, key_id, projects),
-        db::model_speeds(&state.db, since, models, key_id, projects),
+        crate::logstore::model_hours(state, since, models, key_id, projects),
+        crate::logstore::model_speeds(state, since, models, key_id, projects),
     )?;
     let mut out: HashMap<String, HubStats> = HashMap::new();
     for h in hours {

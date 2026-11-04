@@ -537,7 +537,7 @@ pub async fn turn_links(pool: &PgPool, row: &BodiesRow, projects: Option<&[Uuid]
 }
 
 /// A tool the latest logged responses called, with how many of them did (`recent_tools`).
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct ToolUse {
     pub name: String,
     pub requests: i64,
