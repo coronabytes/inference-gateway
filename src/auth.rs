@@ -153,6 +153,10 @@ pub async fn check_key_limits(state: &AppState, key: &VirtualKey) -> Result<(), 
     if let Some(d) = tpm.filter(|d| !d.allowed) {
         return Err(GatewayError::rate_limited("key token rate limit exceeded", d.retry_after));
     }
+    // Spend could not be counted: refused unless GATEWAY_BUDGET_FAIL_MODE=open.
+    if !state.cfg.budget_fail_open && [&budget, &project_budget].into_iter().flatten().any(|b| b.unknown) {
+        return Err(GatewayError::unavailable("the budget cannot be checked right now; try again shortly"));
+    }
     if let Some(b) = budget
         && b.exhausted()
     {

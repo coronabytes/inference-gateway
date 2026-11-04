@@ -34,6 +34,9 @@ const INSTANCES_SEEN_KEY: &str = "gw:{inst}:seen";
 /// Every stored conversation and when it expires (sorted set, member = root, score = Unix
 /// seconds), so key rotation can find them.
 const CONVERSATIONS_KEY: &str = "gw:convidx";
+/// Set once the budget counters are in Valkey; gone when Valkey loses its data (see `budget::restore_if_lost`).
+const SPEND_RESTORED_KEY: &str = "gw:spend:restored";
+const SPEND_RESTORING_KEY: &str = "gw:spend:restoring";
 
 /// Sliding-window limiter over two fixed 60s windows. Hash tags keep both keys in one
 /// cluster slot. With `incr == 0` it only checks that the window is not exhausted.
@@ -563,7 +566,29 @@ impl Cache {
             .await;
     }
 
-    /// Drop current period counters; they are rebuilt from Postgres on next use.
+    /// Whether Valkey still holds the budget counters restored into it: the marker key goes with
+    /// everything else when Valkey loses its data (see `budget::restore_if_lost`).
+    pub async fn spend_restored(&self) -> RedisResult<bool> {
+        self.conn().exists(SPEND_RESTORED_KEY).await
+    }
+
+    /// The restore's lock, for one replica at a time; it lapses if that replica goes away.
+    pub async fn lock_spend_restore(&self) -> bool {
+        let r: RedisResult<Option<String>> =
+            redis::cmd("SET").arg(SPEND_RESTORING_KEY).arg("1").arg("NX").arg("EX").arg(300).query_async(&mut self.conn()).await;
+        matches!(r, Ok(Some(_)))
+    }
+
+    pub async fn unlock_spend_restore(&self) {
+        let _: RedisResult<()> = self.conn().del(SPEND_RESTORING_KEY).await;
+    }
+
+    pub async fn mark_spend_restored(&self) {
+        let _: RedisResult<()> = self.conn().set(SPEND_RESTORED_KEY, chrono::Utc::now().to_rfc3339()).await;
+        self.unlock_spend_restore().await;
+    }
+
+    /// Drop current period counters; they are rebuilt from the log store on next use.
     pub async fn reset_period_spend(&self, who: Spender) {
         let now = chrono::Utc::now();
         let keys: Vec<String> = BudgetPeriod::ALL.iter().map(|p| Self::spend_key(who, &p.window(now).id)).collect();

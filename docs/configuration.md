@@ -20,6 +20,25 @@ The gateway needs both Postgres and Valkey.
 | `VALKEY_URL` | required | Valkey or Redis, for example `redis://valkey:6379`. `rediss://` for TLS. For a cluster, one or more of its nodes, comma-separated. |
 | `VALKEY_CLUSTER` | `false` | `true` for a Valkey or Redis cluster, including ElastiCache Serverless and ElastiCache with cluster mode enabled. A primary with replicas (cluster mode disabled) needs only its primary endpoint and `false`. |
 
+### Log store
+
+By default the request log, logged prompts and the audit log are kept in Postgres. With ClickHouse
+configured they are kept there instead, and Postgres holds configuration only: nothing per request
+is written to it, and budgets are rebuilt from ClickHouse when Valkey loses its counters.
+
+| Variable | Default | Description |
+|---|---|---|
+| `GATEWAY_CLICKHOUSE_URL` | unset | ClickHouse's HTTP interface, for example `http://clickhouse:8123` (`https://` for TLS). Set, the gateway stores its logs there; it must be reachable at startup, applies its schema, and on its first start copies the current budget periods' request log (this month, or this week when it began last month) from Postgres. Older history stays in Postgres and is not shown. |
+| `GATEWAY_CLICKHOUSE_USER` | `default` | ClickHouse user. It needs to create tables in its database. |
+| `GATEWAY_CLICKHOUSE_PASSWORD` | empty | That user's password. |
+| `GATEWAY_CLICKHOUSE_DATABASE` | `gateway` | The database, which must exist. |
+| `GATEWAY_BUDGET_FAIL_MODE` | `closed` | What a budget check does when spend cannot be counted, because Valkey and the log store are both unreachable. `closed`: requests on a key or project with a budget get `503` until either is back. `open`: they go through and a warning is logged. Keys and projects without a budget are never affected. |
+
+With ClickHouse, retention drops whole weeks of the request log and whole days of logged prompts
+once all of them are past their retention, so entries can be kept up to six days longer than set.
+Full-text search of logged prompts matches whole words, `"quoted phrases"`, `-word` to exclude and
+`or` between alternatives.
+
 ### Access and security
 
 | Variable | Default | Description |
@@ -41,7 +60,7 @@ The gateway needs both Postgres and Valkey.
 | `GATEWAY_INSTANCE_ID` | `HOSTNAME`, else random | The replica's name on **Cluster → Instances** and in telemetry (`service.instance.id`). |
 | `GATEWAY_LOG` | `info` | Log filter, for example `info,inference_gateway=debug`. |
 | `GATEWAY_LOG_FORMAT` | text (`json` in the image) | `json` for structured logs. |
-| `PROMPT_LOG_BUFFER_MB` | `256` | Memory each replica may use for [logged prompts and responses](security.md#prompt-logging) not yet written to Postgres. It is not reserved: normally a few MB are in use, and it fills only while Postgres is slow or many large logged requests run at once. Then the bodies of further requests are skipped (their entry says `dropped`) and requests are served as usual. `0` turns prompt logging off on the replica. |
+| `PROMPT_LOG_BUFFER_MB` | `256` | Memory each replica may use for [logged prompts and responses](security.md#prompt-logging) not yet written to the log store. It is not reserved: normally a few MB are in use, and it fills only while the log store is slow or many large logged requests run at once. Then the bodies of further requests are skipped (their entry says `dropped`) and requests are served as usual. `0` turns prompt logging off on the replica. |
 
 ### OpenTelemetry
 

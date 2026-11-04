@@ -63,6 +63,18 @@ GATEWAY_TEST_VALKEY_URL=redis://127.0.0.1:6379 cargo test
 GATEWAY_TEST_VALKEY_CLUSTER=true  # in addition, when that Valkey is a cluster
 ```
 
+So are the ClickHouse tests (`src/clickhouse/live_tests.rs`), which each create and drop a database
+of their own on the ClickHouse of `docker compose up -d`:
+
+```bash
+GATEWAY_TEST_CLICKHOUSE_URL=http://127.0.0.1:8123 GATEWAY_TEST_CLICKHOUSE_USER=gateway GATEWAY_TEST_CLICKHOUSE_PASSWORD=<CLICKHOUSE_PASSWORD> cargo test
+```
+
+To run the gateway with its logs in that ClickHouse, set `GATEWAY_CLICKHOUSE_URL`,
+`GATEWAY_CLICKHOUSE_USER=gateway` and `GATEWAY_CLICKHOUSE_PASSWORD` in `.env`. Its schema is in
+`migrations/clickhouse/`, applied at startup; queries live in `src/clickhouse/` and are not
+checked at compile time.
+
 CI ([checks.yml](../.github/workflows/checks.yml)) checks formatting, runs clippy with warnings as errors, runs the tests (the database ones on a Postgres service), checks the sqlx metadata against a live database, checks that `ui/openapi.json` and `ui/src/api.gen.ts` are up to date, type checks, checks the formatting of, tests and builds the console, and runs `cargo audit` and `bun audit` on every push to `main` and every pull request. Accepted advisories are listed, with reasons, in [.cargo/audit.toml](../.cargo/audit.toml).
 
 ## Database

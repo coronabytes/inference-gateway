@@ -9,6 +9,7 @@ mod aws;
 mod budget;
 mod cache;
 mod capture;
+mod clickhouse;
 mod config;
 mod conversations;
 mod crypto;
@@ -19,6 +20,7 @@ mod google;
 mod guardrails;
 mod ir;
 mod labels;
+mod logstore;
 mod mcp;
 mod model;
 mod multipart;
@@ -150,6 +152,7 @@ async fn run() -> Result<(), String> {
     tracing::info!(instance = %cfg.instance_id, listen = %cfg.listen_addr, "starting inference-gateway");
 
     let db = connect_db(&cfg).await?;
+    let logs = connect_logs(&cfg, &db).await?;
     let cache = cache::Cache::new(&cfg.valkey_url, cfg.valkey_cluster).map_err(|e| format!("invalid VALKEY_URL: {e}"))?;
     if !cache.ping().await {
         tracing::warn!("valkey is not reachable; rate limits and cluster sync are degraded until it is");
@@ -178,6 +181,7 @@ async fn run() -> Result<(), String> {
         cfg,
         settings: settings::Live::default(),
         db,
+        logs,
         cache,
         registry: registry::Registry::new(),
         aws: aws::Aws::default(),
@@ -379,6 +383,28 @@ fn header(name: &'static str, value: &'static str) -> SetResponseHeaderLayer<Hea
 
 fn cache_control(value: &'static str) -> SetResponseHeaderLayer<HeaderValue> {
     SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static(value))
+}
+
+/// The log store: Postgres, or ClickHouse when it is configured. ClickHouse must answer at startup;
+/// its schema is migrated, and the first start copies the current budget periods from Postgres.
+async fn connect_logs(cfg: &Config, db: &sqlx::PgPool) -> Result<logstore::LogStore, String> {
+    let Some(ch_cfg) = cfg.clickhouse.clone() else { return Ok(logstore::LogStore::Postgres) };
+    let ch = clickhouse::ClickHouse::new(ch_cfg).map_err(|e| format!("clickhouse: {e}"))?;
+    let mut delay = Duration::from_secs(1);
+    for attempt in 1..=10 {
+        if ch.ping().await {
+            break;
+        }
+        if attempt == 10 {
+            return Err("clickhouse is not reachable (GATEWAY_CLICKHOUSE_URL)".into());
+        }
+        tracing::warn!(attempt, "clickhouse not ready; retrying");
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_secs(10));
+    }
+    clickhouse::import_from_postgres(&ch, db).await.map_err(|e| format!("clickhouse: {e}"))?;
+    tracing::info!("request, prompt and audit logs go to clickhouse");
+    Ok(logstore::LogStore::ClickHouse(std::sync::Arc::new(ch)))
 }
 
 async fn connect_db(cfg: &Config) -> Result<sqlx::PgPool, String> {

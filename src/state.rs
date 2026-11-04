@@ -12,6 +12,8 @@ pub struct Inner {
     /// The gateway settings in effect, from Postgres.
     pub settings: crate::settings::Live,
     pub db: sqlx::PgPool,
+    /// Where the request, prompt and audit logs go (Postgres or ClickHouse).
+    pub logs: crate::logstore::LogStore,
     pub cache: Cache,
     pub registry: Registry,
     pub aws: crate::aws::Aws,
@@ -37,6 +39,12 @@ impl AppState {
     pub fn new(inner: Inner) -> Self {
         Self(Arc::new(inner))
     }
+
+    /// A state no clone was taken of yet, to change in a test.
+    #[cfg(test)]
+    pub fn inner_mut(&mut self) -> &mut Inner {
+        Arc::get_mut(&mut self.0).expect("a fresh state")
+    }
 }
 
 impl std::ops::Deref for AppState {
@@ -59,6 +67,14 @@ pub fn test_state() -> AppState {
 #[cfg(test)]
 pub fn test_state_with_db(db: sqlx::PgPool) -> AppState {
     test_state_with(crate::netguard::Policy::default(), mpsc::channel(16).0, Some(db))
+}
+
+/// A test state on a real database with its logs in `logs` (ClickHouse).
+#[cfg(test)]
+pub fn test_state_with_logs(db: sqlx::PgPool, logs: crate::logstore::LogStore) -> AppState {
+    let mut s = test_state_with(crate::netguard::Policy::default(), mpsc::channel(16).0, Some(db));
+    s.inner_mut().logs = logs;
+    s
 }
 
 /// A test state whose upstreams may be on loopback, with the channel its request records arrive on.
@@ -91,6 +107,8 @@ fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Send
         cookie_secure: true,
         upstream_policy,
         prompt_log_buffer_bytes: 1 << 20,
+        clickhouse: None,
+        budget_fail_open: false,
     };
     let settings = Live::default();
     settings.set(Settings { max_attempts: 1, cooldown_secs: 1, ..Settings::default() });
@@ -102,6 +120,7 @@ fn test_state_with(upstream_policy: crate::netguard::Policy, records: mpsc::Send
         cfg,
         settings,
         db,
+        logs: crate::logstore::LogStore::Postgres,
         cache,
         registry: Registry::new(),
         aws: crate::aws::Aws::default(),

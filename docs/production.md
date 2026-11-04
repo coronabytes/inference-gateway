@@ -6,6 +6,7 @@ The gateway is a stateless service. Run any number of identical replicas behind 
 
 - **The image:** `ghcr.io/coronabytes/inference-gateway`, for `linux/amd64` and `linux/arm64`. Tags: `latest`, `<major>` (for example `1`), `<major>.<minor>` (`1.0`) and the full version (`1.0.0`). Pin a version in production. Each image carries an SBOM and build provenance (`docker buildx imagetools inspect <image> --format '{{json .SBOM}}'`).
 - **Postgres:** stores configuration, keys, the request log and the audit log. Any managed Postgres works (RDS, Cloud SQL, Azure Database for PostgreSQL).
+- **ClickHouse (optional):** stores the request log, logged prompts and the audit log instead of Postgres, for high request volumes ([Log store](configuration.md#log-store)). A single server is enough; ClickHouse Cloud works too.
 - **Valkey or Redis:** a single primary (with or without replicas) or a cluster, including ElastiCache and ElastiCache Serverless (`VALKEY_CLUSTER=true`). It holds rate limit counters, budget spend, admin sessions, conversation state and the change notifications between replicas. Enable persistence with `appendonly yes`. Sentinel is not supported.
 
 The image runs as a non-root user, needs no writable file system and no Linux capabilities.

@@ -34,6 +34,12 @@ pub struct Config {
     /// Memory for logged prompts and responses not yet written (`PROMPT_LOG_BUFFER_MB`, see
     /// `capture::Budget`). Not a setting: it sizes the process. 0 turns capture off on a replica.
     pub prompt_log_buffer_bytes: usize,
+    /// The log store (`GATEWAY_CLICKHOUSE_URL`, see `logstore`); `None` keeps the logs in Postgres.
+    pub clickhouse: Option<crate::clickhouse::ClickHouseConfig>,
+    /// `GATEWAY_BUDGET_FAIL_MODE=open`: when spend cannot be counted (Valkey and the log store both
+    /// unreachable), requests on a key or project with a budget go through. The default, `closed`,
+    /// refuses them until either answers.
+    pub budget_fail_open: bool,
 }
 
 impl Config {
@@ -77,8 +83,33 @@ impl Config {
             upstream_policy: Policy::from_list(&env::var("GATEWAY_UPSTREAM_ALLOWED_NETWORKS").unwrap_or_default())
                 .map_err(|e| format!("GATEWAY_UPSTREAM_ALLOWED_NETWORKS: {e}"))?,
             prompt_log_buffer_bytes: opt::<usize>("PROMPT_LOG_BUFFER_MB", 256)?.saturating_mul(1024 * 1024),
+            clickhouse: clickhouse()?,
+            budget_fail_open: match env::var("GATEWAY_BUDGET_FAIL_MODE").unwrap_or_default().as_str() {
+                "" | "closed" => false,
+                "open" => true,
+                _ => return Err("GATEWAY_BUDGET_FAIL_MODE must be closed or open".into()),
+            },
         })
     }
+}
+
+/// `GATEWAY_CLICKHOUSE_URL` (its HTTP interface, such as `http://127.0.0.1:8123`) with its
+/// `_USER`, `_PASSWORD` and `_DATABASE`.
+fn clickhouse() -> Result<Option<crate::clickhouse::ClickHouseConfig>, String> {
+    let Some(url) = env::var("GATEWAY_CLICKHOUSE_URL").ok().filter(|u| !u.is_empty()) else { return Ok(None) };
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("GATEWAY_CLICKHOUSE_URL must be an http:// or https:// URL".into());
+    }
+    let database = opt("GATEWAY_CLICKHOUSE_DATABASE", "gateway".to_string())?;
+    if !database.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("GATEWAY_CLICKHOUSE_DATABASE must be letters, digits and underscores".into());
+    }
+    Ok(Some(crate::clickhouse::ClickHouseConfig {
+        url,
+        user: opt("GATEWAY_CLICKHOUSE_USER", "default".to_string())?,
+        password: env::var("GATEWAY_CLICKHOUSE_PASSWORD").unwrap_or_default(),
+        database,
+    }))
 }
 
 /// This replica's name: `GATEWAY_INSTANCE_ID`, the host name, or a random one picked once. Also
