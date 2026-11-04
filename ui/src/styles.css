@@ -525,6 +525,43 @@ input[type="radio"] {
   cursor: default;
 }
 /* TextArea: the caption on its own line at the top of a rounded box. */
+/* Disclosure: the caption, then a button with what is set and a chevron that turns while its editor is open. */
+.control.disclosure {
+  max-width: 340px;
+  cursor: default;
+}
+.control.disclosure > .disclosure-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 0 999px 999px 0;
+  background: none;
+  padding: 6px 14px 6px 8px;
+  font-weight: 500;
+}
+.control.disclosure > .disclosure-toggle:has(+ .control-clear) {
+  padding-right: 4px;
+  border-radius: 0;
+}
+.control.disclosure > .disclosure-toggle:hover:not(:disabled) {
+  background: none;
+}
+.disclosure-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.disclosure-toggle > svg {
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 0.12s;
+}
+.control.disclosure.open .disclosure-toggle > svg {
+  transform: rotate(180deg);
+}
 .control.multiline {
   flex-direction: column;
   align-items: stretch;
@@ -948,6 +985,33 @@ th.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+/* SortHeader: the header's text as a button, with the sort's arrow in a slot of its own so the text
+   does not move. In a number column the arrow goes first, keeping the text on the right edge. */
+th > .th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  font-weight: inherit;
+  color: inherit;
+}
+th > .th-sort:hover:not(:disabled) {
+  background: none;
+  color: var(--link);
+}
+th > .th-sort.active {
+  color: var(--text-primary);
+}
+th.num > .th-sort {
+  flex-direction: row-reverse;
+}
+.th-sort-arrow {
+  width: 10px;
+  text-align: center;
 }
 td.actions {
   text-align: right;
@@ -1733,11 +1797,7 @@ button.tag-toggle.on:hover:not(:disabled) {
   color: var(--text-secondary);
   font-size: 13px;
 }
-/* The system prompt and the JSON schema, in captioned boxes under their summaries. */
-.system-input,
-.schema-input {
-  margin-top: 6px;
-}
+/* The system prompt and the JSON schema, opened from their pills in the filter bar into captioned boxes under it. */
 .system-input .control.multiline > textarea {
   max-height: 140px;
   overflow-y: auto;
@@ -1749,10 +1809,9 @@ button.tag-toggle.on:hover:not(:disabled) {
   max-height: 140px;
   overflow-y: auto;
 }
-.schema-error {
-  margin: 4px 0 0;
+.schema-error,
+.schema-invalid {
   color: var(--critical-text);
-  font-size: 12.5px;
 }
 textarea {
   font: inherit;
@@ -3190,13 +3249,19 @@ a.button.primary:hover {
   gap: 2px;
   min-width: 0;
 }
-.hub-tile-name .copy-btn {
+.hub-tile-name .copy-btn,
+.hub-model-line .copy-btn {
   flex: none;
   width: 22px;
   height: 22px;
   color: var(--text-muted);
 }
-.hub-tile-name .copy-btn svg {
+/* In a row of the list, closer to the name than the gap between the name and its alias badge. */
+.hub-model-line .copy-btn {
+  margin-left: -6px;
+}
+.hub-tile-name .copy-btn svg,
+.hub-model-line .copy-btn svg {
   width: 14px;
   height: 14px;
 }
@@ -3216,7 +3281,17 @@ a.button.primary:hover {
   flex-wrap: nowrap;
 }
 /* The mode, in colour, so it reads apart from the capabilities after it. */
-.hub-tile .hub-tile-icons > .mode-icon {
+/* After a model's name over its deployments: the mode alone, plain, in the hub's colour. */
+.list-title h3 > .cap-icon.mode-icon {
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  vertical-align: middle;
+  border-color: transparent;
+  background: none;
+  color: var(--series-1);
+}
+.hub-tile-icons > .cap-icon.mode-icon {
   margin-right: -4px;
   color: var(--series-1);
 }
@@ -3272,11 +3347,11 @@ a.button.primary:hover {
   gap: 4px 10px;
   color: var(--text-secondary);
 }
-/* On a card the capabilities are plain icons; a picked one keeps its ring. */
-.hub-tile .cap-icons {
+/* On a card or a row of the list the mode and capabilities are plain icons; a picked one keeps its ring. */
+.hub-tile-icons .cap-icons {
   gap: 0;
 }
-.hub-tile .cap-icon {
+.hub-tile-icons .cap-icon {
   width: 22px;
   height: 22px;
   border-color: transparent;

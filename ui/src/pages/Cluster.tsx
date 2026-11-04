@@ -148,6 +148,7 @@ function groups(s: InstanceSettings): { title: string; rows: [string, string, st
       rows: [
         ["Database connections", String(s.database_max_connections), "DATABASE_MAX_CONNECTIONS"],
         ["Valkey cluster", onOff(s.valkey_cluster), "VALKEY_CLUSTER"],
+        ["Log store", s.clickhouse ? "ClickHouse" : "Postgres", "GATEWAY_CLICKHOUSE_URL"],
       ],
     },
   ];

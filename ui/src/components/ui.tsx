@@ -901,9 +901,53 @@ export function GearIcon() {
   );
 }
 
-/** Copies `text` to the clipboard; shows a check mark once copied, until the pointer or focus leaves. */
+/** A table's sort: the column's id, and whether it runs high to low. */
+export type Sort<K extends string> = { by: K; desc: boolean };
+
+/**
+ * A column header that sorts the table by its column: a click sorts by it, a second click turns
+ * the order around. A new column starts high to low, except `ascFirst` ones such as names.
+ */
+export function SortHeader<K extends string>({
+  id,
+  sort,
+  onSort,
+  num,
+  ascFirst,
+  children,
+}: {
+  id: K;
+  sort: Sort<K>;
+  onSort: (s: Sort<K>) => void;
+  num?: boolean;
+  ascFirst?: boolean;
+  children: ReactNode;
+}) {
+  const active = sort.by === id;
+  return (
+    <th className={num ? "num" : undefined} aria-sort={active ? (sort.desc ? "descending" : "ascending") : undefined}>
+      <button
+        type="button"
+        className={`th-sort${active ? " active" : ""}`}
+        onClick={() => onSort(active ? { by: id, desc: !sort.desc } : { by: id, desc: !ascFirst })}
+      >
+        {children}
+        <span className="th-sort-arrow" aria-hidden="true">
+          {active ? (sort.desc ? "↓" : "↑") : ""}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+/** Copies `text` to the clipboard; shows a check mark once copied, for a second. */
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1000);
+    return () => clearTimeout(t);
+  }, [copied]);
   return (
     <button
       type="button"
@@ -915,8 +959,6 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
         await navigator.clipboard?.writeText(text);
         setCopied(true);
       }}
-      onMouseLeave={() => setCopied(false)}
-      onBlur={() => setCopied(false)}
     >
       {copied ? <CheckIcon /> : <CopyIcon />}
     </button>

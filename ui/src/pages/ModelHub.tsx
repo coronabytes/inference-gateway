@@ -72,8 +72,7 @@ const modeOptions = () => [
 ];
 
 /** A model's mode (or "router") as an icon, named by its tooltip and for screen readers. */
-function ModeIcon({ model: m }: { model: HubModel }) {
-  const mode = m.kind === "router" ? "router" : m.mode;
+export function ModeIcon({ mode }: { mode: string }) {
   const o = modeOptions().find((x) => x.value === mode);
   const label = o ? `${o.label}: ${o.endpoints}` : mode;
   return (
@@ -661,20 +660,20 @@ export function ModelHub() {
             <colgroup>
               <col className="col-logo" />
               <col />
+              <col className="col-caps" />
               <col className="col-stats" />
               <col className="col-tokens" />
               <col className="col-price" />
-              <col className="col-caps" />
               <col className="col-actions" />
             </colgroup>
             <thead className="visually-hidden">
               <tr>
                 <th aria-label="Vendor logo" />
                 <th>Model</th>
+                <th>Mode and capabilities</th>
                 <th>Last 24 hours</th>
                 <th className="num">Tokens</th>
                 <th className="num">Price</th>
-                <th>Capabilities</th>
                 <th aria-label="Actions" />
               </tr>
             </thead>
@@ -702,7 +701,6 @@ export function ModelHub() {
                       </td>
                       <td className="middle">
                         <div className="hub-model-line">
-                          <ModeIcon model={m} />
                           <span className="hub-name clip" title={displayName(m) === m.name ? m.name : `${displayName(m)} (${m.name})`}>
                             {displayName(m)}
                           </span>
@@ -711,6 +709,13 @@ export function ModelHub() {
                               <AliasIcon />
                             </span>
                           )}
+                          <CopyButton text={m.name} label={`Copy ${m.name}`} />
+                        </div>
+                      </td>
+                      <td className="middle">
+                        <div className="hub-tile-icons">
+                          <ModeIcon mode={m.kind === "router" ? "router" : m.mode} />
+                          {capabilitiesOf(m).length > 0 && <CapabilityIcons m={m} picked={capFilter} onPick={toggleCap} />}
                         </div>
                       </td>
                       <td>
@@ -732,9 +737,6 @@ export function ModelHub() {
                       </td>
                       <td className="num">
                         <PriceSummary model={m} />
-                      </td>
-                      <td className="middle">
-                        <CapabilityIcons m={m} picked={capFilter} onPick={toggleCap} />
                       </td>
                       <td className="actions middle" onClick={(e) => e.stopPropagation()}>
                         <div className="hub-tile-actions">
@@ -941,7 +943,7 @@ function ModelTile({
             <CopyButton text={m.name} label={`Copy ${m.name}`} />
           </div>
           <div className="hub-tile-icons">
-            <ModeIcon model={m} />
+            <ModeIcon mode={m.kind === "router" ? "router" : m.mode} />
             {capabilitiesOf(m).length > 0 && <CapabilityIcons m={m} picked={caps} onPick={onCap} />}
           </div>
         </div>

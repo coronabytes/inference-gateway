@@ -29,7 +29,7 @@ import { compact, ms } from "../format";
 import { Credentials } from "./Credentials";
 import { DeploymentForm, MODES } from "./DeploymentForm";
 import { Guardrails } from "./Guardrails";
-import { ModelHub } from "./ModelHub";
+import { ModeIcon, ModelHub } from "./ModelHub";
 import { PriceCatalog } from "./PriceCatalog";
 import { TagList } from "../components/Tags";
 import { RouterCard, RouterForm } from "./Routers";
@@ -549,7 +549,7 @@ export function Models() {
           <header className="list-head">
             <div className="list-title">
               <h3>
-                {name} <Badge tone="neutral">{list[0].mode}</Badge>
+                {name} <ModeIcon mode={list[0].mode} />
               </h3>
             </div>
           </header>

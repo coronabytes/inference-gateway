@@ -35,6 +35,7 @@ fn instance_settings(cfg: &crate::config::Config) -> Value {
     json!({
         "database_max_connections": cfg.database_max_connections,
         "valkey_cluster": cfg.valkey_cluster,
+        "clickhouse": cfg.clickhouse.is_some(),
         "upstream_allowed_networks": cfg.upstream_policy.networks(),
         "master_key": cfg.master_key.is_some(),
         "dev_login": cfg.dev_login,

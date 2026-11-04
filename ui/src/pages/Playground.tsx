@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminFetch, api, GUARDRAILS_HEADER, type Mode, type NamedItem, type PlaygroundOptions, type ReasoningEffort } from "../api";
 import { isSilent, microphoneError, SILENT_RECORDING, speak, transcribe, useLiveTranscription, usePlayer, useRecorder } from "../audio";
-import { Banner, Button, FileButton, MenuButton, MessageInput, MultiSelect, SplitButton, TextArea } from "../components/controls";
+import { Banner, Button, Disclosure, FileButton, MenuButton, MessageInput, MultiSelect, SplitButton, TextArea } from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { LabelEditor } from "../components/LabelInput";
 import { SearchSelect } from "../components/SearchSelect";
@@ -318,6 +318,7 @@ export function Playground() {
   /** Structured output: a JSON schema the answer must match, as typed; empty for plain text. */
   const [schemaText, setSchemaText] = useState("");
   const [schemaOpen, setSchemaOpen] = useState(false);
+  const [systemOpen, setSystemOpen] = useState(false);
   // Sent with every request as x-gateway-labels, to find them in the request log and metrics.
   // app=playground by default, so playground traffic can be told apart from real clients.
   const [labels, setLabels] = useState<Labels>({ app: "playground" });
@@ -434,6 +435,11 @@ export function Playground() {
       return { value: null, error: `Not valid JSON: ${(e as Error).message}` };
     }
   }, [schemaText]);
+  /** What the Structured output pill shows for a valid schema: its own title or name, else "JSON schema". */
+  const schemaTitle = (v: object) => {
+    const s = v as { title?: unknown; name?: unknown };
+    return typeof s.title === "string" ? s.title : typeof s.name === "string" ? s.name : "JSON schema";
+  };
   // An effort the newly chosen model does not take goes back to the model's default. A router
   // keeps it for the next model: it is not sent there.
   useEffect(() => {
@@ -764,7 +770,53 @@ export function Playground() {
           />
         )}
         <LabelEditor value={labels} onChange={setLabels} />
+        {mode === "chat" && (
+          <>
+            <Disclosure
+              caption="System prompt"
+              value={system.trim().split("\n")[0]}
+              open={systemOpen}
+              onToggle={() => setSystemOpen((o) => !o)}
+              onClear={system ? () => setSystem("") : undefined}
+              controls="playground-system"
+            />
+            <Disclosure
+              caption="Structured output"
+              value={schema.error ? <span className="schema-invalid">Invalid schema</span> : schema.value && schemaTitle(schema.value)}
+              placeholder="Plain text"
+              open={schemaOpen}
+              onToggle={() => setSchemaOpen((o) => !o)}
+              onClear={schemaText ? () => setSchemaText("") : undefined}
+              controls="playground-schema"
+            />
+          </>
+        )}
       </div>
+      {mode === "chat" && systemOpen && (
+        <TextArea
+          id="playground-system"
+          caption="System prompt"
+          hint="Sent before the conversation, in the chosen API's own field: a system message, instructions or system."
+          className="system-input"
+          rows={3}
+          value={system}
+          onChange={(e) => setSystem(e.target.value)}
+          placeholder="e.g. You are a helpful assistant."
+        />
+      )}
+      {mode === "chat" && schemaOpen && (
+        <TextArea
+          id="playground-schema"
+          caption="JSON schema"
+          hint="The answer is JSON matching this schema, sent in the chosen API's own field. Leave it empty for a plain-text answer."
+          className="schema-input"
+          rows={4}
+          value={schemaText}
+          onChange={(e) => setSchemaText(e.target.value)}
+          placeholder='{"type": "object", "properties": {...}}'
+          note={schema.error && <span className="schema-error">{schema.error}</span>}
+        />
+      )}
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       {signedIn && (
         <Banner tone={signedIn.tone} onDismiss={() => setSignedIn(null)}>
@@ -809,31 +861,6 @@ export function Playground() {
       {agent && <AgentPanel key={`${keyId} ${agent}`} keyId={keyId} keyName={key?.name} agent={agent} labels={labels} />}
       {mode === "chat" && (
         <>
-          <details className="system-prompt">
-            <summary>System prompt{system.trim() ? " (set)" : ""}</summary>
-            <TextArea
-              caption="System prompt"
-              hint="Sent before the conversation, in the chosen API's own field: a system message, instructions or system."
-              className="system-input"
-              rows={3}
-              value={system}
-              onChange={(e) => setSystem(e.target.value)}
-              placeholder="e.g. You are a helpful assistant."
-            />
-          </details>
-          <details className="system-prompt" open={schemaOpen} onToggle={(e) => setSchemaOpen(e.currentTarget.open)}>
-            <summary>Structured output{schemaText.trim() ? " (set)" : ""}</summary>
-            <TextArea
-              caption="JSON schema"
-              hint="The answer is JSON matching this schema, sent in the chosen API's own field. Leave it empty for a plain-text answer."
-              className="schema-input"
-              rows={4}
-              value={schemaText}
-              onChange={(e) => setSchemaText(e.target.value)}
-              placeholder='{"type": "object", "properties": {...}}'
-            />
-            {schema.error && <p className="schema-error">{schema.error}</p>}
-          </details>
           <div
             className="chat"
             // Images and PDFs dropped anywhere on the chat are attached.
@@ -873,10 +900,9 @@ export function Playground() {
                       onClick={() => {
                         setInput(s.prompt);
                         if (s.webSearch) setWebSearch(true);
-                        if (s.schema) {
-                          setSchemaText(JSON.stringify(s.schema, null, 2));
-                          setSchemaOpen(true);
-                        }
+                        // A sample without a schema wants a plain-text answer: it clears one left by another.
+                        setSchemaText(s.schema ? JSON.stringify(s.schema, null, 2) : "");
+                        setSchemaOpen(!!s.schema);
                         composer.current?.focus();
                       }}
                     >

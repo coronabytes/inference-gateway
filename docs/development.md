@@ -11,7 +11,7 @@ cargo run                       # the gateway on http://localhost:8080
 (cd ui && bun install && bun run dev) # the console with hot reload on http://localhost:5173
 ```
 
-Open <http://localhost:5173> and use **Dev Login as admin** (or **as user**), offered by debug builds listening on loopback. The development user shows under **Access → Users** like anyone else.
+Open <http://localhost:5173> and use **Developer** to sign in as an admin, offered by debug builds listening on loopback; **Switch to user** in the user menu signs in as the local development user, who shows under **Access → Users** like anyone else.
 
 `.env` is read by `docker compose` and by debug builds of the gateway (`cargo run`, IDE debugging). Variables already set in the environment win. Release builds never read it. The full list of variables is in [Configuration](configuration.md).
 
