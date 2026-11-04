@@ -1,3 +1,8 @@
 [fmt]
 printWidth = 140
 ignorePatterns = ["openapi.json", "src/api.gen.ts"]
+
+# Classic hoisted node_modules. With the isolated store (Bun's default for workspaces) Bun on Windows
+# fails to link @redocly/openapi-core (gen:api's), so `bun run gen:api` cannot run.
+[install]
+linker = "hoisted"
