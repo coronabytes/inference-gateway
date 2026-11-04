@@ -15,6 +15,7 @@ use crate::{
 };
 
 pub(crate) mod a2a;
+mod alerts;
 mod aliases;
 pub(crate) mod auth;
 pub(crate) mod connect;
@@ -107,6 +108,10 @@ pub fn router(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         .routes(routes!(metrics::key_spend))
         .routes(routes!(settings::cluster))
         .routes(routes!(settings::get_settings, settings::put_settings))
+        .routes(routes!(alerts::get_smtp_settings, alerts::put_smtp_settings))
+        .routes(routes!(alerts::test_smtp_settings))
+        .routes(routes!(alerts::get_project_alerts, alerts::put_project_alerts))
+        .routes(routes!(alerts::get_key_alerts, alerts::put_key_alerts))
         .routes(routes!(playground::playground_options))
         .routes(routes!(playground::get_audio_settings, playground::put_audio_settings))
         .routes(routes!(playground::playground_realtime))

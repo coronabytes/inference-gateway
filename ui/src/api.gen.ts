@@ -957,6 +957,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/keys/{id}/budget-alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get key budget alerts */
+        get: operations["get_key_alerts"];
+        /**
+         * Save key budget alerts
+         * @description Replaces the key's alerts. No thresholds or no recipients removes them.
+         */
+        put: operations["put_key_alerts"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/keys/{id}/connections": {
         parameters: {
             query?: never;
@@ -1629,6 +1650,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/projects/{id}/budget-alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get project budget alerts */
+        get: operations["get_project_alerts"];
+        /**
+         * Save project budget alerts
+         * @description Replaces the project's alerts. No thresholds or no recipients removes them.
+         */
+        put: operations["put_project_alerts"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/projects/{id}/reset-spend": {
         parameters: {
             query?: never;
@@ -1748,6 +1790,47 @@ export interface paths {
          * @description Fetches the identity provider's discovery document with the saved settings.
          */
         post: operations["test_oidc_settings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/settings/smtp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get email settings
+         * @description The mail server budget alerts are sent through. The password is never returned.
+         */
+        get: operations["get_smtp_settings"];
+        /** Save email settings */
+        put: operations["put_smtp_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/settings/smtp/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a test email
+         * @description Sends a sample budget alert with the saved settings, enabled or not.
+         */
+        post: operations["test_smtp_settings"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2762,6 +2845,13 @@ export interface components {
             previous: string | null;
             /** Format: uuid */
             next: string | null;
+        };
+        /** @description A project's or key's budget alerts. */
+        BudgetAlerts: {
+            /** @description Percent of the budget (1 to 100) at which an email goes out, once per budget period each. */
+            thresholds: number[];
+            /** @description People (ids from `GET /admins`) who get the emails, at the email address they signed in with. */
+            recipients: string[];
         };
         /** @enum {string} */
         BudgetPeriod: "day" | "week" | "month";
@@ -4835,6 +4925,53 @@ export interface components {
             total: number;
         };
         /**
+         * @description How the connection to the mail server is secured.
+         * @enum {string}
+         */
+        SmtpSecurity: "starttls" | "tls" | "none";
+        SmtpSettingsInput: {
+            enabled: boolean;
+            host: string;
+            /** Format: int32 */
+            port: number;
+            security: components["schemas"]["SmtpSecurity"];
+            /** @description Empty or null signs in to no account. */
+            username?: string | null;
+            /** @description Omitted or null keeps the stored password; an empty string removes it. */
+            password?: string | null;
+            from_address: string;
+            from_name?: string | null;
+            /** @description https (or http for localhost) address of the console, for links in emails. */
+            console_url?: string | null;
+        };
+        /** @description The outgoing mail settings. The password is never returned. */
+        SmtpSettingsView: {
+            /** @description Whether the settings were ever saved. */
+            configured: boolean;
+            enabled: boolean;
+            host: string;
+            /** Format: int32 */
+            port: number;
+            security: components["schemas"]["SmtpSecurity"];
+            username: string | null;
+            password_set: boolean;
+            from_address: string;
+            from_name: string | null;
+            /** @description The console's address, for links in emails. */
+            console_url: string | null;
+            /** Format: date-time */
+            updated_at: string | null;
+        };
+        /** @description Whether the test email went out, or the mail server's error. */
+        SmtpTest: {
+            ok: boolean;
+            error?: string;
+        };
+        SmtpTestInput: {
+            /** @description Where the test email goes. */
+            to: string;
+        };
+        /**
          * @description Whose text is checked: the prompt, or the model's response.
          * @enum {string}
          */
@@ -5871,7 +6008,7 @@ export interface operations {
                 limit?: number;
                 /**
                  * @description `credential`, `deployment`, `router`, `key`, `project`, `configuration`, `price_catalog`,
-                 *     `oidc_settings`, `settings`, `admin` or `session`.
+                 *     `oidc_settings`, `smtp_settings`, `settings`, `admin` or `session`.
                  */
                 target_type?: string;
                 /** @description Matches the target's or the actor's name containing this text, ignoring case. */
@@ -7269,6 +7406,81 @@ export interface operations {
             };
         };
     };
+    get_key_alerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The alerts; empty lists when there are none. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetAlerts"];
+                };
+            };
+            /** @description No such key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    put_key_alerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BudgetAlerts"];
+            };
+        };
+        responses: {
+            /** @description The saved alerts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetAlerts"];
+                };
+            };
+            /** @description Invalid alerts. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+            /** @description No such key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
     key_connections: {
         parameters: {
             query?: never;
@@ -8551,6 +8763,81 @@ export interface operations {
             };
         };
     };
+    get_project_alerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The alerts; empty lists when there are none. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetAlerts"];
+                };
+            };
+            /** @description No such project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    put_project_alerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BudgetAlerts"];
+            };
+        };
+        responses: {
+            /** @description The saved alerts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BudgetAlerts"];
+                };
+            };
+            /** @description Invalid alerts. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+            /** @description No such project. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
     reset_project_spend: {
         parameters: {
             query?: never;
@@ -8842,6 +9129,83 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OidcTest"];
+                };
+            };
+        };
+    };
+    get_smtp_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmtpSettingsView"];
+                };
+            };
+        };
+    };
+    put_smtp_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmtpSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description The saved settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmtpSettingsView"];
+                };
+            };
+            /** @description Invalid settings. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    test_smtp_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmtpTestInput"];
+            };
+        };
+        responses: {
+            /** @description Whether the email was sent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmtpTest"];
                 };
             };
         };

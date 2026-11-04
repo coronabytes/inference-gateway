@@ -5,6 +5,7 @@ import {
   callsModels,
   loadPages,
   setListParam,
+  type BudgetAlerts,
   type BudgetPeriod,
   type GatewaySettingsView,
   type Guardrail,
@@ -50,6 +51,7 @@ import {
   optNum,
   type ConfirmRequest,
 } from "../components/ui";
+import { BudgetAlertsEditor, saveBudgetAlerts, useBudgetAlerts } from "../components/BudgetAlerts";
 import { offerDeleteStoredPrompts } from "../components/StoredPrompts";
 import { dateTime } from "../format";
 import { ProjectForm, confirmDelete, confirmResetSpend, setProjectEnabled } from "./Projects";
@@ -604,13 +606,20 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
                 }
               : undefined
           }
-          onSave={async (input) => {
+          onSave={async (input, alerts) => {
+            let id: string;
             if (editing.mode === "create") {
-              const r = await api<{ key: string }>("/keys", { method: "POST", json: input });
+              const r = await api<{ key: string; record: VirtualKey }>("/keys", { method: "POST", json: input });
               setIssued({ title: "Key created", key: r.key });
+              id = r.record.id;
             } else {
               await api(`/keys/${editing.key.id}`, { method: "PUT", json: input });
+              id = editing.key.id;
             }
+            // The key is saved by now: a failure here must not offer to create it again.
+            await saveBudgetAlerts(`/keys/${id}`, alerts).catch((e) =>
+              setError(`The key was saved, but its budget alerts were not: ${(e as Error).message}`),
+            );
             setEditing(null);
             await load();
             // Logging just turned off: offer to delete what it stored.
@@ -676,7 +685,8 @@ function KeyForm({
   initial?: KeyInput;
   /** The key being edited, whose usage the Limits tab shows. */
   keyId?: string;
-  onSave: (k: KeyInput) => Promise<void>;
+  /** `alerts`: the key's budget alerts to save, when they changed (admins only). */
+  onSave: (k: KeyInput, alerts: BudgetAlerts | null) => Promise<void>;
   /** Offered when editing: closes the dialog and asks for confirmation. */
   onDelete?: () => void;
   /** Offered when editing: closes the dialog and offers to delete the key's stored prompts. */
@@ -697,6 +707,8 @@ function KeyForm({
   const [period, setPeriod] = useState<BudgetPeriod | "">(initial?.budget_period ?? "");
   const [budget, setBudget] = useState(initial?.max_budget_usd?.toString() ?? "");
   const [expires, setExpires] = useState(initial?.expires_at ? initial.expires_at.slice(0, 10) : "");
+  // Users do not see who else works on the gateway, so only admins set alerts.
+  const alerts = useBudgetAlerts(keyId ? `/keys/${keyId}` : null, !user);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -752,25 +764,28 @@ function KeyForm({
   const submit = async () => {
     setBusy(true);
     try {
-      await onSave({
-        name,
-        scope,
-        project_id: project || null,
-        allowed_models: inference ? allowedModels : [],
-        allowed_tags: inference ? allowedTags : [],
-        rpm_limit: inference ? optInt(rpm) : null,
-        tpm_limit: inference ? optInt(tpm) : null,
-        max_budget_usd: inference && period ? amount : null,
-        budget_period: (inference && period) || null,
-        expires_at: expires ? new Date(`${expires}T23:59:59Z`).toISOString() : null,
-        enabled: initial?.enabled ?? true,
-        // Users keep the key's guardrails as they are.
-        ...(guardrails.length > 0 && { guardrail_ids: inference ? guardrailIds : [] }),
-        // Kept while the project forbids it, so it applies again once the project allows it.
-        web_search: webSearch,
-        // Likewise kept while the project denies or forces logging.
-        prompt_logging: promptLogging,
-      });
+      await onSave(
+        {
+          name,
+          scope,
+          project_id: project || null,
+          allowed_models: inference ? allowedModels : [],
+          allowed_tags: inference ? allowedTags : [],
+          rpm_limit: inference ? optInt(rpm) : null,
+          tpm_limit: inference ? optInt(tpm) : null,
+          max_budget_usd: inference && period ? amount : null,
+          budget_period: (inference && period) || null,
+          expires_at: expires ? new Date(`${expires}T23:59:59Z`).toISOString() : null,
+          enabled: initial?.enabled ?? true,
+          // Users keep the key's guardrails as they are.
+          ...(guardrails.length > 0 && { guardrail_ids: inference ? guardrailIds : [] }),
+          // Kept while the project forbids it, so it applies again once the project allows it.
+          web_search: webSearch,
+          // Likewise kept while the project denies or forces logging.
+          prompt_logging: promptLogging,
+        },
+        alerts.pending(inference && !!period),
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -811,11 +826,12 @@ function KeyForm({
       }
     >
       <ErrorBanner
-        error={error ?? models.error ?? bodies.error}
+        error={error ?? models.error ?? bodies.error ?? alerts.error}
         onDismiss={() => {
           setError(null);
           models.setError(null);
           bodies.setError(null);
+          alerts.clearError();
         }}
       />
       {/* Every panel is there, the inactive ones hidden, so the dialog keeps the tallest one's size. */}
@@ -943,6 +959,7 @@ function KeyForm({
               />
             </div>
             {/* Unlimited: what it spends per day. */}
+            {period && !user && <BudgetAlertsEditor state={alerts} noun="key" />}
             {keyId && <KeySpendChart keyId={keyId} period={period || "day"} />}
           </div>
         )}

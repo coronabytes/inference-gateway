@@ -332,7 +332,7 @@ pub(super) async fn log_labels(State(state): State<AppState>, Extension(access):
 pub(crate) struct AuditQuery {
     limit: Option<i64>,
     /// `credential`, `deployment`, `router`, `key`, `project`, `configuration`, `price_catalog`,
-    /// `oidc_settings`, `settings`, `admin` or `session`.
+    /// `oidc_settings`, `smtp_settings`, `settings`, `admin` or `session`.
     target_type: Option<String>,
     /// Matches the target's or the actor's name containing this text, ignoring case.
     q: Option<String>,

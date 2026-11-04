@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO budget_alerts_sent (spender, window_id, threshold, sent_at) VALUES ($1, $2, $3, now())\n         ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2cd84c5c85944ed123dd7c3b9af14959a6c44715c53fb7efadc405112256454"
+}

@@ -1197,7 +1197,7 @@
           {
             "name": "target_type",
             "in": "query",
-            "description": "`credential`, `deployment`, `router`, `key`, `project`, `configuration`, `price_catalog`,\n`oidc_settings`, `settings`, `admin` or `session`.",
+            "description": "`credential`, `deployment`, `router`, `key`, `project`, `configuration`, `price_catalog`,\n`oidc_settings`, `smtp_settings`, `settings`, `admin` or `session`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3544,6 +3544,131 @@
           },
           "409": {
             "description": "Already being deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
+    "/admin/api/keys/{id}/budget-alerts": {
+      "get": {
+        "tags": [
+          "Virtual keys"
+        ],
+        "summary": "Get key budget alerts",
+        "operationId": "get_key_alerts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The alerts; empty lists when there are none.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAlerts"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Virtual keys"
+        ],
+        "summary": "Save key budget alerts",
+        "description": "Replaces the key's alerts. No thresholds or no recipients removes them.",
+        "operationId": "put_key_alerts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetAlerts"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The saved alerts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAlerts"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid alerts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such key.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5993,6 +6118,131 @@
         ]
       }
     },
+    "/admin/api/projects/{id}/budget-alerts": {
+      "get": {
+        "tags": [
+          "Virtual keys"
+        ],
+        "summary": "Get project budget alerts",
+        "operationId": "get_project_alerts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The alerts; empty lists when there are none.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAlerts"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Virtual keys"
+        ],
+        "summary": "Save project budget alerts",
+        "description": "Replaces the project's alerts. No thresholds or no recipients removes them.",
+        "operationId": "put_project_alerts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetAlerts"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The saved alerts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetAlerts"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid alerts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/projects/{id}/reset-spend": {
       "post": {
         "tags": [
@@ -6455,6 +6705,132 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OidcTest"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
+    "/admin/api/settings/smtp": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Get email settings",
+        "description": "The mail server budget alerts are sent through. The password is never returned.",
+        "operationId": "get_smtp_settings",
+        "responses": {
+          "200": {
+            "description": "The settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpSettingsView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Save email settings",
+        "operationId": "put_smtp_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmtpSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The saved settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpSettingsView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
+    "/admin/api/settings/smtp/test": {
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Send a test email",
+        "description": "Sends a sample budget alert with the saved settings, enabled or not.",
+        "operationId": "test_smtp_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmtpTestInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Whether the email was sent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpTest"
                 }
               }
             }
@@ -9711,6 +10087,33 @@
             "format": "uuid"
           }
         }
+      },
+      "BudgetAlerts": {
+        "type": "object",
+        "description": "A project's or key's budget alerts.",
+        "required": [
+          "thresholds",
+          "recipients"
+        ],
+        "properties": {
+          "thresholds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Percent of the budget (1 to 100) at which an email goes out, once per budget period each."
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "People (ids from `GET /admins`) who get the emails, at the email address they signed in with."
+          }
+        },
+        "additionalProperties": false
       },
       "BudgetPeriod": {
         "type": "string",
@@ -15214,6 +15617,169 @@
             "description": "How many match, in all."
           }
         }
+      },
+      "SmtpSecurity": {
+        "type": "string",
+        "description": "How the connection to the mail server is secured.",
+        "enum": [
+          "starttls",
+          "tls",
+          "none"
+        ]
+      },
+      "SmtpSettingsInput": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "host",
+          "port",
+          "security",
+          "from_address"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "security": {
+            "$ref": "#/components/schemas/SmtpSecurity"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Empty or null signs in to no account."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omitted or null keeps the stored password; an empty string removes it."
+          },
+          "from_address": {
+            "type": "string"
+          },
+          "from_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "console_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "https (or http for localhost) address of the console, for links in emails."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SmtpSettingsView": {
+        "type": "object",
+        "description": "The outgoing mail settings. The password is never returned.",
+        "required": [
+          "configured",
+          "enabled",
+          "host",
+          "port",
+          "security",
+          "username",
+          "password_set",
+          "from_address",
+          "from_name",
+          "console_url",
+          "updated_at"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Whether the settings were ever saved."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "security": {
+            "$ref": "#/components/schemas/SmtpSecurity"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password_set": {
+            "type": "boolean"
+          },
+          "from_address": {
+            "type": "string"
+          },
+          "from_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "console_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The console's address, for links in emails."
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "SmtpTest": {
+        "type": "object",
+        "description": "Whether the test email went out, or the mail server's error.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "SmtpTestInput": {
+        "type": "object",
+        "required": [
+          "to"
+        ],
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "Where the test email goes."
+          }
+        },
+        "additionalProperties": false
       },
       "Source": {
         "type": "string",

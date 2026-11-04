@@ -1,0 +1,134 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT enabled, host, port, security, username, password, from_address, from_name, console_url, updated_at\n         FROM smtp_settings WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "host",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "host"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "port",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "port"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "security",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "security"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "username",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "password",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "password"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "from_address",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "from_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "from_name"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "console_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "console_url"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "smtp_settings",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "3ca3c3d1596485cdaffc31d009320b8394eed00e4d9dd121e7b6ccf1134ba760"
+}

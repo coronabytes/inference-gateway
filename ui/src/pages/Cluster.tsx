@@ -4,13 +4,14 @@ import { Tabs, useHashTab } from "../components/controls";
 import { Badge, ErrorBanner } from "../components/ui";
 import { dateTime, duration, relative } from "../format";
 import { ConfigTransfer } from "./ConfigTransfer";
+import { Email } from "./Email";
 import { GatewaySettings } from "./GatewaySettings";
 import { SingleSignOn } from "./Settings";
 
 // "settings" is the single sign-on tab, which used to hold the admins and export and import too; old links keep working.
 // The gateway settings, formerly environment variables, are "gateway".
 // The users ("admins") are on the Access page now, and the request and audit logs on the Logs page.
-const TABS = ["instances", "gateway", "settings", "transfer"] as const;
+const TABS = ["instances", "gateway", "email", "settings", "transfer"] as const;
 
 export function Cluster() {
   const [tab, setTab] = useHashTab("cluster", TABS);
@@ -21,13 +22,16 @@ export function Cluster() {
         options={[
           { value: "instances", label: "Instances" },
           { value: "gateway", label: "Settings" },
+          { value: "email", label: "Email" },
           { value: "settings", label: "Single sign-on" },
           { value: "transfer", label: "Backup & Restore" },
         ]}
         value={tab}
         onChange={setTab}
       />
-      {tab === "gateway" ? (
+      {tab === "email" ? (
+        <Email />
+      ) : tab === "gateway" ? (
         <GatewaySettings />
       ) : tab === "settings" ? (
         <SingleSignOn />

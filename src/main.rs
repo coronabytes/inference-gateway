@@ -2,6 +2,7 @@ mod a2a;
 mod accounting;
 mod admin;
 mod affinity;
+mod alerts;
 mod api;
 mod audit;
 mod auth;
@@ -21,6 +22,7 @@ mod guardrails;
 mod ir;
 mod labels;
 mod logstore;
+mod mail;
 mod mcp;
 mod model;
 mod multipart;
@@ -207,6 +209,7 @@ async fn run() -> Result<(), String> {
     tokio::spawn(sync::run_heartbeat(state.clone()));
     tokio::spawn(sync::run_maintenance(state.clone()));
     tokio::spawn(prices::run_scheduled_import(state.clone()));
+    tokio::spawn(alerts::run(state.clone()));
 
     if let Some(signals) = telemetry::describe() {
         tracing::info!(%signals, "exporting OpenTelemetry");

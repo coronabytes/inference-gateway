@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT project_id, key_id, thresholds, recipients FROM budget_alerts",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "budget_alerts",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "key_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "budget_alerts",
+            "name": "key_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "thresholds",
+        "type_info": "Int2Array",
+        "origin": {
+          "Table": {
+            "table": "budget_alerts",
+            "name": "thresholds"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "recipients",
+        "type_info": "UuidArray",
+        "origin": {
+          "Table": {
+            "table": "budget_alerts",
+            "name": "recipients"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "aaf5a2609a69c8223c64ef49d50fc4aeecd7f4c04ec100fe67a2c44c35e8de66"
+}
