@@ -1,7 +1,17 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminFetch, api, GUARDRAILS_HEADER, type Mode, type NamedItem, type PlaygroundOptions, type ReasoningEffort } from "../api";
 import { isSilent, microphoneError, SILENT_RECORDING, speak, transcribe, useLiveTranscription, usePlayer, useRecorder } from "../audio";
-import { Banner, Button, Disclosure, FileButton, MenuButton, MessageInput, MultiSelect, SplitButton, TextArea } from "../components/controls";
+import {
+  Banner,
+  Button,
+  Disclosure,
+  FileButton,
+  MenuButton,
+  MessageInput,
+  MultiSelect,
+  SplitButton,
+  TextArea,
+} from "../components/controls";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { LabelEditor } from "../components/LabelInput";
 import { SearchSelect } from "../components/SearchSelect";
