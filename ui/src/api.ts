@@ -314,8 +314,10 @@ export interface Metrics {
   /** The covered time, end exclusive (ISO timestamps). */
   from: string;
   to: string;
-  /** `router`: an auto router, whose totals already include its calls to other models. */
-  models: { model: string; active: boolean; router: boolean; totals: Totals }[];
+  /** The model filter's choices, by name: configured models, and removed ones with traffic. */
+  models: { model: string; active: boolean }[];
+  /** The by-model table: models with requests in the range and those picked, sorted as asked (`sort`, `order`). */
+  rows: { model: string; totals: Totals }[];
   /** The picked models' totals (every model's except routers' without a pick), with exact percentiles. */
   totals: Totals;
   /** The same, per time bucket. */
@@ -394,6 +396,8 @@ export interface Cluster {
 export interface InstanceSettings {
   database_max_connections: number;
   valkey_cluster: boolean;
+  /** The request and audit logs are in ClickHouse rather than Postgres. */
+  clickhouse: boolean;
   upstream_allowed_networks: string[];
   master_key: boolean;
   dev_login: boolean;

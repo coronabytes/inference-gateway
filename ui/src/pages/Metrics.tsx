@@ -4,13 +4,16 @@ import { TimeChart } from "../components/TimeChart";
 import { MultiSelect, TimeRange, useTimeRange } from "../components/controls";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
 import { LabelFilter } from "../components/LabelInput";
-import { ErrorBanner, StatTile } from "../components/ui";
+import { ErrorBanner, SortHeader, StatTile, type Sort } from "../components/ui";
 import { compact, ms, pct, usd } from "../format";
 import { labelQuery, type Labels } from "../labels";
 
 const RANGES = ["1h", "24h", "7d", "month", "last_month", "custom"] as const;
 
 const PER: Record<number, string> = { 60: "per minute", 3600: "per hour", 86400: "per day" };
+
+/** The by-model table's columns, by the names `/metrics` sorts them by. */
+type Column = "model" | "requests" | "errors" | "input" | "output" | "latency" | "p95" | "ttft" | "cost";
 
 export function Metrics() {
   const time = useTimeRange(RANGES, "month");
@@ -24,6 +27,8 @@ export function Metrics() {
   const [data, setData] = useState<MetricsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Busiest first, as the server sorts by default.
+  const [sort, setSort] = useState<Sort<Column>>({ by: "requests", desc: true });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -33,6 +38,8 @@ export function Metrics() {
       setKeyFilter(q, keyId);
       if (labelFilter) q.set("labels", labelFilter);
       if (models) q.set("models", models);
+      q.set("sort", sort.by);
+      q.set("order", sort.desc ? "desc" : "asc");
       setData(await api<MetricsData>(`/metrics?${q}`));
       setError(null);
     } catch (e) {
@@ -40,7 +47,7 @@ export function Metrics() {
     } finally {
       setLoading(false);
     }
-  }, [rangeQuery, keyId, labelFilter, models]);
+  }, [rangeQuery, keyId, labelFilter, models, sort]);
 
   useEffect(() => {
     load();
@@ -52,10 +59,12 @@ export function Metrics() {
 
   const toggleModel = (model: string) => setModelFilter((ms) => (ms.includes(model) ? ms.filter((m) => m !== model) : [...ms, model]));
 
-  // The table lists only models with requests in the range, and those picked in the filter,
-  // busiest first.
-  const usedModels = (data?.models.filter((m) => m.totals.requests > 0 || modelFilter.includes(m.model)) ?? []).sort(
-    (a, b) => b.totals.requests - a.totals.requests || a.model.localeCompare(b.model),
+  // Models with requests in the range, and those picked in the filter, sorted by the server.
+  const rows = data?.rows ?? [];
+  const head = (id: Column, label: string, num = true) => (
+    <SortHeader id={id} sort={sort} onSort={setSort} num={num} ascFirst={id === "model"}>
+      {label}
+    </SortHeader>
   );
 
   const step = data?.step_secs ?? 60;
@@ -148,19 +157,19 @@ export function Metrics() {
             <table>
               <thead>
                 <tr>
-                  <th>Model</th>
-                  <th className="num">Requests</th>
-                  <th className="num">Errors</th>
-                  <th className="num">Input</th>
-                  <th className="num">Output</th>
-                  <th className="num">Avg latency</th>
-                  <th className="num">p95</th>
-                  <th className="num">TTFT</th>
-                  <th className="num">Cost</th>
+                  {head("model", "Model", false)}
+                  {head("requests", "Requests")}
+                  {head("errors", "Errors")}
+                  {head("input", "Input")}
+                  {head("output", "Output")}
+                  {head("latency", "Avg latency")}
+                  {head("p95", "p95")}
+                  {head("ttft", "TTFT")}
+                  {head("cost", "Cost")}
                 </tr>
               </thead>
               <tbody>
-                {usedModels.map((m) => (
+                {rows.map((m) => (
                   <tr key={m.model} className={modelFilter.includes(m.model) ? "selected" : ""}>
                     <td>
                       <button type="button" className="link" onClick={() => toggleModel(m.model)}>
@@ -179,7 +188,7 @@ export function Metrics() {
                     <td className="num">{usd(m.totals.cost_usd)}</td>
                   </tr>
                 ))}
-                {usedModels.length === 0 && (
+                {rows.length === 0 && (
                   <tr>
                     <td colSpan={9} className="empty">
                       No requests in this time range.

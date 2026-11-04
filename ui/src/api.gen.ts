@@ -7859,6 +7859,13 @@ export interface operations {
                  *     every model except auto routers, whose entries already count their calls.
                  */
                 models?: string;
+                /**
+                 * @description Metrics only: the column the by-model rows are sorted by: `model`, `requests` (the
+                 *     default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.
+                 */
+                sort?: string;
+                /** @description Metrics only: `asc` or `desc`; the default is ascending for `model`, descending otherwise. */
+                order?: string;
                 /** @description Metrics with `range=custom`: first and last day, inclusive (UTC). */
                 from?: string;
                 to?: string;

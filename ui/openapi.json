@@ -4737,6 +4737,24 @@
             }
           },
           {
+            "name": "sort",
+            "in": "query",
+            "description": "Metrics only: the column the by-model rows are sorted by: `model`, `requests` (the\ndefault), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Metrics only: `asc` or `desc`; the default is ascending for `model`, descending otherwise.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "description": "Metrics with `range=custom`: first and last day, inclusive (UTC).",

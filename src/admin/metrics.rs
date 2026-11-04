@@ -29,6 +29,11 @@ pub(crate) struct RangeQuery {
     /// Metrics only: the series and totals of just these models, comma-separated; omitted means
     /// every model except auto routers, whose entries already count their calls.
     models: Option<String>,
+    /// Metrics only: the column the by-model rows are sorted by: `model`, `requests` (the
+    /// default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.
+    sort: Option<String>,
+    /// Metrics only: `asc` or `desc`; the default is ascending for `model`, descending otherwise.
+    order: Option<String>,
     /// Metrics with `range=custom`: first and last day, inclusive (UTC).
     from: Option<chrono::NaiveDate>,
     to: Option<chrono::NaiveDate>,
@@ -113,6 +118,70 @@ fn totals(t: Option<&db::LogTotals>) -> Totals {
     }
 }
 
+/// The by-model table's columns, by the `sort` parameter's names.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SortBy {
+    Model,
+    Requests,
+    Errors,
+    Input,
+    Output,
+    Latency,
+    P95,
+    Ttft,
+    Cost,
+}
+
+impl SortBy {
+    fn parse(s: Option<&str>) -> Result<Self, AdminError> {
+        Ok(match s.unwrap_or("requests") {
+            "model" => Self::Model,
+            "requests" => Self::Requests,
+            "errors" => Self::Errors,
+            "input" => Self::Input,
+            "output" => Self::Output,
+            "latency" => Self::Latency,
+            "p95" => Self::P95,
+            "ttft" => Self::Ttft,
+            "cost" => Self::Cost,
+            _ => return Err(AdminError::bad_request("sort must be model, requests, errors, input, output, latency, p95, ttft or cost")),
+        })
+    }
+
+    /// The column's value in a row, as a number; None (no latency yet) sorts last either way.
+    fn value(self, t: &Totals) -> Option<f64> {
+        match self {
+            Self::Model => None,
+            Self::Requests => Some(t.requests as f64),
+            Self::Errors => Some(t.errors as f64),
+            // As the table shows it: cache reads and writes are input too.
+            Self::Input => Some((t.input_tokens + t.cache_read_tokens + t.cache_write_tokens) as f64),
+            Self::Output => Some(t.output_tokens as f64),
+            Self::Latency => t.avg_latency_ms,
+            Self::P95 => t.p95_latency_ms.map(f64::from),
+            Self::Ttft => t.avg_ttft_ms,
+            Self::Cost => Some(t.cost_usd),
+        }
+    }
+}
+
+/// Sorts the by-model rows by `by`, ties by model name; rows without a value go last.
+fn sort_rows(rows: &mut [(&str, Totals)], by: SortBy, desc: bool) {
+    use std::cmp::Ordering;
+    rows.sort_by(|(a, ta), (b, tb)| {
+        let primary = match by {
+            SortBy::Model => a.cmp(b),
+            _ => match (by.value(ta), by.value(tb)) {
+                (Some(x), Some(y)) => x.total_cmp(&y),
+                (Some(_), None) => return Ordering::Less,
+                (None, Some(_)) => return Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            },
+        };
+        (if desc { primary.reverse() } else { primary }).then_with(|| a.cmp(b))
+    });
+}
+
 /// One point per bucket start in `stamps`; buckets without requests are zero.
 fn series_json(stamps: &[i64], buckets: &HashMap<i64, &db::LogTotals>) -> Vec<Value> {
     stamps
@@ -154,6 +223,13 @@ pub(super) async fn metrics(
     Extension(access): Extension<Access>,
     Query(q): Query<RangeQuery>,
 ) -> R<Json<Value>> {
+    let sort = SortBy::parse(q.sort.as_deref())?;
+    let desc = match q.order.as_deref() {
+        None => sort != SortBy::Model,
+        Some("asc") => false,
+        Some("desc") => true,
+        Some(_) => return Err(AdminError::bad_request("order must be asc or desc")),
+    };
     let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
     let Window { label, step, stamps, since, until } = window(&q, Utc::now())?;
     let projects = access.projects();
@@ -206,18 +282,20 @@ pub(super) async fn metrics(
         Some(_) => BTreeSet::new(),
     };
     models.extend(model_totals.keys().copied());
-    let model_out: Vec<Value> = models
-        .into_iter()
-        .map(|m| {
-            let router = is_router(m);
-            json!({
-                "model": m, "active": router || snap.deployments.contains_key(snap.resolve(m)), "router": router,
-                "totals": totals(model_totals.get(m).copied()),
-            })
-        })
+    // The model filter's choices, by name.
+    let model_out: Vec<Value> =
+        models.iter().map(|m| json!({ "model": m, "active": is_router(m) || snap.deployments.contains_key(snap.resolve(m)) })).collect();
+    // The by-model table: the models with requests in the range, and those picked, in the order asked for.
+    let picked = picked_models.as_deref().unwrap_or_default();
+    let mut rows: Vec<(&str, Totals)> = models
+        .iter()
+        .filter(|m| model_totals.contains_key(*m) || picked.iter().any(|p| p == *m))
+        .map(|m| (*m, totals(model_totals.get(m).copied())))
         .collect();
+    sort_rows(&mut rows, sort, desc);
+    let rows: Vec<Value> = rows.into_iter().map(|(m, t)| json!({ "model": m, "totals": t })).collect();
     Ok(Json(json!({
-        "range": label, "step_secs": step, "from": since, "to": until, "models": model_out,
+        "range": label, "step_secs": step, "from": since, "to": until, "models": model_out, "rows": rows,
         // The picked models', or everything except router entries.
         "totals": totals(Some(&selected)), "series": series_json(&stamps, &buckets),
     })))
@@ -409,6 +487,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn by_model_rows_sort_by_column_with_blanks_last() {
+        let row =
+            |m: &'static str, requests: i64, latency: Option<f64>| (m, Totals { requests, avg_latency_ms: latency, ..Default::default() });
+        let order = |by, desc| {
+            let mut rows = vec![row("b", 5, Some(20.0)), row("a", 5, None), row("c", 9, Some(10.0))];
+            sort_rows(&mut rows, by, desc);
+            rows.iter().map(|(m, _)| *m).collect::<Vec<_>>()
+        };
+        // Ties go by name.
+        assert_eq!(order(SortBy::Requests, true), ["c", "a", "b"]);
+        assert_eq!(order(SortBy::Requests, false), ["a", "b", "c"]);
+        // A model without a latency is last whichever way.
+        assert_eq!(order(SortBy::Latency, true), ["b", "c", "a"]);
+        assert_eq!(order(SortBy::Latency, false), ["c", "b", "a"]);
+        assert_eq!(order(SortBy::Model, true), ["c", "b", "a"]);
+        assert!(SortBy::parse(Some("speed")).is_err());
+        assert_eq!(SortBy::parse(None).unwrap(), SortBy::Requests);
+    }
+
+    #[test]
     fn key_rates_peak_per_hour() {
         let m = |minute: i64, requests: i64, tokens: i64| db::KeyMinute { minute, requests, tokens };
         // Two busy minutes in the first hour, one in the third.
@@ -468,6 +566,8 @@ mod tests {
             deleted_keys: None,
             labels: None,
             models: None,
+            sort: None,
+            order: None,
             from: from.map(|d| d.parse().unwrap()),
             to: to.map(|d| d.parse().unwrap()),
         };

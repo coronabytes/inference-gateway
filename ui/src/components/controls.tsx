@@ -119,15 +119,71 @@ export function TextInput({
   );
 }
 
+/**
+ * A pill that shows and hides an editor laid out elsewhere, such as a `TextArea` under a filter bar:
+ * the caption, then `value` (a short summary of what is set, or `placeholder`, muted, while nothing
+ * is), then a chevron. `onClear`, passed only while something is set, adds an × at the end of the
+ * pill, named `clearLabel` (default "Clear {caption}").
+ */
+export function Disclosure({
+  caption,
+  hint,
+  value,
+  placeholder = "None",
+  open,
+  onToggle,
+  onClear,
+  clearLabel,
+  controls,
+}: {
+  caption: string;
+  hint?: ReactNode;
+  value?: ReactNode;
+  placeholder?: string;
+  open: boolean;
+  onToggle: () => void;
+  onClear?: () => void;
+  clearLabel?: string;
+  /** The id of the editor it shows, for `aria-controls`. */
+  controls?: string;
+}) {
+  return (
+    <WithHint hint={hint}>
+      <div className={cx("control disclosure", open && "open")}>
+        <Caption>{caption}</Caption>
+        {/* A Button, so it is described by the hint the pill's HintBox provides. */}
+        <Button className="disclosure-toggle" aria-expanded={open} aria-controls={controls} aria-label={caption} onClick={onToggle}>
+          <span className={cx("disclosure-value", !value && "muted")}>{value || placeholder}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </Button>
+        {onClear && (
+          <button
+            type="button"
+            className="control-clear"
+            aria-label={clearLabel ?? `Clear ${caption}`}
+            title={clearLabel ?? "Clear"}
+            onClick={onClear}
+          >
+            ×
+          </button>
+        )}
+      </div>
+    </WithHint>
+  );
+}
+
 /** A multi-line text input; the caption sits on its own line at the top of the box. */
 export function TextArea({
   caption,
   hint,
+  note,
   className,
   ...props
-}: Omit<ComponentProps<"textarea">, "children"> & { caption: string; hint?: ReactNode }) {
+}: Omit<ComponentProps<"textarea">, "children"> & { caption: string; hint?: ReactNode; note?: ReactNode }) {
   return (
-    <WithHint hint={hint} className={className}>
+    <WithHint hint={hint} note={note} className={className}>
       <label className={cx("control multiline", props.disabled && "disabled")}>
         <Caption>{caption}</Caption>
         <Textarea {...props} />

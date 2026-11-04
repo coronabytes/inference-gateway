@@ -273,10 +273,10 @@ function Login({
     }
   };
 
-  // As an admin, or as the local development user, whom admins add to projects like anyone else.
-  const devLogin = async (role: "admin" | "user") => {
+  // As an admin; the user menu then switches to the local development user.
+  const devLogin = async () => {
     try {
-      await api(`/auth/dev-login?role=${role}`, { method: "POST" });
+      await api("/auth/dev-login?role=admin", { method: "POST" });
       onLogin();
     } catch (err) {
       setError((err as Error).message);
@@ -297,14 +297,9 @@ function Login({
         <form onSubmit={submit} className="login-card">
           {error && <Banner onDismiss={() => setError(null)}>{error}</Banner>}
           {dev && (
-            <>
-              <button type="button" className="login-primary" onClick={() => devLogin("admin")}>
-                Dev Login as admin
-              </button>
-              <button type="button" className="login-secondary" onClick={() => devLogin("user")}>
-                Dev Login as user
-              </button>
-            </>
+            <button type="button" className="login-primary" onClick={devLogin}>
+              Developer
+            </button>
           )}
           {sso && (
             <a className={`button ${dev ? "login-secondary" : "login-primary"}`} href="/admin/auth/oidc/login">
