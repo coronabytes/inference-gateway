@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api, type AuditEntry, type LogRow } from "../api";
+import { oneOf, useSessionState } from "../sessionState";
 import { Button, MultiSelect, Select, Tabs, TextInput, TimeRange, useHashTab, useTimeRange } from "../components/controls";
 import { Bodies } from "../components/Transcript";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
@@ -229,17 +230,17 @@ export function Logs() {
 
 export function RequestLog() {
   const [rows, setRows] = useState<LogRow[]>([]);
-  const time = useTimeRange(RANGES, "1h");
+  const time = useTimeRange(RANGES, "1h", "logs");
   // The KeyFilter's choice.
-  const [keyId, setKeyId] = useState("");
-  const [labels, setLabels] = useState<Labels>({});
+  const [keyId, setKeyId] = useSessionState("logs.key", "");
+  const [labels, setLabels] = useSessionState<Labels>("logs.labels", {});
   const labelFilter = labelQuery(labels);
   // Which entries to show: errors, those with stored prompts, and what the guardrails did.
-  const [show, setShow] = useState<string[]>([]);
+  const [show, setShow] = useSessionState<string[]>("logs.show", []);
   // Prompt logging: a search of the stored prompts (sent on Enter), or a tool their responses called.
-  const [contentDraft, setContentDraft] = useState("");
-  const [content, setContent] = useState("");
-  const [tool, setTool] = useState("");
+  const [content, setContent] = useSessionState("logs.content", "");
+  const [contentDraft, setContentDraft] = useState(content);
+  const [tool, setTool] = useSessionState("logs.tool", "");
   const [tools, setTools] = useState<{ name: string; requests: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
   // The entry whose details the side panel shows; kept while the log refreshes around it.
@@ -520,9 +521,9 @@ function summary(e: AuditEntry): string {
 /** The audit log, a tab of the Cluster page. */
 export function AuditLog() {
   const [rows, setRows] = useState<AuditEntry[]>([]);
-  const time = useTimeRange(RANGES, "1h");
-  const [type, setType] = useState("");
-  const [search, setSearch] = useState("");
+  const time = useTimeRange(RANGES, "1h", "audit");
+  const [type, setType] = useSessionState("audit.type", "", oneOf(["", ...Object.keys(TARGETS)]));
+  const [search, setSearch] = useSessionState("audit.search", "");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 

@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useSessionState } from "../sessionState";
 import { api, type ImportSummary, type PriceEntry, type PriceImport, type PriceSearch } from "../api";
 import { Banner, Button, Select, TextInput } from "../components/controls";
 import { ErrorBanner } from "../components/ui";
@@ -13,9 +14,9 @@ function importSummary(i: PriceImport): string {
 
 /** LiteLLM's price catalog as a filterable grid, with the import button. */
 export function PriceCatalog() {
-  const [q, setQ] = useState("");
-  const [provider, setProvider] = useState("");
-  const [mode, setMode] = useState("");
+  const [q, setQ] = useSessionState("prices.search", "");
+  const [provider, setProvider] = useSessionState("prices.provider", "");
+  const [mode, setMode] = useSessionState("prices.mode", "");
   const [data, setData] = useState<PriceSearch | null>(null);
   const [items, setItems] = useState<PriceEntry[]>([]);
   const [open, setOpen] = useState<string | null>(null);

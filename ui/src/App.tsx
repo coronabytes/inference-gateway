@@ -5,6 +5,7 @@ import { Banner } from "./components/controls";
 import { Galaxy } from "./components/Galaxy";
 import { DocsIcon, IconButton, MoonIcon, SunIcon } from "./components/ui";
 import { UserMenu } from "./components/UserMenu";
+import { clearSessionFilters } from "./sessionState";
 import { useTheme } from "./theme";
 
 // Each page loads when it is first opened, so signing in does not download the whole console.
@@ -137,12 +138,14 @@ export function App() {
       await api("/auth/logout", { method: "POST" }).catch(() => undefined);
     }
     setToken(null);
+    clearSessionFilters();
     await refresh();
   };
 
   // Dev Login only. A full reload, so every page loads again with what the new role may see.
   const switchDev = async (role: "admin" | "user") => {
     await api(`/auth/dev-login?role=${role}`, { method: "POST" });
+    clearSessionFilters();
     window.location.reload();
   };
 

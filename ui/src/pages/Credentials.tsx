@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSessionState } from "../sessionState";
 import {
   api,
   setListParam,
@@ -293,8 +294,10 @@ function BedrockPolicyDialog({ region, partition, onClose }: { region: string; p
 export function Credentials() {
   const [editing, setEditing] = useState<Credential | "new" | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
-  const [nameFilter, setNameFilter] = useState("");
-  const [providerFilter, setProviderFilter] = useState<Provider[]>([]);
+  const [nameFilter, setNameFilter] = useSessionState("credentials.name", "");
+  const [providerFilter, setProviderFilter] = useSessionState<Provider[]>("credentials.providers", [], (v) =>
+    (v as unknown[]).every((p) => (PROVIDERS as readonly unknown[]).includes(p)),
+  );
   const search = useDebounced(nameFilter.trim());
   const filtering = !!search || providerFilter.length > 0;
   // The server filters the credentials.
