@@ -67,6 +67,16 @@ function sheetNames(sheets: Sheet[]): string[] {
   });
 }
 
+/** Saves `blob` as a file called `name`, through the browser's download. */
+export function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** The workbook, ready to download. */
 export function xlsx(sheets: Sheet[]): Blob {
   const names = sheetNames(sheets);

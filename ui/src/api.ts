@@ -315,6 +315,9 @@ export interface Point {
   avg_latency_ms: number | null;
 }
 
+/** Token usage and cost per project, key and model, with the Metrics page's filters. */
+export type Billing = S["Billing"];
+
 export interface Metrics {
   range: string;
   step_secs: number;

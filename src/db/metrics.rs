@@ -174,6 +174,57 @@ pub async fn selection_totals(
     .await
 }
 
+/// Token usage and cost of one project, key and model, for the billing export.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct BillingTotals {
+    pub project_id: Option<Uuid>,
+    pub key_id: Option<Uuid>,
+    pub model: String,
+    pub requests: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub cost_usd: f64,
+}
+
+/// Totals per project, key and model, filtered as `selection_series`.
+pub async fn billing_totals(
+    pool: &PgPool,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    key_id: Option<Uuid>,
+    deleted_keys: bool,
+    models: Option<&[String]>,
+    exclude: &[String],
+    projects: Option<&[Uuid]>,
+    labels: Option<&serde_json::Value>,
+) -> sqlx::Result<Vec<BillingTotals>> {
+    sqlx::query_as!(
+        BillingTotals,
+        r#"SELECT project_id, key_id, model_name AS "model!", count(*) AS "requests!",
+                  sum(input_tokens)::bigint AS "input_tokens!", sum(output_tokens)::bigint AS "output_tokens!",
+                  sum(cache_read_tokens)::bigint AS "cache_read_tokens!", sum(cache_write_tokens)::bigint AS "cache_write_tokens!",
+                  sum(cost_usd) AS "cost_usd!"
+           FROM request_logs
+           WHERE ts >= $1 AND ts < $3 AND ($2::uuid IS NULL OR key_id = $2) AND ($4::uuid[] IS NULL OR project_id = ANY($4))
+             AND ($5::jsonb IS NULL OR labels @> $5)
+             AND (NOT $6 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
+             AND ($7::text[] IS NULL OR model_name = ANY($7)) AND NOT (model_name = ANY($8))
+           GROUP BY 1, 2, 3"#,
+        since,
+        key_id,
+        until,
+        projects,
+        labels,
+        deleted_keys,
+        models,
+        exclude,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// One model's requests in one hour, for the model hub's status bar.
 #[derive(Debug)]
 pub struct ModelHour {
