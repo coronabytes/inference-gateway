@@ -59,7 +59,8 @@ curl https://gateway.example.com/v1/chat/completions -H "authorization: Bearer $
 - Every inference endpoint takes labels. Most SDKs can send a header with every request (`default_headers` in OpenAI's SDKs, `ANTHROPIC_CUSTOM_HEADERS` for Claude Code).
 - Up to 5 labels per request. Keys are letters, digits, `_`, `-` and `.`; values are printable ASCII without commas; each shorter than 128 characters. Invalid labels are refused with `400` before anything is sent to a provider.
 - Labels are stored with the request, indexed, and kept as long as the request log. They are not sent to providers.
-- On **Metrics** and **Logs → Request log**, the **Labels** filter shows only requests with all of the given labels. In the admin API, `GET /admin/api/logs` and `GET /admin/api/metrics` take `labels=tenant=acme,feature=search`.
+- On **Metrics** and **Logs → Request log**, the **Labels** filter shows only requests with all of the given labels. In the admin API, `GET /admin/api/logs`, `GET /admin/api/metrics` and `GET /admin/api/metrics/billing` take `labels=tenant=acme,feature=search`.
+- **Metrics → Export → Billing (.xlsx)** downloads one sheet of token usage and cost per project, key and model for the page's time range and filters, labels included (`GET /admin/api/metrics/billing`).
 
 ## Guardrails per request
 

@@ -159,6 +159,12 @@ async fn the_request_log_filters_and_aggregates(pg: PgPool) {
     let by_project = ch.group_totals(&pg, &super::Selection { key_id: None, ..s }, crate::db::Group::Project).await.unwrap();
     assert!(by_project.iter().any(|t| t.subject == project.to_string()));
     assert_eq!(by_project.iter().map(|t| t.requests).sum::<i64>(), by_key.iter().map(|t| t.requests).sum::<i64>());
+    let billing = ch.billing_totals(&pg, &super::Selection { key_id: None, ..s }).await.unwrap();
+    let ours = billing.iter().find(|t| t.key_id == Some(key)).unwrap();
+    assert_eq!((ours.project_id, ours.model.as_str(), ours.requests, ours.input_tokens), (Some(project), "gpt-test", 3, 30));
+    let theirs = billing.iter().find(|t| t.key_id == other.key_id).unwrap();
+    assert_eq!(theirs.project_id, None);
+    assert!((theirs.cost_usd - 7.0).abs() < 1e-9);
     let empty = ch.selection_totals(&pg, &super::Selection { key_id: Some(Uuid::now_v7()), ..s }).await.unwrap();
     assert_eq!((empty.requests, empty.p95_latency_ms), (0, None));
 

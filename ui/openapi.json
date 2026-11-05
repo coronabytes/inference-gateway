@@ -4943,6 +4943,152 @@
         ]
       }
     },
+    "/admin/api/metrics/billing": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Billing",
+        "description": "Token usage and cost per project, key and model, with the Metrics page's filters.",
+        "operationId": "billing",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "description": "Metrics only: just this virtual key's traffic.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Metrics only: just the traffic of this project's keys.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deleted_keys",
+            "in": "query",
+            "description": "Metrics only: just the traffic of keys that were deleted since.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "labels",
+            "in": "query",
+            "description": "Metrics only: just the requests with all of these labels, as `tenant=…,feature=core`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "models",
+            "in": "query",
+            "description": "Metrics only: the series and totals of just these models, comma-separated; omitted means\nevery model except auto routers, whose entries already count their calls.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "description": "Metrics only: what the table's rows total: `model` (the default), `project` or `key`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Metrics only: the column the table's rows are sorted by: `name` (the model's, project's or\nkey's), `requests` (the default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Metrics only: `asc` or `desc`; the default is ascending for `name`, descending otherwise.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Metrics with `range=custom`: first and last day, inclusive (UTC).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Totals per project, key and model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Billing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid range or filter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/model-metadata": {
       "put": {
         "tags": [
@@ -10015,6 +10161,84 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "Billing": {
+        "type": "object",
+        "description": "Token usage and cost per project, key and model over a Metrics selection.",
+        "required": [
+          "from",
+          "to",
+          "rows"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The covered time, end exclusive."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BillingRow"
+            },
+            "description": "Sorted by project, key and model."
+          }
+        }
+      },
+      "BillingRow": {
+        "type": "object",
+        "required": [
+          "project",
+          "key",
+          "model",
+          "requests",
+          "input_tokens",
+          "cache_read_tokens",
+          "cache_write_tokens",
+          "output_tokens",
+          "cost_usd"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "The project's name, or `Deleted project` / `No project`."
+          },
+          "key": {
+            "type": "string",
+            "description": "The key's name, or `Deleted key` / `No key`."
+          },
+          "model": {
+            "type": "string"
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
           }
         }
       },

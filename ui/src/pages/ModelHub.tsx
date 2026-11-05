@@ -38,7 +38,7 @@ import {
 } from "../components/ui";
 import { compact, ms } from "../format";
 import { PROVIDER_LABEL } from "../providers";
-import { xlsx, type Cell } from "../xlsx";
+import { download as save, xlsx, type Cell } from "../xlsx";
 import { GUARDRAIL_LABEL } from "./Guardrails";
 import { MODES } from "./DeploymentForm";
 
@@ -244,15 +244,6 @@ const STATUS_TEXT: Record<NonNullable<Hub["key"]>["status"], string> = {
   "project inactive": "This key's project is inactive: its requests are refused.",
   "no inference": "This key's scope is the admin API only: it cannot call these models.",
 };
-
-function save(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 type View = "list" | "tiles";
 const VIEW_KEY = "gateway-hub-view";

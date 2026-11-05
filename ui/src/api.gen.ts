@@ -1292,6 +1292,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/metrics/billing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Billing
+         * @description Token usage and cost per project, key and model, with the Metrics page's filters.
+         */
+        get: operations["billing"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/model-metadata": {
         parameters: {
             query?: never;
@@ -2817,6 +2837,37 @@ export interface components {
             search_units: number;
             /** Format: int64 */
             input_tokens?: number;
+        };
+        /** @description Token usage and cost per project, key and model over a Metrics selection. */
+        Billing: {
+            /**
+             * Format: date-time
+             * @description The covered time, end exclusive.
+             */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            /** @description Sorted by project, key and model. */
+            rows: components["schemas"]["BillingRow"][];
+        };
+        BillingRow: {
+            /** @description The project's name, or `Deleted project` / `No project`. */
+            project: string;
+            /** @description The key's name, or `Deleted key` / `No key`. */
+            key: string;
+            model: string;
+            /** Format: int64 */
+            requests: number;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: double */
+            cost_usd: number;
         };
         /** @description A logged request's bodies (see `capture`). */
         BodiesView: {
@@ -8100,6 +8151,62 @@ export interface operations {
                 };
             };
             /** @description Invalid range. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    billing: {
+        parameters: {
+            query?: {
+                range?: string;
+                /** @description Metrics only: just this virtual key's traffic. */
+                key_id?: string;
+                /** @description Metrics only: just the traffic of this project's keys. */
+                project_id?: string;
+                /** @description Metrics only: just the traffic of keys that were deleted since. */
+                deleted_keys?: boolean;
+                /** @description Metrics only: just the requests with all of these labels, as `tenant=…,feature=core`. */
+                labels?: string;
+                /**
+                 * @description Metrics only: the series and totals of just these models, comma-separated; omitted means
+                 *     every model except auto routers, whose entries already count their calls.
+                 */
+                models?: string;
+                /** @description Metrics only: what the table's rows total: `model` (the default), `project` or `key`. */
+                group?: string;
+                /**
+                 * @description Metrics only: the column the table's rows are sorted by: `name` (the model's, project's or
+                 *     key's), `requests` (the default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.
+                 */
+                sort?: string;
+                /** @description Metrics only: `asc` or `desc`; the default is ascending for `name`, descending otherwise. */
+                order?: string;
+                /** @description Metrics with `range=custom`: first and last day, inclusive (UTC). */
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Totals per project, key and model. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Billing"];
+                };
+            };
+            /** @description Invalid range or filter. */
             400: {
                 headers: {
                     [name: string]: unknown;

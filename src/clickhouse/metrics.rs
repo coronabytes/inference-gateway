@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::{ClickHouse, Params, logs::Where};
-use crate::db::{Group, KeyMinute, KeyUsageRow, LogTotals, ModelHour, ModelSpeed};
+use crate::db::{BillingTotals, Group, KeyMinute, KeyUsageRow, LogTotals, ModelHour, ModelSpeed};
 
 /// The aggregates of `LogTotals`, after its subject and bucket.
 const TOTALS: &str = "count() AS requests, countIf(status_code >= 400) AS errors,
@@ -121,6 +121,44 @@ impl ClickHouse {
         );
         let rows: Vec<Totals> = self.rows(&sql, w.into_params()).await?;
         Ok(rows.into_iter().map(LogTotals::from).collect())
+    }
+
+    pub async fn billing_totals(&self, pg: &PgPool, s: &Selection<'_>) -> crate::logstore::Result<Vec<BillingTotals>> {
+        #[derive(Deserialize)]
+        struct Row {
+            project_id: String,
+            key_id: String,
+            model: String,
+            requests: i64,
+            input_tokens: i64,
+            output_tokens: i64,
+            cache_read_tokens: i64,
+            cache_write_tokens: i64,
+            cost_usd: f64,
+        }
+        let w = selection(pg, s, true).await?;
+        let sql = format!(
+            "SELECT ifNull(toString(project_id), '') AS project_id, ifNull(toString(key_id), '') AS key_id, model_name AS model,
+                    count() AS requests, sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
+                    sum(cache_read_tokens) AS cache_read_tokens, sum(cache_write_tokens) AS cache_write_tokens, sum(cost_usd) AS cost_usd
+             FROM request_logs WHERE {} GROUP BY project_id, key_id, model",
+            w.sql()
+        );
+        let rows: Vec<Row> = self.rows(&sql, w.into_params()).await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| BillingTotals {
+                project_id: Uuid::parse_str(&r.project_id).ok(),
+                key_id: Uuid::parse_str(&r.key_id).ok(),
+                model: r.model,
+                requests: r.requests,
+                input_tokens: r.input_tokens,
+                output_tokens: r.output_tokens,
+                cache_read_tokens: r.cache_read_tokens,
+                cache_write_tokens: r.cache_write_tokens,
+                cost_usd: r.cost_usd,
+            })
+            .collect())
     }
 
     pub async fn selection_totals(&self, pg: &PgPool, s: &Selection<'_>) -> crate::logstore::Result<LogTotals> {

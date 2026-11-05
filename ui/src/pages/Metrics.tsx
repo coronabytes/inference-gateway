@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Metrics as MetricsData } from "../api";
+import { api, type Billing, type Metrics as MetricsData } from "../api";
+import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TimeChart } from "../components/TimeChart";
-import { MultiSelect, Segmented, TimeRange, useTimeRange } from "../components/controls";
+import { MenuButton, MultiSelect, Segmented, TimeRange, useTimeRange } from "../components/controls";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
 import { LabelFilter } from "../components/LabelInput";
 import { ErrorBanner, SortHeader, StatTile, type Sort } from "../components/ui";
 import { compact, ms, pct, usd } from "../format";
 import { labelQuery, type Labels } from "../labels";
+import { download, xlsx, type Cell } from "../xlsx";
 
 const RANGES = ["1h", "24h", "7d", "month", "last_month", "custom"] as const;
 
@@ -36,6 +38,42 @@ function storedGroup(): Group {
   } catch {
     return "model";
   }
+}
+
+/** The billing export: one sheet with a row per project, key and model, a total, and the period. */
+function billingSheet(b: Billing): Blob {
+  const day = (iso: string) => iso.slice(0, 10);
+  // `to` is exclusive: the last day is the one before it.
+  const last = new Date(new Date(b.to).getTime() - 1).toISOString();
+  const sum = (f: (r: Billing["rows"][number]) => number) => b.rows.reduce((n, r) => n + f(r), 0);
+  const rows: Cell[][] = [
+    ["Project", "Key", "Model", "Requests", "Input tokens", "Cache read tokens", "Cache write tokens", "Output tokens", "Cost (USD)"],
+    ...b.rows.map((r) => [
+      r.project,
+      r.key,
+      r.model,
+      r.requests,
+      r.input_tokens,
+      r.cache_read_tokens,
+      r.cache_write_tokens,
+      r.output_tokens,
+      r.cost_usd,
+    ]),
+    [
+      "Total",
+      null,
+      null,
+      sum((r) => r.requests),
+      sum((r) => r.input_tokens),
+      sum((r) => r.cache_read_tokens),
+      sum((r) => r.cache_write_tokens),
+      sum((r) => r.output_tokens),
+      sum((r) => r.cost_usd),
+    ],
+    [],
+    ["Period (UTC)", `${day(b.from)} to ${day(last)}`],
+  ];
+  return xlsx([{ name: "Billing", rows, widths: [24, 24, 32, 11, 14, 18, 19, 14, 12] }]);
 }
 
 /** A row's name: a model's, a project's or key's, or what stands for one without a name. */
@@ -69,14 +107,23 @@ export function Metrics() {
     }
   };
 
+  const [curl, setCurl] = useState<CurlRequest | null>(null);
+
+  /** The time range, key, label and model filters, as `/metrics` and `/metrics/billing` take them. */
+  const filterQuery = useCallback(() => {
+    if (rangeQuery === null) return null;
+    const q = new URLSearchParams(rangeQuery);
+    setKeyFilter(q, keyId);
+    if (labelFilter) q.set("labels", labelFilter);
+    if (models) q.set("models", models);
+    return q;
+  }, [rangeQuery, keyId, labelFilter, models]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      if (rangeQuery === null) return;
-      const q = new URLSearchParams(rangeQuery);
-      setKeyFilter(q, keyId);
-      if (labelFilter) q.set("labels", labelFilter);
-      if (models) q.set("models", models);
+      const q = filterQuery();
+      if (q === null) return;
       q.set("group", group);
       q.set("sort", sort.by);
       q.set("order", sort.desc ? "desc" : "asc");
@@ -87,7 +134,24 @@ export function Metrics() {
     } finally {
       setLoading(false);
     }
-  }, [rangeQuery, keyId, labelFilter, models, group, sort]);
+  }, [filterQuery, group, sort]);
+
+  const [exporting, setExporting] = useState(false);
+  const exportBilling = async () => {
+    const q = filterQuery();
+    if (q === null) return;
+    setExporting(true);
+    try {
+      const b = await api<Billing>(`/metrics/billing?${q}`);
+      const last = new Date(new Date(b.to).getTime() - 1).toISOString().slice(0, 10);
+      download(billingSheet(b), `billing-${b.from.slice(0, 10)}-to-${last}.xlsx`);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -124,18 +188,59 @@ export function Metrics() {
 
   return (
     <div className={loading && data ? "page refreshing" : "page"}>
-      <div className="filters">
-        <TimeRange {...time.props} />
-        <KeyFilter value={keyId} onChange={setKeyId} />
-        <MultiSelect
-          caption="Model"
-          values={modelFilter}
-          onChange={setModelFilter}
-          options={(data?.models ?? []).map((m) => ({ value: m.model, label: m.model, note: m.active ? undefined : "inactive" }))}
-        />
-        <LabelFilter value={labels} onChange={setLabels} />
+      <div className="page-head">
+        <div className="filters">
+          <TimeRange {...time.props} />
+          <KeyFilter value={keyId} onChange={setKeyId} />
+          <MultiSelect
+            caption="Model"
+            values={modelFilter}
+            onChange={setModelFilter}
+            options={(data?.models ?? []).map((m) => ({ value: m.model, label: m.model, note: m.active ? undefined : "inactive" }))}
+          />
+          <LabelFilter value={labels} onChange={setLabels} />
+        </div>
+        <div className="page-actions">
+          <MenuButton
+            label="Export"
+            className="more-button primary"
+            items={[
+              {
+                label: "Billing (.xlsx)",
+                title: "Token usage and cost per project, key and model, with these filters.",
+                onClick: exportBilling,
+                disabled: rangeQuery === null || exporting,
+              },
+              {
+                label: "Show curl",
+                title: "The billing totals with these filters, as a curl command for the admin API.",
+                onClick: () => {
+                  const q = filterQuery();
+                  if (q) setCurl({ path: `/admin/api/metrics/billing?${q}` });
+                },
+                disabled: rangeQuery === null,
+              },
+            ]}
+          >
+            Export
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </MenuButton>
+        </div>
       </div>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      {curl && (
+        <CurlDialog
+          request={curl}
+          note={
+            <>
+              Set <code>GATEWAY_API_KEY</code> to the master key, an admin key, or a project key.
+            </>
+          }
+          onClose={() => setCurl(null)}
+        />
+      )}
 
       {t && (
         <div className="tiles">

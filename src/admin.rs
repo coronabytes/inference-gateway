@@ -98,6 +98,7 @@ pub fn router(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         .routes(routes!(projects::reset_project_spend))
         .routes(routes!(logs::project_bodies, logs::delete_project_bodies))
         .routes(routes!(metrics::metrics))
+        .routes(routes!(metrics::billing))
         .routes(routes!(logs::logs))
         .routes(routes!(logs::log_labels))
         .routes(routes!(logs::log_tools))

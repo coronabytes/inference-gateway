@@ -90,6 +90,61 @@ fn window(q: &RangeQuery, now: DateTime<Utc>) -> R<Window> {
     Ok(Window { label, step, stamps, since: ts(first), until: ts(until + 1) })
 }
 
+/// The traffic a Metrics view counts, from its time range, key, project, label and model filters.
+struct Filter {
+    window: Window,
+    key_id: Option<Uuid>,
+    deleted_keys: bool,
+    /// The picked models; None for every model except router entries (`exclude`).
+    models: Option<Vec<String>>,
+    exclude: Vec<String>,
+    /// The picked project's traffic, within what the caller may see; None for everything.
+    projects: Option<Vec<Uuid>>,
+    labels: Option<Value>,
+}
+
+impl Filter {
+    fn new(state: &AppState, access: &Access, q: &RangeQuery) -> R<Self> {
+        let window = window(q, Utc::now())?;
+        if q.project_id.is_some_and(|p| !access.sees(Some(p))) {
+            return Err(AdminError::forbidden("not your project"));
+        }
+        let projects = match q.project_id {
+            Some(p) => Some(vec![p]),
+            None => access.projects().map(<[Uuid]>::to_vec),
+        };
+        let labels = label_filter(q.labels.as_deref())?;
+        let models: Option<Vec<String>> = q
+            .models
+            .as_deref()
+            .map(|m| m.split(',').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect::<Vec<_>>())
+            .filter(|m| !m.is_empty());
+        // Without a pick, the routers are left out: their calls are counted under their own models.
+        // Router entries are logged under the name requested, so under an alias of a router too.
+        let exclude: Vec<String> = match models {
+            Some(_) => Vec::new(),
+            None => {
+                let snap = state.registry.snapshot();
+                snap.routers.keys().chain(snap.aliases.keys()).filter(|m| snap.routers.contains_key(snap.resolve(m))).cloned().collect()
+            }
+        };
+        Ok(Self { window, key_id: q.key_id, deleted_keys: q.deleted_keys.unwrap_or(false), models, exclude, projects, labels })
+    }
+
+    fn selection(&self) -> crate::logstore::Selection<'_> {
+        crate::logstore::Selection {
+            since: self.window.since,
+            until: self.window.until,
+            key_id: self.key_id,
+            deleted_keys: self.deleted_keys,
+            models: self.models.as_deref(),
+            exclude: &self.exclude,
+            projects: self.projects.as_deref(),
+            labels: self.labels.as_ref(),
+        }
+    }
+}
+
 #[derive(Serialize, Default)]
 struct Totals {
     requests: i64,
@@ -263,41 +318,15 @@ pub(super) async fn metrics(
         Some(_) => return Err(AdminError::bad_request("order must be asc or desc")),
     };
     let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
-    let Window { label, step, stamps, since, until } = window(&q, Utc::now())?;
+    let filter = Filter::new(&state, &access, &q)?;
+    let Window { label, step, ref stamps, since, until } = filter.window;
     let projects = access.projects();
-    if q.project_id.is_some_and(|p| !access.sees(Some(p))) {
-        return Err(AdminError::forbidden("not your project"));
-    }
-    // The traffic counted: the picked project's, within what the caller may see.
-    let picked = q.project_id.map(|p| [p]);
-    let counted = picked.as_ref().map(|p| &p[..]).or(projects);
-    let labels = label_filter(q.labels.as_deref())?;
-    let labels = labels.as_ref();
-    let deleted = q.deleted_keys.unwrap_or(false);
-    let picked_models: Option<Vec<String>> = q
-        .models
-        .as_deref()
-        .map(|m| m.split(',').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect::<Vec<_>>())
-        .filter(|m| !m.is_empty());
+    let picked_models = filter.models.as_deref();
+    let selection = filter.selection();
 
     let snap = state.registry.snapshot();
     // Router entries are logged under the name requested, so under an alias of a router too.
     let is_router = |m: &str| snap.routers.contains_key(snap.resolve(m));
-    // Without a pick, the routers are left out: their calls are counted under their own models.
-    let exclude: Vec<String> = match picked_models {
-        Some(_) => Vec::new(),
-        None => snap.routers.keys().chain(snap.aliases.keys()).filter(|m| is_router(m)).cloned().collect(),
-    };
-    let selection = crate::logstore::Selection {
-        since,
-        until,
-        key_id: q.key_id,
-        deleted_keys: deleted,
-        models: picked_models.as_deref(),
-        exclude: &exclude,
-        projects: counted,
-        labels,
-    };
     // Every model's totals, whatever the pick: the model filter's choices, and the by-model table,
     // from which models are picked. By project or key, the rows count the selection's traffic, as
     // the tiles and charts do.
@@ -330,7 +359,7 @@ pub(super) async fn metrics(
     let mut rows: Vec<Row> = match group {
         // The models with requests in the range, and those picked.
         db::Group::Model => {
-            let picked = picked_models.as_deref().unwrap_or_default();
+            let picked = picked_models.unwrap_or_default();
             models
                 .iter()
                 .filter(|m| model_totals.contains_key(*m) || picked.iter().any(|p| p == *m))
@@ -363,8 +392,87 @@ pub(super) async fn metrics(
     Ok(Json(json!({
         "range": label, "step_secs": step, "from": since, "to": until, "models": model_out, "group": group.as_str(), "rows": rows,
         // The picked models', or everything except router entries.
-        "totals": totals(Some(&selected)), "series": series_json(&stamps, &buckets),
+        "totals": totals(Some(&selected)), "series": series_json(stamps, &buckets),
     })))
+}
+
+/// Token usage and cost per project, key and model over a Metrics selection.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct Billing {
+    /// The covered time, end exclusive.
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    /// Sorted by project, key and model.
+    rows: Vec<BillingRow>,
+}
+
+#[derive(Serialize, utoipa::ToSchema, Debug, PartialEq)]
+pub(crate) struct BillingRow {
+    /// The project's name, or `Deleted project` / `No project`.
+    project: String,
+    /// The key's name, or `Deleted key` / `No key`.
+    key: String,
+    model: String,
+    requests: i64,
+    input_tokens: i64,
+    cache_read_tokens: i64,
+    cache_write_tokens: i64,
+    output_tokens: i64,
+    cost_usd: f64,
+}
+
+/// A project's or key's name, or what stands for one deleted since or missing.
+fn entity_name(id: Option<Uuid>, names: &HashMap<Uuid, String>, deleted: &str, none: &str) -> String {
+    match id {
+        Some(id) => names.get(&id).cloned().unwrap_or_else(|| deleted.to_string()),
+        None => none.to_string(),
+    }
+}
+
+fn billing_rows(totals: Vec<db::BillingTotals>, projects: &HashMap<Uuid, String>, keys: &HashMap<Uuid, String>) -> Vec<BillingRow> {
+    let mut rows: Vec<BillingRow> = totals
+        .into_iter()
+        .map(|t| BillingRow {
+            project: entity_name(t.project_id, projects, "Deleted project", "No project"),
+            key: entity_name(t.key_id, keys, "Deleted key", "No key"),
+            model: t.model,
+            requests: t.requests,
+            input_tokens: t.input_tokens,
+            cache_read_tokens: t.cache_read_tokens,
+            cache_write_tokens: t.cache_write_tokens,
+            output_tokens: t.output_tokens,
+            cost_usd: t.cost_usd,
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        (a.project.to_lowercase(), a.key.to_lowercase(), &a.model).cmp(&(b.project.to_lowercase(), b.key.to_lowercase(), &b.model))
+    });
+    rows
+}
+
+/// Billing
+///
+/// Token usage and cost per project, key and model, with the Metrics page's filters.
+#[utoipa::path(get, path = "/metrics/billing", tag = "Usage", params(RangeQuery),
+    responses(
+        (status = 200, description = "Totals per project, key and model.", body = Billing),
+        (status = 400, description = "Invalid range or filter.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn billing(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<RangeQuery>,
+) -> R<Json<Billing>> {
+    let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
+    let filter = Filter::new(&state, &access, &q)?;
+    let totals = crate::logstore::billing_totals(&state, &filter.selection()).await?;
+    let project_ids: Vec<Uuid> = totals.iter().filter_map(|t| t.project_id).collect::<BTreeSet<_>>().into_iter().collect();
+    let key_ids: Vec<Uuid> = totals.iter().filter_map(|t| t.key_id).collect::<BTreeSet<_>>().into_iter().collect();
+    let projects: HashMap<Uuid, String> =
+        db::project_names(&state.db, Some(&project_ids)).await?.into_iter().map(|p| (p.id, p.name)).collect();
+    let keys = db::key_names_of(&state.db, &key_ids).await?;
+    Ok(Json(Billing { from: filter.window.since, to: filter.window.until, rows: billing_rows(totals, &projects, &keys) }))
 }
 
 /// Usage by key
@@ -551,6 +659,43 @@ pub(super) async fn key_spend(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn billing_rows_are_named_and_sorted() {
+        let (p1, k1, k2, gone) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+        let projects = HashMap::from([(p1, "acme".to_string())]);
+        let keys = HashMap::from([(k1, "Prod".to_string()), (k2, "batch".to_string())]);
+        let t = |project_id, key_id, model: &str, cost_usd| db::BillingTotals {
+            project_id,
+            key_id,
+            model: model.to_string(),
+            cost_usd,
+            ..Default::default()
+        };
+        let rows = billing_rows(
+            vec![
+                t(Some(p1), Some(k1), "gpt", 1.0),
+                t(None, None, "gpt", 2.0),
+                t(Some(p1), Some(k2), "claude", 3.0),
+                t(Some(gone), Some(gone), "gpt", 4.0),
+                t(Some(p1), Some(k1), "claude", 5.0),
+            ],
+            &projects,
+            &keys,
+        );
+        let got: Vec<(&str, &str, &str, f64)> =
+            rows.iter().map(|r| (r.project.as_str(), r.key.as_str(), r.model.as_str(), r.cost_usd)).collect();
+        assert_eq!(
+            got,
+            [
+                ("acme", "batch", "claude", 3.0),
+                ("acme", "Prod", "claude", 5.0),
+                ("acme", "Prod", "gpt", 1.0),
+                ("Deleted project", "Deleted key", "gpt", 4.0),
+                ("No project", "No key", "gpt", 2.0),
+            ]
+        );
+    }
 
     #[test]
     fn rows_sort_by_column_with_blanks_last() {
