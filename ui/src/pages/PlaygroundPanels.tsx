@@ -97,7 +97,10 @@ interface PanelProps {
 }
 
 export function EmbeddingPanel({ keyId, keyName, model, labels }: PanelProps) {
-  const [text, setText] = useSessionState("playground.embeddings.text", "The export job hangs at 99%.\nExports never finish.\nHow do I change my password?");
+  const [text, setText] = useSessionState(
+    "playground.embeddings.text",
+    "The export job hangs at 99%.\nExports never finish.\nHow do I change my password?",
+  );
   const [dimensions, setDimensions] = useSessionState("playground.embeddings.dimensions", "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -483,7 +486,10 @@ function showAnswers(apiId: DecisionApi, questions: Q[], data: any): Shown[] {
 
 export function DecisionPanel({ keyId, keyName, model, labels }: PanelProps) {
   const [apiId, setApiId] = useSessionState<DecisionApi>("playground.decisions.api", "decisions", oneOf(["decisions", "systemone"]));
-  const [input, setInput] = useSessionState("playground.decisions.input", "Ticket (billing): The export job hangs at 99% and never finishes.");
+  const [input, setInput] = useSessionState(
+    "playground.decisions.input",
+    "Ticket (billing): The export job hangs at 99% and never finishes.",
+  );
   const [questions, setQuestions] = useSessionState<Q[]>("playground.decisions.questions", EXAMPLE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
