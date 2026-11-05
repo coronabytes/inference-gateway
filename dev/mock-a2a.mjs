@@ -3,14 +3,14 @@
 // /.well-known/agent-card.json. Requires the bearer token "mock-a2a-secret" when MOCK_A2A_TOKEN is
 // not set to something else ("" turns the check off).
 //
-//   bun dev/mock-a2a.mjs            # listens on :9997
+//   bun dev/mock-a2a.mjs            # listens on :16606
 //
 // Messages are echoed back as a completed task's artifact. A message containing "fail" fails its
 // task, one containing "ask" leaves it waiting for input (send another message with its taskId).
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 
-const PORT = Number(process.env.PORT ?? 9997);
+const PORT = Number(process.env.PORT ?? 16606);
 const TOKEN = process.env.MOCK_A2A_TOKEN ?? "mock-a2a-secret";
 const BASE = `http://127.0.0.1:${PORT}`;
 const tasks = new Map();

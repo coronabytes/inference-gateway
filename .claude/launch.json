@@ -7,7 +7,7 @@
       "runtimeArgs": [
         "run"
       ],
-      "port": 8080
+      "port": 16600
     },
     {
       "name": "ui",
@@ -18,7 +18,7 @@
         "ui",
         "dev"
       ],
-      "port": 5173
+      "port": 16601
     },
     {
       "name": "mock-upstream",
@@ -26,7 +26,7 @@
       "runtimeArgs": [
         "dev/mock-upstream.mjs"
       ],
-      "port": 9999
+      "port": 16604
     },
     {
       "name": "mock-realtime",
@@ -34,7 +34,7 @@
       "runtimeArgs": [
         "dev/mock-realtime.mjs"
       ],
-      "port": 9995
+      "port": 16608
     },
     {
       "name": "mock-mcp",
@@ -42,7 +42,7 @@
       "runtimeArgs": [
         "dev/mock-mcp.mjs"
       ],
-      "port": 9998
+      "port": 16605
     },
     {
       "name": "mock-a2a",
@@ -50,7 +50,7 @@
       "runtimeArgs": [
         "dev/mock-a2a.mjs"
       ],
-      "port": 9997
+      "port": 16606
     },
     {
       "name": "mock-mcp-client",
@@ -58,7 +58,7 @@
       "runtimeArgs": [
         "dev/mock-mcp-client.mjs"
       ],
-      "port": 9996
+      "port": 16607
     }
   ]
 }

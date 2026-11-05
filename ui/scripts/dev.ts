@@ -1,13 +1,13 @@
-// The console's dev server, on http://localhost:5173: the app with hot reload, the files in public/,
-// and the gateway's own paths passed on to GATEWAY_URL (default http://localhost:8080).
+// The console's dev server, on http://localhost:16601: the app with hot reload, the files in public/,
+// and the gateway's own paths passed on to GATEWAY_URL (default http://localhost:16600).
 
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import index from "../index.html";
 import { fetchScalar } from "./fetch-scalar";
 
-const gateway = new URL(process.env.GATEWAY_URL ?? "http://localhost:8080");
-const port = Number(process.env.PORT ?? 5173);
+const gateway = new URL(process.env.GATEWAY_URL ?? "http://localhost:16600");
+const port = Number(process.env.PORT ?? 16601);
 
 // The paths the gateway answers. Requests keep the console's own address as their Host, which the
 // gateway puts in links it hands out (the agent cards, the redirect URI of upstream sign-ins, the

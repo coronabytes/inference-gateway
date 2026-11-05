@@ -1,12 +1,12 @@
 // Mock of Mistral's realtime transcription WebSocket, for local end-to-end testing of
-// /v1/realtime?intent=transcription. Point a Mistral credential's endpoint at http://127.0.0.1:9995/v1.
+// /v1/realtime?intent=transcription. Point a Mistral credential's endpoint at http://127.0.0.1:16608/v1.
 //
-//   bun dev/mock-realtime.mjs            # listens on :9995
+//   bun dev/mock-realtime.mjs            # listens on :16608
 //
 // It "hears" one word of a canned sentence per half second of audio, and sends the rest when the
 // audio ends. A model name containing "fail" gets an error instead of a session.
 
-const PORT = Number(process.env.PORT ?? 9995);
+const PORT = Number(process.env.PORT ?? 16608);
 const WORDS = "This is a mock transcript of your recording, streamed while you speak.".split(" ");
 
 Bun.serve({

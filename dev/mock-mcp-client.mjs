@@ -3,17 +3,17 @@
 // do: an unauthenticated request, the WWW-Authenticate challenge, the protected resource and
 // authorization server metadata, then the authorization code flow with PKCE and `resource`.
 //
-//   bun dev/mock-mcp-client.mjs     # listens on :9996, against the console's address
-//   GATEWAY_URL=http://localhost:5173 MCP_PATH=/mcp/mock bun dev/mock-mcp-client.mjs
+//   bun dev/mock-mcp-client.mjs     # listens on :16607, against the console's address
+//   GATEWAY_URL=http://localhost:16601 MCP_PATH=/mcp/mock bun dev/mock-mcp-client.mjs
 //
-// Open http://127.0.0.1:9996 and click Connect. After the approval in the console it lists the
+// Open http://127.0.0.1:16607 and click Connect. After the approval in the console it lists the
 // tools with its access token, refreshes the token, and lists them again.
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 
-const PORT = Number(process.env.PORT ?? 9996);
+const PORT = Number(process.env.PORT ?? 16607);
 const BASE = `http://127.0.0.1:${PORT}`;
-const GATEWAY = process.env.GATEWAY_URL ?? "http://localhost:5173";
+const GATEWAY = process.env.GATEWAY_URL ?? "http://localhost:16601";
 const MCP = `${GATEWAY}${process.env.MCP_PATH ?? "/mcp"}`;
 const CLIENT_ID = `${BASE}/client.json`;
 const REDIRECT = `${BASE}/callback`;
