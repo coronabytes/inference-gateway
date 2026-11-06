@@ -121,6 +121,16 @@ fn suggest_vendor(names: &str) -> Option<&'static str> {
     })
 }
 
+/// Who makes a model: its metadata's `vendor`, or without one the vendor its name and upstream
+/// models suggest.
+fn vendor_of<'a>(metadata: &Value, name: &'a str, upstream: impl Iterator<Item = &'a str>) -> Option<String> {
+    let saved = metadata.get("vendor").and_then(Value::as_str).map(str::to_string);
+    saved.or_else(|| {
+        let names = std::iter::once(name).chain(upstream).collect::<Vec<_>>().join(" ");
+        suggest_vendor(&names.to_lowercase()).map(str::to_string)
+    })
+}
+
 /// Whether a model passes the hub's filters.
 fn matches(m: &HubModel, modes: &[&str], vendors: &[&str], caps: &[&str], term: &str) -> bool {
     let text = |field: &str| m.metadata.get(field).and_then(Value::as_str);
@@ -437,13 +447,7 @@ pub(crate) async fn hub(
                 }
             };
             let metadata = metadata.get(name.as_str()).cloned().unwrap_or_else(|| Value::Object(Map::new()));
-            let saved = metadata.get("vendor").and_then(Value::as_str).map(str::to_string);
-            let suggested = || {
-                let names =
-                    std::iter::once(name.as_str()).chain(ds.iter().map(|d| d.upstream_model.as_str())).collect::<Vec<_>>().join(" ");
-                suggest_vendor(&names.to_lowercase()).map(str::to_string)
-            };
-            let vendor = saved.or_else(suggested);
+            let vendor = vendor_of(&metadata, name, ds.iter().map(|d| d.upstream_model.as_str()));
             HubModel {
                 name: name.clone(),
                 kind,
@@ -529,6 +533,166 @@ pub(crate) async fn hub(
     Ok(Json(HubView { key, guardrails, models, total, modes: known_modes, vendors: known_vendors }))
 }
 
+/// A model as the hub exports it: what a client needs to pick and call it, without its deployments.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ExportModel {
+    /// The public model name clients send as `model`.
+    name: String,
+    /// `router` for an auto router; absent for a model or an alias.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    kind: Option<&'static str>,
+    mode: Mode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    display_name: Option<String>,
+    /// Who makes it: saved, or suggested from its names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    vendor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    description: Option<String>,
+    /// A model alias's target: the model name it serves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    target: Option<String>,
+    /// An auto router's models.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    routes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    max_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    max_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    retires: Option<chrono::NaiveDate>,
+    /// The capabilities all its deployments have, by path in the hub's `capabilities`, such as
+    /// `image_input` or `thinking.supported`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    capabilities: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
+    /// What its deployments charge, once per distinct set of prices, the lowest priority's first.
+    prices: Vec<ExportPrices>,
+}
+
+/// USD per 1M tokens, as `HubPrices`, each only where it is charged: an absent price is not charged.
+#[derive(Serialize, PartialEq, utoipa::ToSchema)]
+pub(crate) struct ExportPrices {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    input: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    output: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    cache_read: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    cache_write: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    long_context_threshold: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    long_input: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    long_output: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    long_cache_read: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    long_cache_write: Option<f64>,
+    /// Per 1,000 rerank queries or web searches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    per_k_searches: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    per_audio_minute: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    per_m_characters: Option<f64>,
+}
+
+impl From<&HubPrices> for ExportPrices {
+    fn from(p: &HubPrices) -> Self {
+        let charged = |v: f64| (v > 0.0).then_some(v);
+        Self {
+            input: charged(p.input),
+            output: charged(p.output),
+            cache_read: charged(p.cache_read),
+            cache_write: charged(p.cache_write),
+            long_context_threshold: p.long_context_threshold,
+            long_input: p.long_input.and_then(charged),
+            long_output: p.long_output.and_then(charged),
+            long_cache_read: p.long_cache_read.and_then(charged),
+            long_cache_write: p.long_cache_write.and_then(charged),
+            per_k_searches: charged(p.per_k_searches),
+            per_audio_minute: charged(p.per_audio_minute),
+            per_m_characters: charged(p.per_m_characters),
+        }
+    }
+}
+
+fn export_model(m: HubModel) -> ExportModel {
+    let text = |field: &str| m.metadata.get(field).and_then(Value::as_str).map(str::to_string);
+    let (display_name, description) = (text("display_name"), text("description"));
+    let mut prices: Vec<ExportPrices> = Vec::new();
+    for p in m.deployments.iter().map(|d| ExportPrices::from(&d.prices)) {
+        if !prices.contains(&p) {
+            prices.push(p);
+        }
+    }
+    let capabilities = m.described.capabilities.iter().flatten().filter(|(_, on)| **on == Some(true)).map(|(c, _)| *c).collect();
+    ExportModel {
+        name: m.name,
+        kind: (m.kind == "router").then_some("router"),
+        mode: m.mode,
+        display_name,
+        vendor: m.vendor,
+        description,
+        target: m.target,
+        routes: m.routes,
+        max_input_tokens: m.described.max_input_tokens,
+        max_output_tokens: m.described.max_output_tokens,
+        retires: m.described.retires,
+        capabilities,
+        tags: m.tags,
+        prices,
+    }
+}
+
+/// Export the model hub
+///
+/// The hub's models as a client needs them, without their deployments: each model's name,
+/// metadata, mode, token limits, capabilities, tags and the prices its deployments charge. Takes
+/// the hub's `key`, `mode`, `vendor`, `capability` and `q` (not `stats`), and is open to the same
+/// callers.
+#[utoipa::path(get, path = "/hub/export", operation_id = "export_model_hub", tag = "Model hub", params(HubQuery),
+    responses(
+        (status = 200, description = "The models.", body = Vec<ExportModel>),
+        (status = 400, description = "No such key, or an unknown mode.", body = crate::error::AdminErrorBody),
+        (status = 403, description = "A key whose scope is the inference API asked for another key.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("virtual_key" = []), ("admin_session" = [])))]
+pub(crate) async fn export(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    own: Option<Extension<OwnKey>>,
+    Query(mut q): Query<HubQuery>,
+) -> R<Json<Vec<ExportModel>>> {
+    q.stats = None;
+    let Json(view) = hub(State(state), Extension(access), own, Query(q)).await?;
+    Ok(Json(view.models.into_iter().map(export_model).collect()))
+}
+
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MetadataInput {
@@ -543,6 +707,62 @@ pub(crate) struct MetadataInput {
 pub(crate) struct MetadataView {
     model: String,
     metadata: Value,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+pub(crate) struct MetadataQuery {
+    /// The public model names, as `claude-opus-5-5,gpt-6-luna`.
+    models: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct MetadataItem {
+    model: String,
+    /// `{}` without any: `display_name`, `vendor` and `description` to start with.
+    metadata: Value,
+    /// Who makes it: the metadata's `vendor`, or without one the vendor its names suggest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    vendor: Option<String>,
+    /// The capabilities all its enabled deployments have, as the hub's `capabilities` with only
+    /// those that hold; absent when none do or nothing is known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false, value_type = Option<BTreeMap<String, bool>>)]
+    capabilities: Option<BTreeMap<&'static str, bool>>,
+}
+
+/// Get model metadata
+///
+/// The metadata of the named models, in the order asked, each with its vendor (saved, or
+/// suggested from its name and its enabled deployments' upstream models) and the capabilities
+/// the hub shows for it.
+#[utoipa::path(get, path = "/model-metadata", operation_id = "get_model_metadata", tag = "Model hub", params(MetadataQuery),
+    responses((status = 200, description = "The models' metadata.", body = Vec<MetadataItem>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(crate) async fn get_metadata(State(state): State<AppState>, Query(q): Query<MetadataQuery>) -> R<Json<Vec<MetadataItem>>> {
+    let mut names: Vec<String> = Vec::new();
+    for n in list(Some(&q.models)) {
+        if !names.iter().any(|x| x == n) {
+            names.push(n.to_string());
+        }
+    }
+    let mut saved = db::model_metadata_of(&state.db, &names).await?;
+    let snap = state.registry.snapshot();
+    Ok(Json(
+        names
+            .into_iter()
+            .map(|model| {
+                let metadata = saved.remove(&model).unwrap_or_else(|| Value::Object(Map::new()));
+                let ds = models::deployments(&snap, None, &model);
+                let vendor = vendor_of(&metadata, &model, ds.iter().map(|d| d.upstream_model.as_str()));
+                let capabilities = models::describe_all(&ds)
+                    .capabilities
+                    .map(|cs| cs.into_iter().filter(|(_, on)| *on == Some(true)).map(|(c, _)| (c, true)).collect::<BTreeMap<_, _>>())
+                    .filter(|cs| !cs.is_empty());
+                MetadataItem { model, metadata, vendor, capabilities }
+            })
+            .collect(),
+    ))
 }
 
 /// The largest metadata accepted, serialized.
@@ -735,5 +955,38 @@ mod tests {
         assert_eq!(suggest_vendor("glm-5.3"), Some("Zhipu AI"));
         assert_eq!(suggest_vendor("cohere-rerank-v3-5"), Some("Cohere"));
         assert_eq!(suggest_vendor("my-model"), None);
+    }
+
+    #[test]
+    fn exported_prices_leave_out_what_is_not_charged() {
+        let rerank = HubPrices {
+            input: 0.0,
+            output: 0.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+            long_context_threshold: None,
+            long_input: None,
+            long_output: None,
+            long_cache_read: None,
+            long_cache_write: None,
+            per_k_searches: 2.0,
+            per_audio_minute: 0.0,
+            per_m_characters: 0.0,
+        };
+        assert_eq!(serde_json::to_value(ExportPrices::from(&rerank)).unwrap(), json!({ "per_k_searches": 2.0 }));
+        let chat = HubPrices {
+            input: 3.0,
+            output: 15.0,
+            cache_read: 0.3,
+            long_context_threshold: Some(200_000),
+            long_input: Some(6.0),
+            long_output: Some(22.5),
+            ..rerank
+        };
+        assert_eq!(
+            serde_json::to_value(ExportPrices::from(&chat)).unwrap(),
+            json!({ "input": 3.0, "output": 15.0, "cache_read": 0.3, "long_context_threshold": 200_000,
+                    "long_input": 6.0, "long_output": 22.5, "per_k_searches": 2.0 })
+        );
     }
 }

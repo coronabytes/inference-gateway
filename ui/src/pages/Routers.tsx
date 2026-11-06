@@ -4,6 +4,7 @@ import { Banner, Button, MenuButton, MultiSelect, Select, TextArea, TextInput, T
 import { Badge, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal, TrashIcon } from "../components/ui";
 import { TagEditor, TagList } from "../components/Tags";
 import { effortOptions, supportedEfforts } from "../efforts";
+import { ModeIcon } from "./ModelHub";
 
 /** Model names of a mode among the deployments. */
 function modelNames(deployments: Deployment[], mode: Deployment["mode"]): string[] {
@@ -45,7 +46,7 @@ export function RouterCard({
       <header className="list-head">
         <div className="list-title">
           <h3 className="mono">
-            {router.model_name} <Badge tone="neutral">router</Badge>
+            {router.model_name} <ModeIcon mode="router" />
             {!router.enabled && (
               <>
                 {" "}

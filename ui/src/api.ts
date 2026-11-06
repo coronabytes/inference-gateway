@@ -455,6 +455,9 @@ export type Hub = Omit<S["HubView"], "models"> & { models: HubModel[] };
 
 export type HubKey = S["HubKey"];
 
+/** `GET /admin/api/hub/export`: the hub's models without their deployments. */
+export type HubExportModel = S["ExportModel"];
+
 export type HubGuardrail = S["HubGuardrail"];
 
 /** What the hub knows of a model or a deployment; null is unknown. */
@@ -471,6 +474,9 @@ export interface ModelMetadata {
 }
 
 export type HubModel = Omit<S["HubModel"], "metadata"> & { metadata: ModelMetadata };
+
+/** `GET /admin/api/model-metadata`: the named models' metadata, each with its vendor. */
+export type MetadataItem = Omit<S["MetadataItem"], "metadata"> & { metadata: ModelMetadata };
 
 /** A model's requests over the last 24 hours. */
 export type HubStats = S["HubStats"];

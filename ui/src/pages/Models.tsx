@@ -7,6 +7,7 @@ import {
   type AutoRouterListItem,
   type Credential,
   type Deployment,
+  type MetadataItem,
   type Mode,
   type ModelAlias,
   type NamedItem,
@@ -25,12 +26,22 @@ import {
   useHashTab,
 } from "../components/controls";
 import { PRICE_FIELDS, deploymentPrices, priceDifferences, type DeploymentPrices } from "../pricing";
-import { Badge, ConfirmDialog, EditIcon, ErrorBanner, IconButton, MenuIcon, TokenPrices, type ConfirmRequest } from "../components/ui";
+import {
+  Badge,
+  ConfirmDialog,
+  CopyButton,
+  EditIcon,
+  ErrorBanner,
+  IconButton,
+  MenuIcon,
+  TokenPrices,
+  type ConfirmRequest,
+} from "../components/ui";
 import { compact, ms } from "../format";
 import { Credentials } from "./Credentials";
 import { DeploymentForm, MODES } from "./DeploymentForm";
 import { Guardrails } from "./Guardrails";
-import { ModeIcon, ModelHub } from "./ModelHub";
+import { CapabilityIcons, capabilitiesOf, displayName, LogoButton, MetadataForm, ModeIcon, ModelHub, type ModelInfo } from "./ModelHub";
 import { PriceCatalog } from "./PriceCatalog";
 import { TagList } from "../components/Tags";
 import { RouterCard, RouterForm } from "./Routers";
@@ -253,6 +264,26 @@ export function Models() {
     for (const d of deps) m.set(d.model_name, [...(m.get(d.model_name) ?? []), d]);
     return [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [deps]);
+
+  // The listed models' metadata, vendors and capabilities, for their headers and the editor their logos open.
+  const [infos, setInfos] = useState<Map<string, ModelInfo & Pick<MetadataItem, "capabilities">>>(new Map());
+  const [describing, setDescribing] = useState<ModelInfo | null>(null);
+  const groupNames = tab === "deployments" ? groups.map(([name]) => name).join(",") : "";
+  const loadInfos = useCallback(async () => {
+    if (!groupNames) return;
+    try {
+      const items = await api<MetadataItem[]>(
+        `/model-metadata?${new URLSearchParams({ models: groupNames }).toString().replace(/%2C/g, ",")}`,
+      );
+      setInfos(new Map(items.map(({ model, ...i }) => [model, { name: model, ...i }])));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [groupNames]);
+
+  useEffect(() => {
+    loadInfos();
+  }, [loadInfos]);
 
   // Tags deployments and routers carry, not those only keys still hold.
   const knownTags = tags.filter((t) => t.deployments + t.routers > 0).map((t) => t.tag);
@@ -549,156 +580,184 @@ export function Models() {
           onToggle={() => setRouterEnabled(r, !r.enabled)}
         />
       ))}
-      {groups.map(([name, list]) => (
-        <section key={name} className="card list-card deployment-group">
-          <header className="list-head">
-            <div className="list-title">
-              <h3>
-                {name} <ModeIcon mode={list[0].mode} />
-              </h3>
-            </div>
-          </header>
-          {/* A deployment per row, on the same grid in every card, so its parts line up across models. */}
-          <ul className="list">
-            {list.map((d) => {
-              const drift = priceCheck?.drift.get(d.id);
-              return (
-                <li key={d.id} className="list-item">
-                  <div
-                    className="dep-upstream"
-                    title={d.base_model ? `${d.upstream_model} (base model ${d.base_model})` : d.upstream_model}
-                  >
-                    <TagList tags={d.tags} projects={projectNames(d.project_ids, projects)} />
-                    <div className="mono clip">{d.upstream_model}</div>
-                    {d.base_model && d.base_model !== d.upstream_model && <div className="muted small clip">{d.base_model}</div>}
+      {groups.map(([name, list]) => {
+        const info = infos.get(name);
+        const title = info ? displayName(info) : name;
+        return (
+          <section key={name} className="card list-card deployment-group">
+            {/* As a hub tile: the vendor's logo (which edits the model), its display name and model name,
+              then its mode and capabilities. */}
+            <header className="list-head">
+              <div className="list-title">
+                {/* An empty square until the vendor is known, so the logo does not shift the name. */}
+                {info ? (
+                  <LogoButton model={info} onEdit={() => setDescribing(info)} />
+                ) : (
+                  <span className="vendor-mark" aria-hidden="true" />
+                )}
+                <div className="hub-tile-title">
+                  <div className="hub-tile-name">
+                    <h3 className="hub-name clip" title={title === name ? name : `${title} (${name})`}>
+                      {title}
+                    </h3>
+                    {title === name && <CopyButton text={name} label={`Copy ${name}`} />}
                   </div>
-                  <div className="stat" title={d.credential_name ?? undefined}>
-                    <span className="clip">{d.credential_name ?? <span className="muted">missing</span>}</span>
-                    <span className="muted small">credential</span>
-                  </div>
-                  <div className="stat optional" title={`Weight spreads traffic; lower priority is tried first.${healthText(d.health)}`}>
-                    <div className="stat-pairs">
-                      <span>{d.weight}</span>
-                      <span className="muted small">weight</span>
-                      <span>{d.priority}</span>
-                      <span className="muted small">priority</span>
-                    </div>
-                    {reduced(d) && <span className="muted small">now ×{d.health!.weight_factor.toFixed(2)}</span>}
-                  </div>
-                  <div className="stat optional">
-                    <div className="stat-pairs">
-                      <span>{d.rpm_limit ? compact(d.rpm_limit) : "–"}</span>
-                      <span className="muted small">rpm</span>
-                      <span>{d.tpm_limit ? compact(d.tpm_limit) : "–"}</span>
-                      <span className="muted small">tpm</span>
-                    </div>
-                  </div>
-                  <div className={`stat${drift ? " price-drift" : ""}`} title={drift ? describeDrift(d, drift) : undefined}>
-                    {d.mode === "rerank" ? (
-                      <>
-                        <span>{d.cost_per_k_searches ?? 0}</span>
-                        <span className="muted small">$ per 1K searches</span>
-                      </>
-                    ) : d.mode === "speech" ? (
-                      <>
-                        <span>{d.cost_per_m_characters ?? 0}</span>
-                        <span className="muted small">$ per 1M characters</span>
-                      </>
-                    ) : d.mode === "transcription" && d.cost_per_audio_minute != null ? (
-                      <>
-                        <span>{d.cost_per_audio_minute}</span>
-                        <span className="muted small">$ per minute</span>
-                      </>
-                    ) : (
-                      <TokenPrices
-                        input={d.input_cost_per_mtok}
-                        output={d.mode !== "embedding" ? d.output_cost_per_mtok : undefined}
-                        long={
-                          d.long_context_threshold != null
-                            ? {
-                                threshold: d.long_context_threshold,
-                                input: d.long_input_cost_per_mtok,
-                                output: d.long_output_cost_per_mtok,
-                              }
-                            : undefined
-                        }
-                      />
-                    )}
-                    {d.mode === "chat" && d.cost_per_k_searches != null && (
-                      <span className="muted small">{d.cost_per_k_searches} per 1K web searches</span>
-                    )}
-                    {drift && (
-                      <div className="price-catalog">
-                        <span>
-                          catalog{" "}
-                          {d.mode === "rerank"
-                            ? `${drift.expected.cost_per_k_searches ?? 0}`
-                            : d.mode === "speech"
-                              ? `${drift.expected.cost_per_m_characters ?? 0} per 1M characters`
-                              : d.mode === "transcription" && drift.expected.cost_per_audio_minute != null
-                                ? `${drift.expected.cost_per_audio_minute} per minute`
-                                : `${drift.expected.input_cost_per_mtok} · ${drift.expected.output_cost_per_mtok}`}
-                          {d.mode === "chat" &&
-                            drift.fields.includes("cost_per_k_searches") &&
-                            `, ${drift.expected.cost_per_k_searches ?? 0} per 1K web searches`}
-                        </span>
-                        <Button
-                          className="accept"
-                          onClick={() => acceptPrice(d, drift)}
-                          aria-label={`Accept catalog prices for ${d.upstream_model}`}
-                        >
-                          Accept
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  <div className="dep-status">
-                    {!d.enabled ? (
-                      <Badge tone="warning">Inactive</Badge>
-                    ) : d.cooldown_secs ? (
-                      <>
-                        <Badge tone="warning">Cooling down {d.cooldown_secs}s</Badge>
-                        <Button
-                          variant="ghost"
-                          className="cell-action"
-                          title="Clear cooldown"
-                          onClick={() => act(() => api(`/deployments/${d.id}/clear-cooldown`, { method: "POST" }))}
-                        >
-                          Clear
-                        </Button>
-                      </>
-                    ) : reduced(d) ? (
-                      <span title={`Adaptive routing sends it less traffic.${healthText(d.health)}`}>
-                        <Badge tone="warning">Degraded</Badge>
-                      </span>
-                    ) : (
-                      <span title={healthText(d.health).trim() || undefined}>
-                        <Badge tone="good">Active</Badge>
+                  {/* Below a display name, the model name clients send, then the mode and capabilities. */}
+                  <div className="hub-tile-icons">
+                    {title !== name && (
+                      <span className="hub-tile-name">
+                        <span className="mono muted small clip">{name}</span>
+                        <CopyButton text={name} label={`Copy ${name}`} />
                       </span>
                     )}
+                    <ModeIcon mode={list[0].mode} />
+                    {info && capabilitiesOf(info).length > 0 && <CapabilityIcons m={info} />}
                   </div>
-                  <div className="actions">
-                    <IconButton label={`Edit ${d.upstream_model}`} title="Edit" onClick={() => setEditing(d)}>
-                      <EditIcon />
-                    </IconButton>
-                    <MenuButton
-                      className="icon-btn"
-                      label={`More actions for ${d.upstream_model}`}
-                      items={[
-                        { label: "Duplicate", onClick: () => (setCopyOf(d), setEditing("new")) },
-                        { label: d.enabled ? "Deactivate" : "Activate", onClick: () => setDeploymentEnabled(d, !d.enabled) },
-                        { label: "Delete", onClick: () => askDelete(d), danger: true },
-                      ]}
+                </div>
+              </div>
+            </header>
+            {/* A deployment per row, on the same grid in every card, so its parts line up across models. */}
+            <ul className="list">
+              {list.map((d) => {
+                const drift = priceCheck?.drift.get(d.id);
+                return (
+                  <li key={d.id} className="list-item">
+                    <div
+                      className="dep-upstream"
+                      title={d.base_model ? `${d.upstream_model} (base model ${d.base_model})` : d.upstream_model}
                     >
-                      <MenuIcon />
-                    </MenuButton>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
+                      <TagList tags={d.tags} projects={projectNames(d.project_ids, projects)} />
+                      <div className="mono clip">{d.upstream_model}</div>
+                      {d.base_model && d.base_model !== d.upstream_model && <div className="muted small clip">{d.base_model}</div>}
+                    </div>
+                    <div className="stat" title={d.credential_name ?? undefined}>
+                      <span className="clip">{d.credential_name ?? <span className="muted">missing</span>}</span>
+                      <span className="muted small">credential</span>
+                    </div>
+                    <div className="stat optional" title={`Weight spreads traffic; lower priority is tried first.${healthText(d.health)}`}>
+                      <div className="stat-pairs">
+                        <span>{d.weight}</span>
+                        <span className="muted small">weight</span>
+                        <span>{d.priority}</span>
+                        <span className="muted small">priority</span>
+                      </div>
+                      {reduced(d) && <span className="muted small">now ×{d.health!.weight_factor.toFixed(2)}</span>}
+                    </div>
+                    <div className="stat optional">
+                      <div className="stat-pairs">
+                        <span>{d.rpm_limit ? compact(d.rpm_limit) : "–"}</span>
+                        <span className="muted small">rpm</span>
+                        <span>{d.tpm_limit ? compact(d.tpm_limit) : "–"}</span>
+                        <span className="muted small">tpm</span>
+                      </div>
+                    </div>
+                    <div className={`stat${drift ? " price-drift" : ""}`} title={drift ? describeDrift(d, drift) : undefined}>
+                      {d.mode === "rerank" ? (
+                        <>
+                          <span>{d.cost_per_k_searches ?? 0}</span>
+                          <span className="muted small">$ per 1K searches</span>
+                        </>
+                      ) : d.mode === "speech" ? (
+                        <>
+                          <span>{d.cost_per_m_characters ?? 0}</span>
+                          <span className="muted small">$ per 1M characters</span>
+                        </>
+                      ) : d.mode === "transcription" && d.cost_per_audio_minute != null ? (
+                        <>
+                          <span>{d.cost_per_audio_minute}</span>
+                          <span className="muted small">$ per minute</span>
+                        </>
+                      ) : (
+                        <TokenPrices
+                          input={d.input_cost_per_mtok}
+                          output={d.mode !== "embedding" ? d.output_cost_per_mtok : undefined}
+                          long={
+                            d.long_context_threshold != null
+                              ? {
+                                  threshold: d.long_context_threshold,
+                                  input: d.long_input_cost_per_mtok,
+                                  output: d.long_output_cost_per_mtok,
+                                }
+                              : undefined
+                          }
+                        />
+                      )}
+                      {d.mode === "chat" && d.cost_per_k_searches != null && (
+                        <span className="muted small">{d.cost_per_k_searches} per 1K web searches</span>
+                      )}
+                      {drift && (
+                        <div className="price-catalog">
+                          <span>
+                            catalog{" "}
+                            {d.mode === "rerank"
+                              ? `${drift.expected.cost_per_k_searches ?? 0}`
+                              : d.mode === "speech"
+                                ? `${drift.expected.cost_per_m_characters ?? 0} per 1M characters`
+                                : d.mode === "transcription" && drift.expected.cost_per_audio_minute != null
+                                  ? `${drift.expected.cost_per_audio_minute} per minute`
+                                  : `${drift.expected.input_cost_per_mtok} · ${drift.expected.output_cost_per_mtok}`}
+                            {d.mode === "chat" &&
+                              drift.fields.includes("cost_per_k_searches") &&
+                              `, ${drift.expected.cost_per_k_searches ?? 0} per 1K web searches`}
+                          </span>
+                          <Button
+                            className="accept"
+                            onClick={() => acceptPrice(d, drift)}
+                            aria-label={`Accept catalog prices for ${d.upstream_model}`}
+                          >
+                            Accept
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="dep-status">
+                      {!d.enabled ? (
+                        <Badge tone="warning">Inactive</Badge>
+                      ) : d.cooldown_secs ? (
+                        <>
+                          <Badge tone="warning">Cooling down {d.cooldown_secs}s</Badge>
+                          <Button
+                            variant="ghost"
+                            className="cell-action"
+                            title="Clear cooldown"
+                            onClick={() => act(() => api(`/deployments/${d.id}/clear-cooldown`, { method: "POST" }))}
+                          >
+                            Clear
+                          </Button>
+                        </>
+                      ) : reduced(d) ? (
+                        <span title={`Adaptive routing sends it less traffic.${healthText(d.health)}`}>
+                          <Badge tone="warning">Degraded</Badge>
+                        </span>
+                      ) : (
+                        <span title={healthText(d.health).trim() || undefined}>
+                          <Badge tone="good">Active</Badge>
+                        </span>
+                      )}
+                    </div>
+                    <div className="actions">
+                      <IconButton label={`Edit ${d.upstream_model}`} title="Edit" onClick={() => setEditing(d)}>
+                        <EditIcon />
+                      </IconButton>
+                      <MenuButton
+                        className="icon-btn"
+                        label={`More actions for ${d.upstream_model}`}
+                        items={[
+                          { label: "Duplicate", onClick: () => (setCopyOf(d), setEditing("new")) },
+                          { label: d.enabled ? "Deactivate" : "Activate", onClick: () => setDeploymentEnabled(d, !d.enabled) },
+                          { label: "Delete", onClick: () => askDelete(d), danger: true },
+                        ]}
+                      >
+                        <MenuIcon />
+                      </MenuButton>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        );
+      })}
 
       {editing && (
         <DeploymentForm
@@ -768,6 +827,17 @@ export function Models() {
             else await api(`/aliases/${editingAlias.id}`, { method: "PUT", json: input });
             setEditingAlias(null);
             await load();
+          }}
+        />
+      )}
+      {describing && (
+        <MetadataForm
+          model={describing}
+          vendors={[...new Set([...infos.values()].flatMap((i) => (i.vendor ? [i.vendor] : [])))]}
+          onClose={() => setDescribing(null)}
+          onSaved={async () => {
+            setDescribing(null);
+            await loadInfos();
           }}
         />
       )}

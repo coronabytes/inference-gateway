@@ -4,6 +4,7 @@ import {
   api,
   type Hub,
   type HubDeployment,
+  type HubExportModel,
   type HubModel,
   type HubPrices,
   type HubStats,
@@ -83,13 +84,11 @@ export function ModeIcon({ mode }: { mode: string }) {
   );
 }
 
-type Capable = { capabilities: Record<string, boolean | null> | null };
-const capabilitiesOf = (m: Capable) => CAPABILITIES.filter((c) => m.capabilities?.[c.path] === true);
-/** For the exports, which list them by name. */
-const capabilityNames = (m: Capable) => capabilitiesOf(m).map((c) => c.label);
+type Capable = { capabilities?: Record<string, boolean | null> | null };
+export const capabilitiesOf = (m: Capable) => CAPABILITIES.filter((c) => m.capabilities?.[c.path] === true);
 
 /** A model's capabilities as icons, each named by its tooltip and for screen readers. */
-function CapabilityIcons({ m, picked, onPick }: { m: Capable; picked?: string[]; onPick?: (path: string) => void }) {
+export function CapabilityIcons({ m, picked, onPick }: { m: Capable; picked?: string[]; onPick?: (path: string) => void }) {
   const caps = capabilitiesOf(m);
   if (!caps.length) return <span className="muted">–</span>;
   // With `onPick`, each icon is a button that adds its capability to the hub's filter, or takes it out.
@@ -218,7 +217,10 @@ function PriceSummary({ model: m }: { model: HubModel }) {
 /** The vendor filter's value for models without one; vendors are trimmed, so never this. */
 const NO_VENDOR = " none";
 
-const displayName = (m: HubModel) => m.metadata.display_name?.trim() || m.name;
+/** What the logo and the editor need of a model: its name, metadata and vendor. */
+export type ModelInfo = Pick<HubModel, "name" | "metadata" | "vendor">;
+
+export const displayName = (m: ModelInfo) => m.metadata.display_name?.trim() || m.name;
 
 /** Vendors offered in the editor; others can be typed. */
 const VENDORS = [
@@ -363,14 +365,26 @@ export function ModelHub() {
 
   const fileName = (ext: string) => `model-hub${hub?.key ? `-${slug(hub.key.name)}` : ""}-${new Date().toISOString().slice(0, 10)}.${ext}`;
 
-  const exportJson = () => {
-    if (!hub) return;
-    const doc = { exported_at: new Date().toISOString(), ...(hub.key && { key: hub.key }), guardrails: hub.guardrails, models: visible };
-    save(new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" }), fileName("json"));
+  /** The models alone, as the API exports them: no deployments, prices on each model. */
+  const exported = () => api<HubExportModel[]>(`/hub/export${query ? `?${query}` : ""}`);
+
+  const exportJson = async () => {
+    try {
+      const models = await exported();
+      save(new Blob([JSON.stringify(models, null, 2)], { type: "application/json" }), fileName("json"));
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
-  const exportXlsx = () => {
-    if (!hub) return;
+  /** The JSON export as two sheets: a row per model, and a row per distinct set of prices a model's deployments charge. */
+  const exportXlsx = async () => {
+    let models: HubExportModel[];
+    try {
+      models = await exported();
+    } catch (e) {
+      return setError((e as Error).message);
+    }
     const modelRows: Cell[][] = [
       [
         "Model",
@@ -381,60 +395,31 @@ export function ModelHub() {
         "Mode",
         "Context (tokens)",
         "Max output (tokens)",
-        "Input min",
-        "Input max",
-        "Output min",
-        "Output max",
-        "Per 1K searches min",
-        "Per 1K searches max",
-        "Price permutations",
-        "Deployments",
         "Capabilities",
         "Tags",
         "Routes to",
+        "Alias of",
         "Retires",
       ],
-      ...visible.map((m) => {
-        const ps = m.deployments.map((d) => d.prices);
-        const lo = (f: (p: HubPrices) => number) => (ps.length ? Math.min(...ps.map(f)) : null);
-        const hi = (f: (p: HubPrices) => number) => (ps.length ? Math.max(...ps.map(f)) : null);
-        return [
-          m.name,
-          m.metadata.display_name,
-          m.metadata.vendor,
-          m.metadata.description,
-          m.kind,
-          m.mode,
-          m.max_input_tokens,
-          m.max_output_tokens,
-          lo((p) => p.input),
-          hi((p) => p.input),
-          lo((p) => p.output),
-          hi((p) => p.output),
-          searches(m) ? lo((p) => p.per_k_searches) : null,
-          searches(m) ? hi((p) => p.per_k_searches) : null,
-          priceOptions(m).length,
-          m.deployments.length,
-          capabilityNames(m).join(", "),
-          m.tags.join(", "),
-          m.routes?.join(", "),
-          m.retires,
-        ];
-      }),
+      ...models.map((m) => [
+        m.name,
+        m.display_name,
+        m.vendor,
+        m.description,
+        m.kind ?? (m.target ? "alias" : "model"),
+        m.mode,
+        m.max_input_tokens,
+        m.max_output_tokens,
+        m.capabilities?.join(", "),
+        m.tags?.join(", "),
+        m.routes?.join(", "),
+        m.target,
+        m.retires,
+      ]),
     ];
     const priceRows: Cell[][] = [
       [
         "Model",
-        "Display name",
-        "Vendor",
-        "Deployed as",
-        "Provider",
-        "Upstream model",
-        "Priority",
-        "Weight",
-        "First choice",
-        "Context (tokens)",
-        "Max output (tokens)",
         "Input",
         "Output",
         "Cache read",
@@ -445,70 +430,40 @@ export function ModelHub() {
         "Long cache read",
         "Long cache write",
         "Per 1K searches",
+        "Per audio minute",
+        "Per 1M characters",
       ],
-      ...visible.flatMap((m) =>
-        m.deployments.map((d): Cell[] => [
+      ...models.flatMap((m) =>
+        m.prices.map((p): Cell[] => [
           m.name,
-          m.metadata.display_name,
-          m.metadata.vendor,
-          d.model,
-          PROVIDER_LABEL[d.provider] ?? d.provider,
-          d.upstream_model,
-          d.priority,
-          d.weight,
-          d.first_choice,
-          d.max_input_tokens,
-          d.max_output_tokens,
-          d.prices.input,
-          d.prices.output,
-          d.prices.cache_read,
-          d.prices.cache_write,
-          d.prices.long_context_threshold,
-          d.prices.long_input,
-          d.prices.long_output,
-          d.prices.long_cache_read,
-          d.prices.long_cache_write,
-          searches(m) ? d.prices.per_k_searches : null,
+          p.input,
+          p.output,
+          p.cache_read,
+          p.cache_write,
+          p.long_context_threshold,
+          p.long_input,
+          p.long_output,
+          p.long_cache_read,
+          p.long_cache_write,
+          p.per_k_searches,
+          p.per_audio_minute,
+          p.per_m_characters,
         ]),
       ),
     ];
-    const guardrailRows: Cell[][] = [
-      ["Guardrail", "Provider", "Applied", "Description"],
-      ...hub.guardrails.map((g) => [
-        g.name,
-        GUARDRAIL_LABEL[g.provider] ?? g.provider,
-        g.applied === "on request" ? "on request (x-gateway-guardrails)" : `every request (${g.applied})`,
-        g.description,
+    save(
+      xlsx([
+        { name: "Models", rows: modelRows, widths: [28, 24, 16, 48, 8, 12, 14, 16, 48, 20, 28, 24, 12] },
+        { name: "Prices", rows: priceRows, widths: [28, 10, 10, 10, 10, 16, 10, 10, 14, 14, 14, 14, 16] },
       ]),
-    ];
-    const sheets = [
-      { name: "Models", rows: modelRows, widths: [28, 24, 16, 48, 8, 10, 14, 16, 10, 10, 10, 10, 12, 12, 10, 12, 36, 20, 28, 12] },
-      { name: "Prices", rows: priceRows, widths: [28, 24, 16, 28, 18, 36, 8, 8, 12, 14, 16, 10, 10, 10, 10, 16, 10, 10, 14, 14, 14] },
-      { name: "Guardrails", rows: guardrailRows, widths: [28, 20, 32, 48] },
-    ];
-    if (hub.key) {
-      const k = hub.key;
-      sheets.push({
-        name: "Key",
-        rows: [
-          ["Field", "Value"],
-          ["Name", k.name],
-          ["Scope", k.scope],
-          ["Project", k.project],
-          ["Status", k.status],
-          ["Allowed models", k.allowed_models.join(", ") || "all"],
-          ["Tags held", k.allowed_tags.join(", ") || "none (no tag restriction)"],
-        ],
-        widths: [18, 60],
-      });
-    }
-    save(xlsx(sheets), fileName("xlsx"));
+      fileName("xlsx"),
+    );
   };
 
-  /** The hub as the admin API serves it, with the key and filters picked here. */
+  /** The JSON export as the admin API serves it, with the key and filters picked here. */
   const hubRequest = (): CurlRequest => {
     const query = hubQuery(q.trim());
-    return { path: `/admin/api/hub${query ? `?${query}` : ""}` };
+    return { path: `/admin/api/hub/export${query ? `?${query}` : ""}` };
   };
 
   const key = hub?.key;
@@ -573,7 +528,7 @@ export function ModelHub() {
               { label: "Excel (.xlsx)", onClick: exportXlsx, disabled: !hub },
               {
                 label: "Show curl",
-                title: "The hub with this key and these filters, as a curl command for the admin API.",
+                title: "The JSON export with this key and these filters, as a curl command for the admin API.",
                 onClick: () => setCurl(hubRequest()),
               },
             ]}
@@ -892,7 +847,7 @@ function ModelStats({ model: m, speedSlot }: { model: HubModel; speedSlot?: bool
 }
 
 /** A model's vendor logo, which opens the editor for its name, vendor and description. */
-function LogoButton({ model: m, onEdit }: { model: HubModel; onEdit: () => void }) {
+export function LogoButton({ model: m, onEdit }: { model: ModelInfo; onEdit: () => void }) {
   const vendor = m.vendor ?? "";
   return (
     <button
@@ -1102,13 +1057,13 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
 }
 
 /** A model's display name, vendor and description. Other metadata fields are kept as they are. */
-function MetadataForm({
+export function MetadataForm({
   model,
   vendors,
   onClose,
   onSaved,
 }: {
-  model: HubModel;
+  model: ModelInfo;
   vendors: string[];
   onClose: () => void;
   onSaved: () => Promise<void>;

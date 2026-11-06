@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { AliasInput, AutoRouter, Deployment, ModelAlias } from "../api";
 import { Banner, Button, MenuButton, Select, TextInput, Toggle } from "../components/controls";
 import type { SelectOption } from "../components/SearchSelect";
-import { Badge, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal } from "../components/ui";
+import { AliasIcon, Badge, EditIcon, ErrorBanner, IconButton, MenuIcon, Modal } from "../components/ui";
 
 /** A model an alias can point to, by name, with the id it is stored as. */
 interface Target {
@@ -45,7 +45,10 @@ export function AliasCard({
       <header className="list-head">
         <div className="list-title">
           <h3 className="mono">
-            {alias.model_name} <Badge tone="neutral">alias</Badge>
+            {alias.model_name}{" "}
+            <span className="cap-icon mode-icon" role="img" aria-label="Alias" title="Alias: another name for a model">
+              <AliasIcon />
+            </span>
             {!alias.enabled && (
               <>
                 {" "}

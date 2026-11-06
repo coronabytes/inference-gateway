@@ -833,6 +833,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/hub/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export the model hub
+         * @description The hub's models as a client needs them, without their deployments: each model's name,
+         *     metadata, mode, token limits, capabilities, tags and the prices its deployments charge. Takes
+         *     the hub's `key`, `mode`, `vendor`, `capability` and `q` (not `stats`), and is open to the same
+         *     callers.
+         */
+        get: operations["export_model_hub"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/keys": {
         parameters: {
             query?: never;
@@ -1319,7 +1342,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get model metadata
+         * @description The metadata of the named models, in the order asked, each with its vendor (saved, or
+         *     suggested from its name and its enabled deployments' upstream models) and the capabilities
+         *     the hub shows for it.
+         */
+        get: operations["get_model_metadata"];
         /**
          * Set model metadata
          * @description Replaces a model's metadata, such as `display_name` and `description`; `{}` removes it.
@@ -3426,6 +3455,66 @@ export interface components {
             projects: string[];
             keys: string[];
         };
+        /** @description A model as the hub exports it: what a client needs to pick and call it, without its deployments. */
+        ExportModel: {
+            /** @description The public model name clients send as `model`. */
+            name: string;
+            /** @description `router` for an auto router; absent for a model or an alias. */
+            kind?: string;
+            mode: components["schemas"]["Mode"];
+            display_name?: string;
+            /** @description Who makes it: saved, or suggested from its names. */
+            vendor?: string;
+            description?: string;
+            /** @description A model alias's target: the model name it serves. */
+            target?: string;
+            /** @description An auto router's models. */
+            routes?: string[];
+            /** Format: int64 */
+            max_input_tokens?: number;
+            /** Format: int64 */
+            max_output_tokens?: number;
+            /** Format: date */
+            retires?: string;
+            /**
+             * @description The capabilities all its deployments have, by path in the hub's `capabilities`, such as
+             *     `image_input` or `thinking.supported`.
+             */
+            capabilities?: string[];
+            tags?: string[];
+            /** @description What its deployments charge, once per distinct set of prices, the lowest priority's first. */
+            prices: components["schemas"]["ExportPrices"][];
+        };
+        /** @description USD per 1M tokens, as `HubPrices`, each only where it is charged: an absent price is not charged. */
+        ExportPrices: {
+            /** Format: double */
+            input?: number;
+            /** Format: double */
+            output?: number;
+            /** Format: double */
+            cache_read?: number;
+            /** Format: double */
+            cache_write?: number;
+            /** Format: int64 */
+            long_context_threshold?: number;
+            /** Format: double */
+            long_input?: number;
+            /** Format: double */
+            long_output?: number;
+            /** Format: double */
+            long_cache_read?: number;
+            /** Format: double */
+            long_cache_write?: number;
+            /**
+             * Format: double
+             * @description Per 1,000 rerank queries or web searches.
+             */
+            per_k_searches?: number;
+            /** Format: double */
+            per_audio_minute?: number;
+            /** Format: double */
+            per_m_characters?: number;
+        };
         /** @description One thing a policy found. */
         Finding: {
             /**
@@ -4261,6 +4350,20 @@ export interface components {
              */
             metadata: {
                 [key: string]: unknown;
+            };
+        };
+        MetadataItem: {
+            model: string;
+            /** @description `{}` without any: `display_name`, `vendor` and `description` to start with. */
+            metadata: unknown;
+            /** @description Who makes it: the metadata's `vendor`, or without one the vendor its names suggest. */
+            vendor?: string;
+            /**
+             * @description The capabilities all its enabled deployments have, as the hub's `capabilities` with only
+             *     those that hold; absent when none do or nothing is known.
+             */
+            capabilities?: {
+                [key: string]: boolean;
             };
         };
         MetadataView: {
@@ -7141,6 +7244,76 @@ export interface operations {
             };
         };
     };
+    export_model_hub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Only the models this virtual key may use, and the guardrails its requests go through.
+                 *     Required for a project's users and keys (a key of their project); a key whose scope is
+                 *     the inference API gets its own, and may leave it out.
+                 */
+                key: string | null;
+                /**
+                 * @description Only models of these modes (`chat`, `embedding`, `decision`, `rerank`, and `router` for the
+                 *     auto routers), as `chat,router`.
+                 */
+                mode: string | null;
+                /**
+                 * @description Only models of these vendors (their `vendor`: saved, or suggested from their names), as
+                 *     `Anthropic,OpenAI`; `-` stands for models without one.
+                 */
+                vendor: string | null;
+                /**
+                 * @description Only models with all of these capabilities, by path in `capabilities`, as
+                 *     `image_input,thinking.supported`.
+                 */
+                capability: string | null;
+                /**
+                 * @description Only models whose name, display name, vendor, description or an upstream model contains
+                 *     this text, ignoring case.
+                 */
+                q: string | null;
+                /**
+                 * @description With `true`, each model's requests over the last 24 hours (`stats`): all of them for an
+                 *     admin, the projects' for a project's users, its own for a key.
+                 */
+                stats: boolean | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The models. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportModel"][];
+                };
+            };
+            /** @description No such key, or an unknown mode. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+            /** @description A key whose scope is the inference API asked for another key. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
     list_keys: {
         parameters: {
             query?: {
@@ -8213,6 +8386,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    get_model_metadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The public model names, as `claude-opus-5-5,gpt-6-luna`. */
+                models: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The models' metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataItem"][];
                 };
             };
         };

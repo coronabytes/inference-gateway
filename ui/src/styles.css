@@ -1477,10 +1477,13 @@ button.cap-icon[aria-pressed="true"]:hover:not(:disabled) {
   color: var(--link);
   border-color: var(--link);
 }
+/* A tag looks the same wherever it sits: not in the mono or bold of a heading around it. */
 .tag {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  font-family: var(--font);
+  font-weight: 400;
   font-size: 12px;
   line-height: 18px;
   padding: 0 7px;
@@ -2504,9 +2507,19 @@ td.num > .stat-pairs {
 .deployment-group {
   --list-columns: minmax(180px, 1.6fr) minmax(110px, 1fr) 100px 100px minmax(140px, 1.2fr) 150px 72px;
 }
+/* Laid out as a hub tile's head: the vendor's logo (which edits the model), the display name, and
+   below it the model name, the mode and the capabilities. */
+.deployment-group .list-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .deployment-group .list-title h3 {
-  font-family: var(--mono);
   font-size: 15px;
+  font-weight: 550;
+}
+.deployment-group .hub-tile-icons .hub-tile-name {
+  margin-right: 4px;
 }
 .dep-upstream .tags {
   margin-bottom: 4px;

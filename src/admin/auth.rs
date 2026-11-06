@@ -378,11 +378,12 @@ const USER_ROUTES: &[(Method, &str)] = &[
     (Method::POST, "/playground/a2a/{agent}"),
     (Method::GET, "/playground/a2a/{agent}/card"),
     (Method::GET, "/hub"),
+    (Method::GET, "/hub/export"),
     (Method::GET, "/efforts"),
 ];
 
 /// What a key whose scope is the inference API only may call: its own model hub (`OwnKey`).
-const KEY_ROUTES: &[(Method, &str)] = &[(Method::GET, "/hub")];
+const KEY_ROUTES: &[(Method, &str)] = &[(Method::GET, "/hub"), (Method::GET, "/hub/export")];
 
 /// The caller is a key whose scope is the inference API only; handlers show it only itself.
 #[derive(Clone, Copy)]
