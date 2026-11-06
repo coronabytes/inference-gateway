@@ -3008,6 +3008,140 @@
         ]
       }
     },
+    "/admin/api/hub/export": {
+      "get": {
+        "tags": [
+          "Model hub"
+        ],
+        "summary": "Export the model hub",
+        "description": "The hub's models as a client needs them, without their deployments: each model's name,\nmetadata, mode, token limits, capabilities, tags and the prices its deployments charge. Takes\nthe hub's `key`, `mode`, `vendor`, `capability` and `q` (not `stats`), and is open to the same\ncallers.",
+        "operationId": "export_model_hub",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Only the models this virtual key may use, and the guardrails its requests go through.\nRequired for a project's users and keys (a key of their project); a key whose scope is\nthe inference API gets its own, and may leave it out.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "path",
+            "description": "Only models of these modes (`chat`, `embedding`, `decision`, `rerank`, and `router` for the\nauto routers), as `chat,router`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "vendor",
+            "in": "path",
+            "description": "Only models of these vendors (their `vendor`: saved, or suggested from their names), as\n`Anthropic,OpenAI`; `-` stands for models without one.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "capability",
+            "in": "path",
+            "description": "Only models with all of these capabilities, by path in `capabilities`, as\n`image_input,thinking.supported`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "path",
+            "description": "Only models whose name, display name, vendor, description or an upstream model contains\nthis text, ignoring case.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "stats",
+            "in": "path",
+            "description": "With `true`, each model's requests over the last 24 hours (`stats`): all of them for an\nadmin, the projects' for a project's users, its own for a key.",
+            "required": true,
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The models.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExportModel"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No such key, or an unknown mode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A key whose scope is the inference API asked for another key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "virtual_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/keys": {
       "get": {
         "tags": [
@@ -5090,6 +5224,51 @@
       }
     },
     "/admin/api/model-metadata": {
+      "get": {
+        "tags": [
+          "Model hub"
+        ],
+        "summary": "Get model metadata",
+        "description": "The metadata of the named models, in the order asked, each with its vendor (saved, or\nsuggested from its name and its enabled deployments' upstream models) and the capabilities\nthe hub shows for it.",
+        "operationId": "get_model_metadata",
+        "parameters": [
+          {
+            "name": "models",
+            "in": "path",
+            "description": "The public model names, as `claude-opus-5-5,gpt-6-luna`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The models' metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MetadataItem"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      },
       "put": {
         "tags": [
           "Model hub"
@@ -11812,6 +11991,139 @@
           }
         }
       },
+      "ExportModel": {
+        "type": "object",
+        "description": "A model as the hub exports it: what a client needs to pick and call it, without its deployments.",
+        "required": [
+          "name",
+          "mode",
+          "prices"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The public model name clients send as `model`."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`router` for an auto router; absent for a model or an alias."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "vendor": {
+            "type": "string",
+            "description": "Who makes it: saved, or suggested from its names."
+          },
+          "description": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "description": "A model alias's target: the model name it serves."
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "An auto router's models."
+          },
+          "max_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "retires": {
+            "type": "string",
+            "format": "date"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The capabilities all its deployments have, by path in the hub's `capabilities`, such as\n`image_input` or `thinking.supported`."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportPrices"
+            },
+            "description": "What its deployments charge, once per distinct set of prices, the lowest priority's first."
+          }
+        }
+      },
+      "ExportPrices": {
+        "type": "object",
+        "description": "USD per 1M tokens, as `HubPrices`, each only where it is charged: an absent price is not charged.",
+        "properties": {
+          "input": {
+            "type": "number",
+            "format": "double"
+          },
+          "output": {
+            "type": "number",
+            "format": "double"
+          },
+          "cache_read": {
+            "type": "number",
+            "format": "double"
+          },
+          "cache_write": {
+            "type": "number",
+            "format": "double"
+          },
+          "long_context_threshold": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "long_input": {
+            "type": "number",
+            "format": "double"
+          },
+          "long_output": {
+            "type": "number",
+            "format": "double"
+          },
+          "long_cache_read": {
+            "type": "number",
+            "format": "double"
+          },
+          "long_cache_write": {
+            "type": "number",
+            "format": "double"
+          },
+          "per_k_searches": {
+            "type": "number",
+            "format": "double",
+            "description": "Per 1,000 rerank queries or web searches."
+          },
+          "per_audio_minute": {
+            "type": "number",
+            "format": "double"
+          },
+          "per_m_characters": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "Finding": {
         "type": "object",
         "description": "One thing a policy found.",
@@ -14023,6 +14335,35 @@
           }
         },
         "additionalProperties": false
+      },
+      "MetadataItem": {
+        "type": "object",
+        "required": [
+          "model",
+          "metadata"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "metadata": {
+            "description": "`{}` without any: `display_name`, `vendor` and `description` to start with."
+          },
+          "vendor": {
+            "type": "string",
+            "description": "Who makes it: the metadata's `vendor`, or without one the vendor its names suggest."
+          },
+          "capabilities": {
+            "type": "object",
+            "description": "The capabilities all its enabled deployments have, as the hub's `capabilities` with only\nthose that hold; absent when none do or nothing is known.",
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
       },
       "MetadataView": {
         "type": "object",

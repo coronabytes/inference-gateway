@@ -517,6 +517,12 @@ pub async fn list_model_metadata(pool: &PgPool) -> sqlx::Result<HashMap<String, 
     Ok(rows.into_iter().map(|r| (r.model_name, r.metadata)).collect())
 }
 
+/// The metadata of those of `models` that have any, by public model name.
+pub async fn model_metadata_of(pool: &PgPool, models: &[String]) -> sqlx::Result<HashMap<String, serde_json::Value>> {
+    let rows = sqlx::query!("SELECT model_name, metadata FROM model_metadata WHERE model_name = ANY($1)", models).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(|r| (r.model_name, r.metadata)).collect())
+}
+
 pub async fn get_model_metadata(pool: &PgPool, model: &str) -> sqlx::Result<Option<serde_json::Value>> {
     sqlx::query_scalar!("SELECT metadata FROM model_metadata WHERE model_name = $1", model).fetch_optional(pool).await
 }
