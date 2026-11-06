@@ -769,7 +769,7 @@ impl Cache {
 mod tests {
     use super::*;
 
-    /// Needs a Valkey: `GATEWAY_TEST_VALKEY_URL=redis://127.0.0.1:6379 cargo test`, plus
+    /// Needs a Valkey: `GATEWAY_TEST_VALKEY_URL=redis://127.0.0.1:16610 cargo test`, plus
     /// `GATEWAY_TEST_VALKEY_CLUSTER=true` when that is a cluster. Skipped otherwise.
     fn test_cache() -> Option<Cache> {
         let url = std::env::var("GATEWAY_TEST_VALKEY_URL").ok()?;

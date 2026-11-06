@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
+import { useSessionState } from "../sessionState";
 import {
   api,
   type Hub,
@@ -288,14 +289,16 @@ function PlayButton({ model, keyId }: { model: string; keyId: string }) {
  */
 export function ModelHub() {
   const [keys, setKeys] = useState<NamedItem[]>([]);
-  const [keyId, setKeyId] = useState("");
+  const [keyId, setKeyId] = useSessionState("hub.key", "");
   const [hub, setHub] = useState<Hub | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [modeFilter, setModeFilter] = useState<string[]>([]);
-  const [q, setQ] = useState("");
-  const [vendorFilter, setVendorFilter] = useState<string[]>([]);
+  const [modeFilter, setModeFilter] = useSessionState<string[]>("hub.modes", []);
+  const [q, setQ] = useSessionState("hub.search", "");
+  const [vendorFilter, setVendorFilter] = useSessionState<string[]>("hub.vendors", []);
   // Capabilities by path; a model must have all of them.
-  const [capFilter, setCapFilter] = useState<string[]>([]);
+  const [capFilter, setCapFilter] = useSessionState<string[]>("hub.capabilities", [], (v) =>
+    (v as unknown[]).every((p) => CAPABILITIES.some((c) => c.path === p)),
+  );
   const toggleCap = (path: string) => setCapFilter((cs) => (cs.includes(path) ? cs.filter((c) => c !== path) : [...cs, path]));
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<HubModel | null>(null);

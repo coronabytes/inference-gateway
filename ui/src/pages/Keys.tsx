@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSessionState } from "../sessionState";
 import { useIsUser } from "../access";
 import {
   api,
@@ -98,7 +99,7 @@ function byName(lists: Project[][]): Project[] {
 
 export function Keys() {
   const [tab, setTab] = useHashTab("access", TABS);
-  const [projectFilter, setProjectFilter] = useState<string[]>([]);
+  const [projectFilter, setProjectFilter] = useSessionState<string[]>("keys.projects", []);
   // Users see their projects' keys only; they do not change the projects themselves.
   if (useIsUser()) {
     return (
@@ -147,9 +148,9 @@ function KeyList({ projectFilter, onProjectFilter }: { projectFilter: string[]; 
   // A key's sign-in to an MCP server or A2A agent comes back here.
   const [signedIn, setSignedIn] = useState(takeSignInResult);
   const [editingProject, setEditingProject] = useState<Project | "new" | null>(null);
-  const [query, setQuery] = useState("");
-  const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const [loggingOnly, setLoggingOnly] = useState(false);
+  const [query, setQuery] = useSessionState("keys.search", "");
+  const [tagFilter, setTagFilter] = useSessionState<string[]>("keys.tags", []);
+  const [loggingOnly, setLoggingOnly] = useSessionState("keys.logging", false);
   // The gateway's prompt logging policy for keys outside projects; users' keys are all in projects.
   const [gatewayLogging, setGatewayLogging] = useState<PromptLogging>("deny");
   const search = useDebounced(query.trim());

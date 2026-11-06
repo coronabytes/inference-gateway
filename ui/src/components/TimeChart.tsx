@@ -177,27 +177,37 @@ export function TimeChart({ kind, title, subtitle, controls, timestamps, stepSec
 
           {kind === "line" &&
             series.map((s) => {
-              let d = "";
-              let pen = false;
-              let last: [number, number] | null = null;
+              // Runs of consecutive values; a bucket without a value (null) breaks the line and its fill.
+              const runs: [number, number][][] = [];
+              let run: [number, number][] | null = null;
               s.values.forEach((v, i) => {
                 if (v == null) {
-                  pen = false;
+                  run = null;
                   return;
                 }
-                const px = xCenter(i);
-                const py = y(v);
-                d += `${pen ? "L" : "M"}${px},${py}`;
-                pen = true;
-                last = [px, py];
+                if (!run) runs.push((run = []));
+                run.push([xCenter(i), y(v)]);
               });
-              const end = last as [number, number] | null;
-              const firstIdx = s.values.findIndex((v) => v != null);
-              const area = series.length === 1 && end && firstIdx >= 0 ? `${d}L${end[0]},${y(0)}L${xCenter(firstIdx)},${y(0)}Z` : null;
+              const line = runs.map((r) => r.map(([px, py], k) => `${k ? "L" : "M"}${px},${py}`).join("")).join("");
+              const area =
+                series.length === 1
+                  ? runs
+                      .filter((r) => r.length > 1)
+                      .map((r) => `M${r[0][0]},${y(0)}${r.map(([px, py]) => `L${px},${py}`).join("")}L${r[r.length - 1][0]},${y(0)}Z`)
+                      .join("")
+                  : "";
+              const lastRun = runs[runs.length - 1];
+              const end = lastRun?.[lastRun.length - 1];
               return (
                 <g key={s.name}>
                   {area && <path d={area} fill={s.color} opacity={0.1} />}
-                  <path d={d} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                  <path d={line} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                  {/* A value with no neighbour draws no line: show it as a dot. */}
+                  {runs
+                    .filter((r) => r.length === 1 && r !== lastRun)
+                    .map(([[px, py]]) => (
+                      <circle key={px} cx={px} cy={py} r={2.5} fill={s.color} />
+                    ))}
                   {end && <circle className="ring" cx={end[0]} cy={end[1]} r={4} fill={s.color} />}
                 </g>
               );

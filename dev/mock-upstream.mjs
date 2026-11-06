@@ -3,7 +3,7 @@
 // embeddings, rerank (Cohere v2, and Bedrock's Rerank API), and audio transcriptions and speech
 // (OpenAI's, and Mistral's when the request has no `response_format` or `voice`). No real model is called.
 //
-//   bun dev/mock-upstream.mjs            # listens on :9999
+//   bun dev/mock-upstream.mjs            # listens on :16604
 //
 // Model names control behaviour: anything containing "fail" returns 503 (to exercise
 // failover/cooldown); requests with tools get a tool call back. A streamed Messages request
@@ -11,7 +11,7 @@
 // pointed at the mock get a guardrail (see `applyGuardrail`).
 import http from "node:http";
 
-const PORT = Number(process.env.PORT ?? 9999);
+const PORT = Number(process.env.PORT ?? 16604);
 
 function sse(res, event, data) {
   if (event) res.write(`event: ${event}\n`);

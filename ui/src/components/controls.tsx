@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { dayLabel, utcDay } from "../format";
+import { oneOf, useSessionState } from "../sessionState";
 import { Floating, useFloating } from "./floating";
 import { Caption, HintBox as WithHint, useHint } from "./hint";
 import { SearchSelect } from "./SearchSelect";
@@ -273,13 +274,15 @@ function lastMonth(): [string, string] {
  * State for a `TimeRange`: spread `props` onto it. `query` is the admin API's `range` (and `from`
  * and `to` for a custom range) as a query string, to start a URLSearchParams with; it is null while
  * the custom days are incomplete or reversed. Last month is sent as a custom range. `ended` is set
- * for a range that ended before today, which no longer changes.
+ * for a range that ended before today, which no longer changes. The choice is kept for the tab
+ * under `store` (see `useSessionState`).
  */
-export function useTimeRange<T extends TimeRangeId>(ranges: readonly T[], initial: T) {
-  const [range, setRange] = useState<T>(initial);
+export function useTimeRange<T extends TimeRangeId>(ranges: readonly T[], initial: T, store: string) {
+  const [range, setRange] = useSessionState<T>(`${store}.range`, initial, oneOf(ranges));
   // Custom range: first and last day, inclusive, in UTC like the gateway's budgets.
-  const [from, setFrom] = useState(() => utcDay(29));
-  const [to, setTo] = useState(() => utcDay());
+  const isDay = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const [from, setFrom] = useSessionState(`${store}.from`, utcDay(29), isDay);
+  const [to, setTo] = useSessionState(`${store}.to`, utcDay(), isDay);
   const [first, last] = range === "last_month" ? lastMonth() : [from, to];
   const days = range === "custom" || range === "last_month";
   // A date field holds years like 0202 while its year is being typed; wait for the whole year.

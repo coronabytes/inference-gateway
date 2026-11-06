@@ -7,32 +7,32 @@ You need Docker, a Rust toolchain (1.99 or newer) and Bun 1.4.4.
 ```bash
 cp .env.example .env            # fill in the secrets as described at the top of the file
 docker compose up -d            # Postgres and Valkey on 127.0.0.1
-cargo run                       # the gateway on http://localhost:8080
-(cd ui && bun install && bun run dev) # the console with hot reload on http://localhost:5173
+cargo run                       # the gateway on http://localhost:16600
+(cd ui && bun install && bun run dev) # the console with hot reload on http://localhost:16601
 ```
 
-Open <http://localhost:5173> and use **Developer** to sign in as an admin, offered by debug builds listening on loopback; **Switch to user** in the user menu signs in as the local development user, who shows under **Access → Users** like anyone else.
+Open <http://localhost:16601> and use **Developer** to sign in as an admin, offered by debug builds listening on loopback; **Switch to user** in the user menu signs in as the local development user, who shows under **Access → Users** like anyone else.
 
 `.env` is read by `docker compose` and by debug builds of the gateway (`cargo run`, IDE debugging). Variables already set in the environment win. Release builds never read it. The full list of variables is in [Configuration](configuration.md).
 
-Debug builds serve no console of their own: the console's dev server (`ui/scripts/dev.ts`) proxies the API to `:8080`, and `/` on the gateway redirects to the API reference. To serve a built console from the gateway, run `bun run build` in `ui/` and set `GATEWAY_UI=true`.
+Debug builds serve no console of their own: the console's dev server (`ui/scripts/dev.ts`) proxies the API to `:16600`, and `/` on the gateway redirects to the API reference. To serve a built console from the gateway, run `bun run build` in `ui/` and set `GATEWAY_UI=true`.
 
 ## Tools
 
 ```bash
-bun dev/mock-upstream.mjs                        # fake OpenAI/Anthropic provider on :9999
-bun dev/mock-mcp.mjs                             # fake MCP server on :9998
-bun dev/mock-a2a.mjs                             # fake A2A agent on :9997
-bun dev/mock-mcp-client.mjs                      # fake MCP client signing in with OAuth, on :9996
-docker compose --profile replicas up -d --build  # two more gateway replicas on :8081 and :8082
+bun dev/mock-upstream.mjs                        # fake OpenAI/Anthropic provider on :16604
+bun dev/mock-mcp.mjs                             # fake MCP server on :16605
+bun dev/mock-a2a.mjs                             # fake A2A agent on :16606
+bun dev/mock-mcp-client.mjs                      # fake MCP client signing in with OAuth, on :16607
+docker compose --profile replicas up -d --build  # two more gateway replicas on :16602 and :16603
 ```
 
-- The **mock provider** runs on loopback, which the gateway refuses unless allowed: `.env.example` already sets `GATEWAY_UPSTREAM_ALLOWED_NETWORKS=127.0.0.0/8,::1`. It is also a Bedrock guardrail: a Bedrock credential with `http://127.0.0.1:9999` as its endpoint (any API key) and a guardrail on it mask e-mail addresses and the name "Ada Lovelace", flag "lottery" and "casino", and block "ignore previous instructions".
-- The **mock MCP server** answers at `http://127.0.0.1:9998/mcp` with the bearer token `mock-mcp-secret`, as JSON, or as server-sent events with `?sse` in the URL. Its tools are `echo`, `add`, `fail` (a tool error), `slow` and `whoami`.
-  - It is also an OAuth authorization server, for trying [upstream sign-ins](upstream-oauth.md). Use `http://localhost:9998/mcp` with **Discover**. Its client for the gateway's own tokens is `gateway-client`, with the secret `gateway-secret`.
+- The **mock provider** runs on loopback, which the gateway refuses unless allowed: `.env.example` already sets `GATEWAY_UPSTREAM_ALLOWED_NETWORKS=127.0.0.0/8,::1`. It is also a Bedrock guardrail: a Bedrock credential with `http://127.0.0.1:16604` as its endpoint (any API key) and a guardrail on it mask e-mail addresses and the name "Ada Lovelace", flag "lottery" and "casino", and block "ignore previous instructions".
+- The **mock MCP server** answers at `http://127.0.0.1:16605/mcp` with the bearer token `mock-mcp-secret`, as JSON, or as server-sent events with `?sse` in the URL. Its tools are `echo`, `add`, `fail` (a tool error), `slow` and `whoami`.
+  - It is also an OAuth authorization server, for trying [upstream sign-ins](upstream-oauth.md). Use `http://localhost:16605/mcp` with **Discover**. Its client for the gateway's own tokens is `gateway-client`, with the secret `gateway-secret`.
   - It approves sign-ins at once, and `whoami` says which token called. `MOCK_MCP_TOKEN_SECONDS` sets how long its tokens last, to watch them refresh.
-- The **mock A2A agent** has its card at `http://127.0.0.1:9997/.well-known/agent-card.json` and wants the bearer token `mock-a2a-secret`. It speaks A2A 1.0 over JSON-RPC and HTTP+JSON and echoes messages; one containing `fail` fails its task, one containing `ask` waits for input.
-- The **mock MCP client** signs in to the gateway's MCP endpoints with OAuth, as Claude or ChatGPT would ([OAuth for MCP clients](mcp.md#sign-in-with-oauth-claude-chatgpt)). It serves its own client ID metadata document at `http://127.0.0.1:9996/client.json`. Open `http://127.0.0.1:9996` and click **Connect**: it finds the gateway's sign-in from the `401` of `/mcp`, sends you to the console to approve it, then lists the tools, refreshes its token and checks that the old tokens no longer work. It goes to the console's address, `http://localhost:5173` (the dev server passes `/.well-known` and `/oauth` on to the gateway); `GATEWAY_URL` and `MCP_PATH` change that.
+- The **mock A2A agent** has its card at `http://127.0.0.1:16606/.well-known/agent-card.json` and wants the bearer token `mock-a2a-secret`. It speaks A2A 1.0 over JSON-RPC and HTTP+JSON and echoes messages; one containing `fail` fails its task, one containing `ask` waits for input.
+- The **mock MCP client** signs in to the gateway's MCP endpoints with OAuth, as Claude or ChatGPT would ([OAuth for MCP clients](mcp.md#sign-in-with-oauth-claude-chatgpt)). It serves its own client ID metadata document at `http://127.0.0.1:16607/client.json`. Open `http://127.0.0.1:16607` and click **Connect**: it finds the gateway's sign-in from the `401` of `/mcp`, sends you to the console to approve it, then lists the tools, refreshes its token and checks that the old tokens no longer work. It goes to the console's address, `http://localhost:16601` (the dev server passes `/.well-known` and `/oauth` on to the gateway); `GATEWAY_URL` and `MCP_PATH` change that.
 - The **replicas** share Postgres and Valkey with the gateway you run locally, so you can watch configuration changes, rate limits and budgets propagate between instances.
 
 ## Tests
@@ -59,7 +59,7 @@ the gateway's own database is left alone. The console is type checked with `bun 
 Tests that need Valkey are skipped unless one is given:
 
 ```bash
-GATEWAY_TEST_VALKEY_URL=redis://127.0.0.1:6379 cargo test
+GATEWAY_TEST_VALKEY_URL=redis://127.0.0.1:16610 cargo test
 GATEWAY_TEST_VALKEY_CLUSTER=true  # in addition, when that Valkey is a cluster
 ```
 
@@ -67,7 +67,7 @@ So are the ClickHouse tests (`src/clickhouse/live_tests.rs`), which each create 
 of their own on the ClickHouse of `docker compose up -d`:
 
 ```bash
-GATEWAY_TEST_CLICKHOUSE_URL=http://127.0.0.1:8123 GATEWAY_TEST_CLICKHOUSE_USER=gateway GATEWAY_TEST_CLICKHOUSE_PASSWORD=<CLICKHOUSE_PASSWORD> cargo test
+GATEWAY_TEST_CLICKHOUSE_URL=http://127.0.0.1:16611 GATEWAY_TEST_CLICKHOUSE_USER=gateway GATEWAY_TEST_CLICKHOUSE_PASSWORD=<CLICKHOUSE_PASSWORD> cargo test
 ```
 
 To run the gateway with its logs in that ClickHouse, set `GATEWAY_CLICKHOUSE_URL`,

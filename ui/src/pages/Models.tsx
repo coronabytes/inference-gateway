@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { oneOf, useSessionState } from "../sessionState";
 import {
   api,
   setListParam,
@@ -128,11 +129,15 @@ export function Models() {
   // The deployment being duplicated while `editing` is "new".
   const [copyOf, setCopyOf] = useState<Deployment | null>(null);
   const [confirming, setConfirming] = useState<ConfirmRequest | null>(null);
-  const [filter, setFilter] = useState("");
-  const [modeFilter, setModeFilter] = useState<Mode | "router" | "alias" | "all">("all");
-  const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const [credFilter, setCredFilter] = useState<string[]>([]);
-  const [projectFilter, setProjectFilter] = useState<string[]>([]);
+  const [filter, setFilter] = useSessionState("models.search", "");
+  const [modeFilter, setModeFilter] = useSessionState<Mode | "router" | "alias" | "all">(
+    "models.mode",
+    "all",
+    oneOf(["all", "router", "alias", ...MODES.map((m) => m.value)]),
+  );
+  const [tagFilter, setTagFilter] = useSessionState<string[]>("models.tags", []);
+  const [credFilter, setCredFilter] = useSessionState<string[]>("models.credentials", []);
+  const [projectFilter, setProjectFilter] = useSessionState<string[]>("models.projects", []);
   const [tab, setTab] = useHashTab("models", TABS);
   const [routers, setRouters] = useState<AutoRouterListItem[]>([]);
   const [editingRouter, setEditingRouter] = useState<AutoRouter | "new" | null>(null);

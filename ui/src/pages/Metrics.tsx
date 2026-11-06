@@ -8,6 +8,7 @@ import { LabelFilter } from "../components/LabelInput";
 import { ErrorBanner, SortHeader, StatTile, type Sort } from "../components/ui";
 import { compact, ms, pct, usd } from "../format";
 import { labelQuery, type Labels } from "../labels";
+import { useSessionState } from "../sessionState";
 import { download, xlsx, type Cell } from "../xlsx";
 
 const RANGES = ["1h", "24h", "7d", "month", "last_month", "custom"] as const;
@@ -84,12 +85,12 @@ function rowName(group: Group, row: MetricsData["rows"][number]): string {
 }
 
 export function Metrics() {
-  const time = useTimeRange(RANGES, "month");
+  const time = useTimeRange(RANGES, "month", "metrics");
   const { range, query: rangeQuery, ended } = time;
-  const [modelFilter, setModelFilter] = useState<string[]>([]);
+  const [modelFilter, setModelFilter] = useSessionState<string[]>("metrics.models", []);
   /** The `KeyFilter`'s choice. */
-  const [keyId, setKeyId] = useState("");
-  const [labels, setLabels] = useState<Labels>({});
+  const [keyId, setKeyId] = useSessionState("metrics.key", "");
+  const [labels, setLabels] = useSessionState<Labels>("metrics.labels", {});
   const labelFilter = labelQuery(labels);
   const models = modelFilter.join(",");
   const [data, setData] = useState<MetricsData | null>(null);

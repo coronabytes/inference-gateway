@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { oneOf, useSessionState } from "../sessionState";
 import { adminFetch, api, GUARDRAILS_HEADER, type Mode, type NamedItem, type PlaygroundOptions, type ReasoningEffort } from "../api";
 import { isSilent, microphoneError, SILENT_RECORDING, speak, transcribe, useLiveTranscription, usePlayer, useRecorder } from "../audio";
 import {
@@ -81,9 +82,6 @@ const SAMPLES: { label: string; prompt: string; webSearch?: boolean; schema?: ob
 
 /** Before an A2A agent's name in the model picker's values; model names never start with a space. */
 const AGENT = " a2a:";
-
-/** sessionStorage: the MCP servers chosen in this tab. */
-const MCP_PICKED = "playground.mcp";
 
 const NO_OPTIONS: PlaygroundOptions = { models: [], guardrails: [], mcp_servers: [], a2a_agents: [] };
 
@@ -300,41 +298,43 @@ export function Playground() {
   const [optionsLoaded, setOptionsLoaded] = useState(0);
   /** The key's sign-ins dialog. */
   const [signingIn, setSigningIn] = useState(false);
+  // The settings and the conversation are kept for the tab (see `useSessionState`), so a reload or a
+  // sign-in that comes back here finds them as they were.
   const [keyId, setKeyId] = useState("");
   const [model, setModel] = useState("");
-  const [apiId, setApiId] = useState<Api>("responses");
+  /** The key and model chosen last, picked again once the keys and the key's models are loaded. */
+  const [savedKey, setSavedKey] = useSessionState("playground.key", "");
+  const [savedModel, setSavedModel] = useSessionState("playground.model", "");
+  useEffect(() => {
+    if (keyId) setSavedKey(keyId);
+  }, [keyId]);
+  useEffect(() => {
+    if (model) setSavedModel(model);
+  }, [model]);
+  const [apiId, setApiId] = useSessionState<Api>("playground.api", "responses", oneOf(APIS.map((a) => a.id)));
   /** Sent with chat requests to a model (not a router); "" leaves it to the model. */
-  const [effort, setEffort] = useState<ReasoningEffort | "">("");
+  const [effort, setEffort] = useSessionState<ReasoningEffort | "">("playground.effort", "");
   /** The efforts each chat model takes (aliases by their target's); routers are not listed. */
   const [modelEfforts, setModelEfforts] = useState<Record<string, ReasoningEffort[]>>({});
-  const [system, setSystem] = useState("");
-  const [webSearch, setWebSearch] = useState(false);
-  /** Gateway MCP servers whose tools the model gets. Kept for the tab, so they are still chosen
-   *  when a sign-in comes back. */
-  const [mcpPicked, setMcpPicked] = useState<string[]>(() => {
-    try {
-      return JSON.parse(sessionStorage.getItem(MCP_PICKED) ?? "[]");
-    } catch {
-      return [];
-    }
-  });
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(MCP_PICKED, JSON.stringify(mcpPicked));
-    } catch {
-      // Without storage, the choice lasts until the page reloads.
-    }
-  }, [mcpPicked]);
+  const [system, setSystem] = useSessionState("playground.system", "");
+  const [webSearch, setWebSearch] = useSessionState("playground.webSearch", false);
+  /** Gateway MCP servers whose tools the model gets. */
+  const [mcpPicked, setMcpPicked] = useSessionState<string[]>("playground.mcp", []);
   /** Structured output: a JSON schema the answer must match, as typed; empty for plain text. */
-  const [schemaText, setSchemaText] = useState("");
+  const [schemaText, setSchemaText] = useSessionState("playground.schema", "");
   const [schemaOpen, setSchemaOpen] = useState(false);
   const [systemOpen, setSystemOpen] = useState(false);
   // Sent with every request as x-gateway-labels, to find them in the request log and metrics.
   // app=playground by default, so playground traffic can be told apart from real clients.
-  const [labels, setLabels] = useState<Labels>({ app: "playground" });
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [previousId, setPreviousId] = useState<string | null>(null);
-  const [input, setInput] = useState("");
+  const [labels, setLabels] = useSessionState<Labels>("playground.labels", { app: "playground" });
+  // The conversation is stored between requests only, not with every streamed word.
+  const [savedChat, setSavedChat] = useSessionState<{ messages: Msg[]; previousId: string | null }>("playground.chat", {
+    messages: [],
+    previousId: null,
+  });
+  const [messages, setMessages] = useState<Msg[]>(savedChat.messages);
+  const [previousId, setPreviousId] = useState<string | null>(savedChat.previousId);
+  const [input, setInput] = useSessionState("playground.input", "");
   const [files, setFiles] = useState<Attachment[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   /** The last request sent, for Show curl while nothing new is typed. */
@@ -344,7 +344,10 @@ export function Playground() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Guardrails to apply on top of those enforced on the key. */
-  const [pickedGuardrails, setPickedGuardrails] = useState<string[]>([]);
+  const [pickedGuardrails, setPickedGuardrails] = useSessionState<string[]>("playground.guardrails", []);
+  useEffect(() => {
+    if (!busy) setSavedChat({ messages: messages.filter((m) => !m.pending), previousId });
+  }, [busy, messages, previousId]);
   const abort = useRef<AbortController | null>(null);
   // Dictation and reading aloud, with the speech to text and text to speech models of the audio settings.
   const [audioSettings, saveAudioSettings] = useAudioSettings();
@@ -366,6 +369,8 @@ export function Playground() {
       wantedModel.current = wanted;
       // Taken: a reload starts as usual.
       window.history.replaceState(null, "", window.location.pathname + window.location.search + window.location.hash.split("?")[0]);
+    } else if (savedModel) {
+      wantedModel.current = savedModel;
     }
     try {
       const [k, d, able] = await Promise.all([
@@ -380,7 +385,9 @@ export function Playground() {
       const pick = able?.find((a) => a.id === askedKey) ?? able?.[0];
       // Without a model, the key asked for, as a sign-in started here comes back with it.
       const asked = !wanted && k.some((x) => x.id === askedKey) ? askedKey : null;
-      setKeyId((cur) => pick?.id || asked || cur || k[0]?.id || "");
+      // Else the key chosen last in this tab, if it still may call models.
+      const saved = k.some((x) => x.id === savedKey) ? savedKey : null;
+      setKeyId((cur) => pick?.id || asked || cur || saved || k[0]?.id || "");
       setError(able && !able.length ? `No active key may call ${wanted}.` : null);
     } catch (e) {
       setError((e as Error).message);
@@ -461,15 +468,24 @@ export function Playground() {
     if (wanted && models.includes(wanted)) {
       wantedModel.current = null;
       setModel(wanted);
-    } else if (!models.includes(model)) {
+      return;
+    }
+    // The key's models are loaded and it may not call the model wanted: not picked later either.
+    if (wanted && options !== NO_OPTIONS) wantedModel.current = null;
+    if (!models.includes(model)) {
       // A chat model first: the others, such as speech models, have panels of their own.
       setModel(options.models.find((m) => m.mode === "chat")?.name ?? models[0] ?? "");
     }
   }, [models, model]);
 
-  // A server-side conversation belongs to one key and API; start fresh when they change.
+  // A server-side conversation belongs to one key and API; start fresh when they change. Not while
+  // a reload picks the key and model of the stored conversation again.
+  const chainedWith = useRef(`${savedKey} ${apiId} ${savedModel}`);
   useEffect(() => {
-    setPreviousId(null);
+    if (!keyId || !model) return;
+    const now = `${keyId} ${apiId} ${model}`;
+    if (now !== chainedWith.current) setPreviousId(null);
+    chainedWith.current = now;
   }, [keyId, apiId, model]);
 
   useEffect(() => {

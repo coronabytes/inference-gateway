@@ -3,8 +3,8 @@
 #   docker compose up -d                              # Postgres, Valkey, ClickHouse for `cargo run` / your debugger
 #   docker compose --profile replicas up -d --build   # plus two gateway replicas (HA demo)
 #
-# Postgres, Valkey and ClickHouse listen on 127.0.0.1 only. The replicas (ports 8081/8082) share them with a
-# locally run gateway (8080); admin changes made on any one are pushed to the others over Valkey.
+# Postgres, Valkey and ClickHouse listen on 127.0.0.1 only. The replicas (ports 16602/16603) share them with a
+# locally run gateway (16600); admin changes made on any one are pushed to the others over Valkey.
 name: inference-gateway
 
 x-gateway: &gateway
@@ -33,14 +33,14 @@ services:
     environment:
       <<: *gateway-env
       GATEWAY_INSTANCE_ID: gateway-a
-    ports: ["127.0.0.1:${GATEWAY_A_PORT:-8081}:8080"]
+    ports: ["127.0.0.1:${GATEWAY_A_PORT:-16602}:8080"]
 
   gateway-b:
     <<: *gateway
     environment:
       <<: *gateway-env
       GATEWAY_INSTANCE_ID: gateway-b
-    ports: ["127.0.0.1:${GATEWAY_B_PORT:-8082}:8080"]
+    ports: ["127.0.0.1:${GATEWAY_B_PORT:-16603}:8080"]
 
   postgres:
     image: postgres:18-alpine
@@ -49,7 +49,7 @@ services:
       POSTGRES_USER: gateway
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: gateway
-    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    ports: ["127.0.0.1:${POSTGRES_PORT:-16609}:5432"]
     volumes: [pgdata:/var/lib/postgresql]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
@@ -60,7 +60,7 @@ services:
     image: valkey/valkey:9-alpine
     restart: unless-stopped
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
-    ports: ["127.0.0.1:${VALKEY_PORT:-6379}:6379"]
+    ports: ["127.0.0.1:${VALKEY_PORT:-16610}:6379"]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 3s
@@ -75,7 +75,7 @@ services:
       CLICKHOUSE_USER: gateway
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-    ports: ["127.0.0.1:${CLICKHOUSE_PORT:-8123}:8123"]
+    ports: ["127.0.0.1:${CLICKHOUSE_PORT:-16611}:8123"]
     volumes: [chdata:/var/lib/clickhouse]
     ulimits:
       nofile: { soft: 262144, hard: 262144 }

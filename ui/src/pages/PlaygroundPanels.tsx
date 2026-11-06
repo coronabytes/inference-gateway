@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { oneOf, useSessionState } from "../sessionState";
 import { adminFetch, type Voice } from "../api";
 import { ANY_VOICE } from "../voices";
 import {
@@ -96,8 +97,11 @@ interface PanelProps {
 }
 
 export function EmbeddingPanel({ keyId, keyName, model, labels }: PanelProps) {
-  const [text, setText] = useState("The export job hangs at 99%.\nExports never finish.\nHow do I change my password?");
-  const [dimensions, setDimensions] = useState("");
+  const [text, setText] = useSessionState(
+    "playground.embeddings.text",
+    "The export job hangs at 99%.\nExports never finish.\nHow do I change my password?",
+  );
+  const [dimensions, setDimensions] = useSessionState("playground.embeddings.dimensions", "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
@@ -241,8 +245,9 @@ export function EmbeddingPanel({ keyId, keyName, model, labels }: PanelProps) {
 // ---------------------------------------------------------------- rerank
 
 export function RerankPanel({ keyId, keyName, model, labels }: PanelProps) {
-  const [query, setQuery] = useState("Why does my export never finish?");
-  const [text, setText] = useState(
+  const [query, setQuery] = useSessionState("playground.rerank.query", "Why does my export never finish?");
+  const [text, setText] = useSessionState(
+    "playground.rerank.documents",
     "Exports of more than 10,000 rows run in the background and are emailed when done.\nHow do I change my password?\nThe export job hangs at 99% when a column contains emoji.\nOur office is closed on public holidays.",
   );
   const [busy, setBusy] = useState(false);
@@ -480,9 +485,12 @@ function showAnswers(apiId: DecisionApi, questions: Q[], data: any): Shown[] {
 }
 
 export function DecisionPanel({ keyId, keyName, model, labels }: PanelProps) {
-  const [apiId, setApiId] = useState<DecisionApi>("decisions");
-  const [input, setInput] = useState("Ticket (billing): The export job hangs at 99% and never finishes.");
-  const [questions, setQuestions] = useState<Q[]>(EXAMPLE);
+  const [apiId, setApiId] = useSessionState<DecisionApi>("playground.decisions.api", "decisions", oneOf(["decisions", "systemone"]));
+  const [input, setInput] = useSessionState(
+    "playground.decisions.input",
+    "Ticket (billing): The export job hangs at 99% and never finishes.",
+  );
+  const [questions, setQuestions] = useSessionState<Q[]>("playground.decisions.questions", EXAMPLE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
@@ -640,8 +648,8 @@ const TRANSCRIPT_FORMATS = [
 export function TranscriptionPanel({ keyId, model, labels }: PanelProps) {
   const recorder = useRecorder();
   const [audio, setAudio] = useState<Blob | null>(null);
-  const [language, setLanguage] = useState("");
-  const [format, setFormat] = useState("json");
+  const [language, setLanguage] = useSessionState("playground.transcription.language", "");
+  const [format, setFormat] = useSessionState("playground.transcription.format", "json");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ transcript: Transcript; meta: Meta } | null>(null);
@@ -748,14 +756,14 @@ const SPEECH_FORMATS = [
 ];
 
 export function SpeechPanel({ keyId, keyName, model, labels, voices }: PanelProps & { voices: Voice[] }) {
-  const [text, setText] = useState("Hello! This is the inference gateway, reading text aloud.");
+  const [text, setText] = useSessionState("playground.speech.text", "Hello! This is the inference gateway, reading text aloud.");
   // The voices the model's deployments list: a choice among them, and any other one where `*` lets it through.
   const listed = voices.filter((v) => v.id !== ANY_VOICE);
   const open = !listed.length || voices.some((v) => v.id === ANY_VOICE);
   const [choice, setChoice] = useState(listed[0]?.id ?? ANY_VOICE);
   const [typed, setTyped] = useState("");
   const voice = choice === ANY_VOICE ? typed : choice;
-  const [format, setFormat] = useState("pcm");
+  const [format, setFormat] = useSessionState("playground.speech.format", "pcm", oneOf(SPEECH_FORMATS.map((f) => f.value)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ audio: Blob; meta: Meta; characters: number; streamed: boolean } | null>(null);
@@ -874,7 +882,7 @@ function useObjectUrl(blob: Blob | null): string | null {
 /** A realtime transcription model: the microphone streams to it, and the words appear as they are said. */
 export function LiveTranscriptionPanel({ keyId, model }: PanelProps) {
   const live = useLiveTranscription();
-  const [language, setLanguage] = useState("");
+  const [language, setLanguage] = useSessionState("playground.live.language", "");
   const [text, setText] = useState("");
   const [final, setFinal] = useState<{ transcript: string; seconds: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
