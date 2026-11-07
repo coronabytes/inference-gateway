@@ -324,7 +324,10 @@ export interface Metrics {
   /** The covered time, end exclusive (ISO timestamps). */
   from: string;
   to: string;
-  /** The model filter's choices, by name: configured models, and removed ones with traffic. */
+  /**
+   * The model filter's choices, by name: configured models (or MCP servers, or A2A agents, by
+   * `calls`), and removed ones with traffic.
+   */
   models: { model: string; active: boolean }[];
   /**
    * The table, by `group`: models with requests in the range and those picked (`id` is the model's

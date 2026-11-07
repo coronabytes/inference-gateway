@@ -29,6 +29,10 @@ pub(crate) struct RangeQuery {
     /// Metrics only: the series and totals of just these models, comma-separated; omitted means
     /// every model except auto routers, whose entries already count their calls.
     models: Option<String>,
+    /// Metrics only: whose calls: `models` (the default), `mcp` (MCP servers' tool calls) or `a2a`
+    /// (A2A agents' messages). With `mcp` or `a2a`, `models` picks servers or agents and the
+    /// `model` group is by server or agent. The billing export counts every call.
+    calls: Option<String>,
     /// Metrics only: what the table's rows total: `model` (the default), `project` or `key`.
     group: Option<String>,
     /// Metrics only: the column the table's rows are sorted by: `name` (the model's, project's or
@@ -101,6 +105,8 @@ struct Filter {
     /// The picked project's traffic, within what the caller may see; None for everything.
     projects: Option<Vec<Uuid>>,
     labels: Option<Value>,
+    /// Just MCP tool calls (`mcp`) or A2A agent messages (`a2a`); None for the model traffic.
+    api: Option<&'static str>,
 }
 
 impl Filter {
@@ -114,6 +120,12 @@ impl Filter {
             None => access.projects().map(<[Uuid]>::to_vec),
         };
         let labels = label_filter(q.labels.as_deref())?;
+        let api = match q.calls.as_deref() {
+            None | Some("models") => None,
+            Some("mcp") => Some("mcp"),
+            Some("a2a") => Some("a2a"),
+            Some(_) => return Err(AdminError::bad_request("calls must be models, mcp or a2a")),
+        };
         let models: Option<Vec<String>> = q
             .models
             .as_deref()
@@ -123,12 +135,13 @@ impl Filter {
         // Router entries are logged under the name requested, so under an alias of a router too.
         let exclude: Vec<String> = match models {
             Some(_) => Vec::new(),
+            None if api.is_some() => Vec::new(),
             None => {
                 let snap = state.registry.snapshot();
                 snap.routers.keys().chain(snap.aliases.keys()).filter(|m| snap.routers.contains_key(snap.resolve(m))).cloned().collect()
             }
         };
-        Ok(Self { window, key_id: q.key_id, deleted_keys: q.deleted_keys.unwrap_or(false), models, exclude, projects, labels })
+        Ok(Self { window, key_id: q.key_id, deleted_keys: q.deleted_keys.unwrap_or(false), models, exclude, projects, labels, api })
     }
 
     fn selection(&self) -> crate::logstore::Selection<'_> {
@@ -141,6 +154,7 @@ impl Filter {
             exclude: &self.exclude,
             projects: self.projects.as_deref(),
             labels: self.labels.as_ref(),
+            api: self.api,
         }
     }
 }
@@ -346,16 +360,25 @@ pub(super) async fn metrics(
     let buckets: HashMap<i64, &db::LogTotals> = series.iter().map(|b| (b.bucket, b)).collect();
     let model_totals: HashMap<&str, &db::LogTotals> = model_totals.iter().map(|t| (t.subject.as_str(), t)).collect();
 
-    // Configured models and routers, plus models that have since been removed but still have traffic.
-    // A user sees only the models that served their projects.
+    // Configured models and routers (or MCP servers, or A2A agents), plus those that have since been
+    // removed but still have traffic. A user sees only those that served their projects.
+    let configured: Vec<&String> = match filter.api {
+        Some("mcp") => snap.mcp_servers.keys().collect(),
+        Some(_) => snap.a2a_agents.keys().collect(),
+        None => snap.deployments.keys().chain(snap.routers.keys()).chain(snap.aliases.keys()).collect(),
+    };
+    let active = |m: &str| match filter.api {
+        Some("mcp") => snap.mcp_servers.contains_key(m),
+        Some(_) => snap.a2a_agents.contains_key(m),
+        None => is_router(m) || snap.deployments.contains_key(snap.resolve(m)),
+    };
     let mut models: BTreeSet<&str> = match projects {
-        None => snap.deployments.keys().chain(snap.routers.keys()).chain(snap.aliases.keys()).map(String::as_str).collect(),
+        None => configured.into_iter().map(String::as_str).collect(),
         Some(_) => BTreeSet::new(),
     };
     models.extend(model_totals.keys().copied());
     // The model filter's choices, by name.
-    let model_out: Vec<Value> =
-        models.iter().map(|m| json!({ "model": m, "active": is_router(m) || snap.deployments.contains_key(snap.resolve(m)) })).collect();
+    let model_out: Vec<Value> = models.iter().map(|m| json!({ "model": m, "active": active(m) })).collect();
     let mut rows: Vec<Row> = match group {
         // The models with requests in the range, and those picked.
         db::Group::Model => {
@@ -787,6 +810,7 @@ mod tests {
             deleted_keys: None,
             labels: None,
             models: None,
+            calls: None,
             group: None,
             sort: None,
             order: None,

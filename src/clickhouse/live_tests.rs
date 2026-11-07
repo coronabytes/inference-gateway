@@ -145,6 +145,7 @@ async fn the_request_log_filters_and_aggregates(pg: PgPool) {
         exclude: &[],
         projects: None,
         labels: None,
+        api: None,
     };
     let totals = ch.selection_totals(&pg, &s).await.unwrap();
     assert_eq!((totals.requests, totals.errors, totals.input_tokens), (3, 1, 30));

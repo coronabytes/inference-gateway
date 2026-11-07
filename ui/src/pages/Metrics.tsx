@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Billing, type Metrics as MetricsData } from "../api";
 import { CurlDialog, type CurlRequest } from "../components/CurlButton";
 import { TimeChart } from "../components/TimeChart";
-import { MenuButton, MultiSelect, Segmented, TimeRange, useTimeRange } from "../components/controls";
+import { MenuButton, MultiSelect, Segmented, Tabs, TimeRange, useHashTab, useTimeRange } from "../components/controls";
 import { KeyFilter, setKeyFilter } from "../components/KeyFilter";
 import { LabelFilter } from "../components/LabelInput";
 import { ErrorBanner, SortHeader, StatTile, type Sort } from "../components/ui";
@@ -18,14 +18,30 @@ const PER: Record<number, string> = { 60: "per minute", 3600: "per hour", 86400:
 /** The table's columns, by the names `/metrics` sorts them by. */
 type Column = "name" | "requests" | "errors" | "input" | "output" | "latency" | "p95" | "ttft" | "cost";
 
-/** What the table's rows total, by `/metrics`'s `group`. */
+/** Whose calls the page shows, by `/metrics`'s `calls`: the tabs. */
+const CALLS = ["models", "mcp", "a2a"] as const;
+type Calls = (typeof CALLS)[number];
+
+const CALL_TABS: { value: Calls; label: string }[] = [
+  { value: "models", label: "Models" },
+  { value: "mcp", label: "MCP" },
+  { value: "a2a", label: "A2A" },
+];
+
+/** What a tab's rows are, ungrouped: the model filter's caption and the first "By" choice. */
+const SUBJECT: Record<Calls, string> = { models: "Model", mcp: "MCP server", a2a: "A2A agent" };
+
+/** What the table's rows total, by `/metrics`'s `group`; `model` is the tab's models, servers or agents. */
 type Group = "model" | "project" | "key";
 
 const GROUPS: { value: Group; label: string }[] = [
   { value: "model", label: "Model" },
-  { value: "project", label: "Project" },
   { value: "key", label: "Key" },
+  { value: "project", label: "Project" },
 ];
+
+/** The columns MCP tool calls and A2A agent messages have no values for. */
+const TOKEN_COLUMNS: Column[] = ["input", "output", "ttft"];
 
 /** The `KeyFilter` value of a project's row (see `setKeyFilter`). */
 const PROJECT = "project:";
@@ -85,9 +101,18 @@ function rowName(group: Group, row: MetricsData["rows"][number]): string {
 }
 
 export function Metrics() {
+  const [calls, setCalls] = useHashTab("metrics", CALLS);
+  /** MCP tool calls and A2A agent messages: no tokens. */
+  const tools = calls !== "models";
   const time = useTimeRange(RANGES, "month", "metrics");
   const { range, query: rangeQuery, ended } = time;
-  const [modelFilter, setModelFilter] = useSessionState<string[]>("metrics.models", []);
+  // Each tab picks its own models, servers or agents.
+  const picks = {
+    models: useSessionState<string[]>("metrics.models", []),
+    mcp: useSessionState<string[]>("metrics.mcp", []),
+    a2a: useSessionState<string[]>("metrics.a2a", []),
+  };
+  const [modelFilter, setModelFilter] = picks[calls];
   /** The `KeyFilter`'s choice. */
   const [keyId, setKeyId] = useSessionState("metrics.key", "");
   const [labels, setLabels] = useSessionState<Labels>("metrics.labels", {});
@@ -120,22 +145,36 @@ export function Metrics() {
     return q;
   }, [rangeQuery, keyId, labelFilter, models]);
 
+  /** The latest load; an earlier one that answers later (another tab's) is dropped. */
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const id = ++latest.current;
     setLoading(true);
     try {
       const q = filterQuery();
       if (q === null) return;
+      if (calls !== "models") q.set("calls", calls);
       q.set("group", group);
       q.set("sort", sort.by);
       q.set("order", sort.desc ? "desc" : "asc");
-      setData(await api<MetricsData>(`/metrics?${q}`));
+      const d = await api<MetricsData>(`/metrics?${q}`);
+      if (id !== latest.current) return;
+      setData(d);
       setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      if (id === latest.current) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (id === latest.current) setLoading(false);
     }
-  }, [filterQuery, group, sort]);
+  }, [filterQuery, calls, group, sort]);
+
+  // Another tab's figures are not shown under this one's columns while it loads.
+  const [loadedCalls, setLoadedCalls] = useState(calls);
+  if (loadedCalls !== calls) {
+    setLoadedCalls(calls);
+    setData(null);
+    if (calls !== "models" && TOKEN_COLUMNS.includes(sort.by)) setSort({ by: "requests", desc: true });
+  }
 
   const [exporting, setExporting] = useState(false);
   const exportBilling = async () => {
@@ -181,6 +220,9 @@ export function Metrics() {
     </SortHeader>
   );
 
+  // The ungrouped rows are the tab's models, MCP servers or A2A agents.
+  const groups = GROUPS.map((g) => (g.value === "model" ? { ...g, label: SUBJECT[calls] } : g));
+
   const step = data?.step_secs ?? 60;
   const perUnit = PER[step] ?? "per bucket";
   const series = data?.series ?? [];
@@ -189,12 +231,13 @@ export function Metrics() {
 
   return (
     <div className={loading && data ? "page refreshing" : "page"}>
+      <Tabs label="Metrics" options={CALL_TABS} value={calls} onChange={setCalls} />
       <div className="page-head">
         <div className="filters">
           <TimeRange {...time.props} />
           <KeyFilter value={keyId} onChange={setKeyId} />
           <MultiSelect
-            caption="Model"
+            caption={SUBJECT[calls]}
             values={modelFilter}
             onChange={setModelFilter}
             options={(data?.models ?? []).map((m) => ({ value: m.model, label: m.model, note: m.active ? undefined : "inactive" }))}
@@ -247,14 +290,20 @@ export function Metrics() {
         <div className="tiles">
           <StatTile label="Requests" value={compact(t.requests)} hint={`${compact(t.errors)} errors`} />
           <StatTile label="Error rate" value={pct(t.requests ? t.errors / t.requests : null)} />
-          <StatTile
-            label="Input tokens"
-            value={compact(t.input_tokens + t.cache_read_tokens + t.cache_write_tokens)}
-            hint={`${compact(t.cache_read_tokens)} cache reads`}
-          />
-          <StatTile label="Output tokens" value={compact(t.output_tokens)} />
+          {!tools && (
+            <StatTile
+              label="Input tokens"
+              value={compact(t.input_tokens + t.cache_read_tokens + t.cache_write_tokens)}
+              hint={`${compact(t.cache_read_tokens)} cache reads`}
+            />
+          )}
+          {!tools && <StatTile label="Output tokens" value={compact(t.output_tokens)} />}
           <StatTile label="Cost" value={usd(t.cost_usd)} />
-          <StatTile label="Latency" value={ms(t.avg_latency_ms)} hint={`p95 ${ms(t.p95_latency_ms)} · TTFT ${ms(t.avg_ttft_ms)}`} />
+          <StatTile
+            label="Latency"
+            value={ms(t.avg_latency_ms)}
+            hint={tools ? `p95 ${ms(t.p95_latency_ms)}` : `p95 ${ms(t.p95_latency_ms)} · TTFT ${ms(t.avg_ttft_ms)}`}
+          />
         </div>
       )}
 
@@ -272,18 +321,20 @@ export function Metrics() {
               { name: "Failed", color: "var(--status-critical)", values: series.map((p) => p.errors) },
             ]}
           />
-          <TimeChart
-            kind="line"
-            title="Tokens"
-            subtitle={perUnit}
-            timestamps={ts}
-            stepSecs={step}
-            format={compact}
-            series={[
-              { name: "Input", color: "var(--series-1)", values: series.map((p) => p.input_tokens) },
-              { name: "Output", color: "var(--series-2)", values: series.map((p) => p.output_tokens) },
-            ]}
-          />
+          {!tools && (
+            <TimeChart
+              kind="line"
+              title="Tokens"
+              subtitle={perUnit}
+              timestamps={ts}
+              stepSecs={step}
+              format={compact}
+              series={[
+                { name: "Input", color: "var(--series-1)", values: series.map((p) => p.input_tokens) },
+                { name: "Output", color: "var(--series-2)", values: series.map((p) => p.output_tokens) },
+              ]}
+            />
+          )}
           <TimeChart
             kind="line"
             title="Average latency"
@@ -308,20 +359,20 @@ export function Metrics() {
       {data && (
         <>
           <div className="filters table-bar">
-            <Segmented caption="By" label="Totals by" options={GROUPS} value={group} onChange={pickGroup} />
+            <Segmented caption="By" label="Totals by" options={groups} value={group} onChange={pickGroup} />
           </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  {head("name", GROUPS.find((g) => g.value === shown)!.label, false)}
+                  {head("name", groups.find((g) => g.value === shown)!.label, false)}
                   {head("requests", "Requests")}
                   {head("errors", "Errors")}
-                  {head("input", "Input")}
-                  {head("output", "Output")}
+                  {!tools && head("input", "Input")}
+                  {!tools && head("output", "Output")}
                   {head("latency", "Avg latency")}
                   {head("p95", "p95")}
-                  {head("ttft", "TTFT")}
+                  {!tools && head("ttft", "TTFT")}
                   {head("cost", "Cost")}
                 </tr>
               </thead>
@@ -341,17 +392,19 @@ export function Metrics() {
                     <td className="num">
                       {m.totals.errors ? `${compact(m.totals.errors)} (${pct(m.totals.errors / m.totals.requests)})` : "0"}
                     </td>
-                    <td className="num">{compact(m.totals.input_tokens + m.totals.cache_read_tokens + m.totals.cache_write_tokens)}</td>
-                    <td className="num">{compact(m.totals.output_tokens)}</td>
+                    {!tools && (
+                      <td className="num">{compact(m.totals.input_tokens + m.totals.cache_read_tokens + m.totals.cache_write_tokens)}</td>
+                    )}
+                    {!tools && <td className="num">{compact(m.totals.output_tokens)}</td>}
                     <td className="num">{ms(m.totals.avg_latency_ms)}</td>
                     <td className="num">{ms(m.totals.p95_latency_ms)}</td>
-                    <td className="num">{ms(m.totals.avg_ttft_ms)}</td>
+                    {!tools && <td className="num">{ms(m.totals.avg_ttft_ms)}</td>}
                     <td className="num">{usd(m.totals.cost_usd)}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="empty">
+                    <td colSpan={tools ? 6 : 9} className="empty">
                       No requests in this time range.
                     </td>
                   </tr>
