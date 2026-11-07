@@ -8295,6 +8295,12 @@ export interface operations {
                  *     every model except auto routers, whose entries already count their calls.
                  */
                 models?: string;
+                /**
+                 * @description Metrics only: whose calls: `models` (the default), `mcp` (MCP servers' tool calls) or `a2a`
+                 *     (A2A agents' messages). With `mcp` or `a2a`, `models` picks servers or agents and the
+                 *     `model` group is by server or agent. The billing export counts every call.
+                 */
+                calls?: string;
                 /** @description Metrics only: what the table's rows total: `model` (the default), `project` or `key`. */
                 group?: string;
                 /**
@@ -8351,6 +8357,12 @@ export interface operations {
                  *     every model except auto routers, whose entries already count their calls.
                  */
                 models?: string;
+                /**
+                 * @description Metrics only: whose calls: `models` (the default), `mcp` (MCP servers' tool calls) or `a2a`
+                 *     (A2A agents' messages). With `mcp` or `a2a`, `models` picks servers or agents and the
+                 *     `model` group is by server or agent. The billing export counts every call.
+                 */
+                calls?: string;
                 /** @description Metrics only: what the table's rows total: `model` (the default), `project` or `key`. */
                 group?: string;
                 /**

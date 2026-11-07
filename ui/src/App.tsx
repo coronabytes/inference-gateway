@@ -3,7 +3,7 @@ import { SessionContext } from "./access";
 import { AuthError, api, setToken, type SessionInfo } from "./api";
 import { Banner } from "./components/controls";
 import { Galaxy } from "./components/Galaxy";
-import { DocsIcon, IconButton, MoonIcon, SunIcon } from "./components/ui";
+import { DocsIcon, GitHubIcon, IconButton, MoonIcon, SunIcon } from "./components/ui";
 import { UserMenu } from "./components/UserMenu";
 import { clearSessionFilters } from "./sessionState";
 import { useTheme } from "./theme";
@@ -213,6 +213,16 @@ export function App() {
               ))}
           </nav>
           <div className="who">
+            <a
+              className="icon-btn"
+              href="https://github.com/coronabytes/inference-gateway"
+              target="_blank"
+              rel="noopener"
+              aria-label="GitHub repository"
+              title="GitHub repository"
+            >
+              <GitHubIcon />
+            </a>
             {session.api_docs && (
               <a className="icon-btn" href="/admin/docs/" target="_blank" rel="noopener" aria-label="API reference" title="API reference">
                 <DocsIcon />

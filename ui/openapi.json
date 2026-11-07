@@ -4996,6 +4996,15 @@
             }
           },
           {
+            "name": "calls",
+            "in": "query",
+            "description": "Metrics only: whose calls: `models` (the default), `mcp` (MCP servers' tool calls) or `a2a`\n(A2A agents' messages). With `mcp` or `a2a`, `models` picks servers or agents and the\n`model` group is by server or agent. The billing export counts every call.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "group",
             "in": "query",
             "description": "Metrics only: what the table's rows total: `model` (the default), `project` or `key`.",
@@ -5136,6 +5145,15 @@
             "name": "models",
             "in": "query",
             "description": "Metrics only: the series and totals of just these models, comma-separated; omitted means\nevery model except auto routers, whose entries already count their calls.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "calls",
+            "in": "query",
+            "description": "Metrics only: whose calls: `models` (the default), `mcp` (MCP servers' tool calls) or `a2a`\n(A2A agents' messages). With `mcp` or `a2a`, `models` picks servers or agents and the\n`model` group is by server or agent. The billing export counts every call.",
             "required": false,
             "schema": {
               "type": "string"

@@ -66,9 +66,12 @@ pub struct Selection<'a> {
     pub exclude: &'a [String],
     pub projects: Option<&'a [Uuid]>,
     pub labels: Option<&'a serde_json::Value>,
+    /// Just the calls of this api (`mcp` or `a2a`); None for the model traffic, without those.
+    pub api: Option<&'a str>,
 }
 
-async fn selection(pg: &PgPool, s: &Selection<'_>, models: bool) -> crate::logstore::Result<Where> {
+/// The selection's filter; with `every_call`, over every api's calls (billing counts them all).
+async fn selection(pg: &PgPool, s: &Selection<'_>, models: bool, every_call: bool) -> crate::logstore::Result<Where> {
     let mut w = Where::new();
     w.range("ts", Some(s.since), Some(s.until));
     if let Some(k) = s.key_id {
@@ -77,6 +80,14 @@ async fn selection(pg: &PgPool, s: &Selection<'_>, models: bool) -> crate::logst
     }
     w.projects("project_id", s.projects);
     w.labels("labels", s.labels);
+    match s.api {
+        _ if every_call => {}
+        Some(api) => {
+            w.and("api = {api:String}");
+            w.with(|p| p.str("api", api));
+        }
+        None => w.and("api NOT IN ('mcp', 'a2a')"),
+    }
     if s.deleted_keys {
         w.deleted_keys("key_id", &super::logs::existing_keys(pg).await?);
     }
@@ -95,7 +106,7 @@ async fn selection(pg: &PgPool, s: &Selection<'_>, models: bool) -> crate::logst
 
 impl ClickHouse {
     pub async fn selection_series(&self, pg: &PgPool, s: &Selection<'_>, step: i64) -> crate::logstore::Result<Vec<LogTotals>> {
-        let w = selection(pg, s, true).await?;
+        let w = selection(pg, s, true, false).await?;
         let sql = format!(
             "SELECT '' AS subject, intDiv(toInt64(toUnixTimestamp(ts)), {{step:Int64}}) * {{step:Int64}} AS bucket, {TOTALS},
                     CAST(NULL, 'Nullable(Int32)') AS p95_latency_ms
@@ -108,7 +119,7 @@ impl ClickHouse {
 
     /// See `db::group_totals`.
     pub async fn group_totals(&self, pg: &PgPool, s: &Selection<'_>, group: Group) -> crate::logstore::Result<Vec<LogTotals>> {
-        let w = selection(pg, s, true).await?;
+        let w = selection(pg, s, true, false).await?;
         let subject = match group {
             Group::Model => "model_name",
             Group::Project => "ifNull(toString(project_id), '')",
@@ -136,7 +147,7 @@ impl ClickHouse {
             cache_write_tokens: i64,
             cost_usd: f64,
         }
-        let w = selection(pg, s, true).await?;
+        let w = selection(pg, s, true, true).await?;
         let sql = format!(
             "SELECT ifNull(toString(project_id), '') AS project_id, ifNull(toString(key_id), '') AS key_id, model_name AS model,
                     count() AS requests, sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
@@ -162,7 +173,7 @@ impl ClickHouse {
     }
 
     pub async fn selection_totals(&self, pg: &PgPool, s: &Selection<'_>) -> crate::logstore::Result<LogTotals> {
-        let w = selection(pg, s, true).await?;
+        let w = selection(pg, s, true, false).await?;
         let sql = format!(
             "SELECT '' AS subject, 0 AS bucket, {TOTALS}, toInt32(quantileExactLow(0.95)(latency_ms)) AS p95_latency_ms
              FROM request_logs WHERE {}",

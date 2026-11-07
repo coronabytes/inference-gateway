@@ -151,7 +151,8 @@ mod tests {
         let totals = |group, models: Option<Vec<String>>| {
             let pool = pool.clone();
             async move {
-                let mut rows = group_totals(&pool, group, since, until, None, false, models.as_deref(), &[], None, None).await.unwrap();
+                let mut rows =
+                    group_totals(&pool, group, since, until, None, false, models.as_deref(), &[], None, None, None).await.unwrap();
                 rows.sort_by(|x, y| x.subject.cmp(&y.subject));
                 rows.into_iter().map(|t| (t.subject, t.requests, t.errors)).collect::<Vec<_>>()
             }

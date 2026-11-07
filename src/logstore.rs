@@ -149,20 +149,40 @@ pub use clickhouse::Selection;
 
 pub async fn selection_series(state: &AppState, s: &Selection<'_>, step: i64) -> Result<Vec<LogTotals>> {
     match &state.logs {
-        LogStore::Postgres => {
-            Ok(db::selection_series(&state.db, s.since, s.until, step, s.key_id, s.deleted_keys, s.models, s.exclude, s.projects, s.labels)
-                .await?)
-        }
+        LogStore::Postgres => Ok(db::selection_series(
+            &state.db,
+            s.since,
+            s.until,
+            step,
+            s.key_id,
+            s.deleted_keys,
+            s.models,
+            s.exclude,
+            s.projects,
+            s.labels,
+            s.api,
+        )
+        .await?),
         LogStore::ClickHouse(ch) => ch.selection_series(&state.db, s, step).await,
     }
 }
 
 pub async fn group_totals(state: &AppState, s: &Selection<'_>, group: db::Group) -> Result<Vec<LogTotals>> {
     match &state.logs {
-        LogStore::Postgres => {
-            Ok(db::group_totals(&state.db, group, s.since, s.until, s.key_id, s.deleted_keys, s.models, s.exclude, s.projects, s.labels)
-                .await?)
-        }
+        LogStore::Postgres => Ok(db::group_totals(
+            &state.db,
+            group,
+            s.since,
+            s.until,
+            s.key_id,
+            s.deleted_keys,
+            s.models,
+            s.exclude,
+            s.projects,
+            s.labels,
+            s.api,
+        )
+        .await?),
         LogStore::ClickHouse(ch) => ch.group_totals(&state.db, s, group).await,
     }
 }
@@ -178,10 +198,19 @@ pub async fn billing_totals(state: &AppState, s: &Selection<'_>) -> Result<Vec<d
 
 pub async fn selection_totals(state: &AppState, s: &Selection<'_>) -> Result<LogTotals> {
     match &state.logs {
-        LogStore::Postgres => {
-            Ok(db::selection_totals(&state.db, s.since, s.until, s.key_id, s.deleted_keys, s.models, s.exclude, s.projects, s.labels)
-                .await?)
-        }
+        LogStore::Postgres => Ok(db::selection_totals(
+            &state.db,
+            s.since,
+            s.until,
+            s.key_id,
+            s.deleted_keys,
+            s.models,
+            s.exclude,
+            s.projects,
+            s.labels,
+            s.api,
+        )
+        .await?),
         LogStore::ClickHouse(ch) => ch.selection_totals(&state.db, s).await,
     }
 }

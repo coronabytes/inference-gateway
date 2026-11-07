@@ -28,7 +28,8 @@ pub struct LogTotals {
 /// Per time bucket of `step` seconds, from `since` up to `until`, over the entries of `models`
 /// (all when `None`) except those of `exclude`, optionally for one key (or with `deleted_keys` the
 /// keys that no longer exist, whose id the log keeps) and for the entries with all of `labels` (a
-/// JSON object), as in every query below.
+/// JSON object), as in every query below. Without `api` over the model traffic, leaving out MCP
+/// tool calls and A2A agent messages; with `api` (`mcp` or `a2a`) over just those calls.
 pub async fn selection_series(
     pool: &PgPool,
     since: DateTime<Utc>,
@@ -40,6 +41,7 @@ pub async fn selection_series(
     exclude: &[String],
     projects: Option<&[Uuid]>,
     labels: Option<&serde_json::Value>,
+    api: Option<&str>,
 ) -> sqlx::Result<Vec<LogTotals>> {
     sqlx::query_as!(
         LogTotals,
@@ -56,6 +58,7 @@ pub async fn selection_series(
              AND ($6::jsonb IS NULL OR labels @> $6)
              AND (NOT $7 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
              AND ($8::text[] IS NULL OR model_name = ANY($8)) AND NOT (model_name = ANY($9))
+             AND (CASE WHEN $10::text IS NULL THEN api NOT IN ('mcp', 'a2a') ELSE api = $10 END)
            GROUP BY 2"#,
         since,
         step as f64,
@@ -66,6 +69,7 @@ pub async fn selection_series(
         deleted_keys,
         models,
         exclude,
+        api,
     )
     .fetch_all(pool)
     .await
@@ -102,6 +106,7 @@ pub async fn group_totals(
     exclude: &[String],
     projects: Option<&[Uuid]>,
     labels: Option<&serde_json::Value>,
+    api: Option<&str>,
 ) -> sqlx::Result<Vec<LogTotals>> {
     sqlx::query_as!(
         LogTotals,
@@ -118,6 +123,7 @@ pub async fn group_totals(
              AND ($5::jsonb IS NULL OR labels @> $5)
              AND (NOT $6 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
              AND ($8::text[] IS NULL OR model_name = ANY($8)) AND NOT (model_name = ANY($9))
+             AND (CASE WHEN $10::text IS NULL THEN api NOT IN ('mcp', 'a2a') ELSE api = $10 END)
            GROUP BY 1"#,
         since,
         key_id,
@@ -128,6 +134,7 @@ pub async fn group_totals(
         group.as_str(),
         models,
         exclude,
+        api,
     )
     .fetch_all(pool)
     .await
@@ -145,6 +152,7 @@ pub async fn selection_totals(
     exclude: &[String],
     projects: Option<&[Uuid]>,
     labels: Option<&serde_json::Value>,
+    api: Option<&str>,
 ) -> sqlx::Result<LogTotals> {
     sqlx::query_as!(
         LogTotals,
@@ -160,7 +168,8 @@ pub async fn selection_totals(
            WHERE ts >= $1 AND ts < $4 AND ($2::uuid IS NULL OR key_id = $2) AND NOT (model_name = ANY($3))
              AND ($5::uuid[] IS NULL OR project_id = ANY($5)) AND ($6::jsonb IS NULL OR labels @> $6)
              AND (NOT $7 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
-             AND ($8::text[] IS NULL OR model_name = ANY($8))"#,
+             AND ($8::text[] IS NULL OR model_name = ANY($8))
+             AND (CASE WHEN $9::text IS NULL THEN api NOT IN ('mcp', 'a2a') ELSE api = $9 END)"#,
         since,
         key_id,
         exclude,
@@ -169,6 +178,7 @@ pub async fn selection_totals(
         labels,
         deleted_keys,
         models,
+        api,
     )
     .fetch_one(pool)
     .await
@@ -188,7 +198,8 @@ pub struct BillingTotals {
     pub cost_usd: f64,
 }
 
-/// Totals per project, key and model, filtered as `selection_series`.
+/// Totals per project, key and model, filtered as `selection_series` but over every call: MCP tool
+/// calls and A2A agent messages are paid for too.
 pub async fn billing_totals(
     pool: &PgPool,
     since: DateTime<Utc>,
