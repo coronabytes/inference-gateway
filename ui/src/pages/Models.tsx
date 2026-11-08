@@ -43,6 +43,7 @@ import { DeploymentForm, MODES } from "./DeploymentForm";
 import { Guardrails } from "./Guardrails";
 import { CapabilityIcons, capabilitiesOf, displayName, LogoButton, MetadataForm, ModeIcon, ModelHub, type ModelInfo } from "./ModelHub";
 import { PriceCatalog } from "./PriceCatalog";
+import { Usage } from "./Usage";
 import { TagList } from "../components/Tags";
 import { RouterCard, RouterForm } from "./Routers";
 import { AliasCard, AliasForm } from "./Aliases";
@@ -128,7 +129,7 @@ interface AllModels {
   aliases: ModelAlias[];
 }
 
-const TABS = ["hub", "deployments", "guardrails", "credentials", "pricing"] as const;
+const TABS = ["hub", "deployments", "guardrails", "credentials", "pricing", "usage"] as const;
 
 export function Models() {
   const [deps, setDeps] = useState<Deployment[]>([]);
@@ -427,6 +428,7 @@ export function Models() {
         { value: "guardrails", label: "Guardrails" },
         { value: "credentials", label: "Credentials" },
         { value: "pricing", label: "Pricing" },
+        { value: "usage", label: "Usage" },
       ]}
       value={tab}
       onChange={setTab}
@@ -438,7 +440,17 @@ export function Models() {
     return (
       <div className="page">
         {tabs}
-        {tab === "hub" ? <ModelHub /> : tab === "pricing" ? <PriceCatalog /> : tab === "credentials" ? <Credentials /> : <Guardrails />}
+        {tab === "hub" ? (
+          <ModelHub />
+        ) : tab === "pricing" ? (
+          <PriceCatalog />
+        ) : tab === "credentials" ? (
+          <Credentials />
+        ) : tab === "usage" ? (
+          <Usage />
+        ) : (
+          <Guardrails />
+        )}
       </div>
     );
   }

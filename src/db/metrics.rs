@@ -236,6 +236,81 @@ pub async fn billing_totals(
     .await
 }
 
+/// Totals per combination of the values of up to three label keys (`v1` to `v3`, None for the
+/// requests without that label), or one combination's per model.
+#[derive(Debug, Default, Clone)]
+pub struct LabelTotals {
+    pub v1: Option<String>,
+    pub v2: Option<String>,
+    pub v3: Option<String>,
+    /// The model, for one combination's totals; empty otherwise.
+    pub model: String,
+    pub requests: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub cost_usd: f64,
+}
+
+/// The values of up to three label keys whose totals `label_totals` gives per model: one per key,
+/// None for the requests without that label.
+pub type LabelGroup<'a> = [Option<&'a str>; 3];
+
+/// Totals per combination of the values of `keys` (up to three), filtered as `billing_totals`
+/// and over every call; with `of`, just that combination's, per model. The `limit` costliest.
+pub async fn label_totals(
+    pool: &PgPool,
+    keys: &[String],
+    of: Option<LabelGroup<'_>>,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    key_id: Option<Uuid>,
+    deleted_keys: bool,
+    models: Option<&[String]>,
+    exclude: &[String],
+    projects: Option<&[Uuid]>,
+    labels: Option<&serde_json::Value>,
+    limit: i64,
+) -> sqlx::Result<Vec<LabelTotals>> {
+    let [o1, o2, o3] = of.unwrap_or_default();
+    sqlx::query_as!(
+        LabelTotals,
+        r#"SELECT labels ->> (($1::text[])[1]) AS v1, labels ->> (($1::text[])[2]) AS v2, labels ->> (($1::text[])[3]) AS v3,
+                  CASE WHEN $2 THEN model_name ELSE '' END AS "model!", count(*) AS "requests!",
+                  sum(input_tokens)::bigint AS "input_tokens!", sum(output_tokens)::bigint AS "output_tokens!",
+                  sum(cache_read_tokens)::bigint AS "cache_read_tokens!", sum(cache_write_tokens)::bigint AS "cache_write_tokens!",
+                  sum(cost_usd) AS "cost_usd!"
+           FROM request_logs
+           WHERE ts >= $3 AND ts < $4 AND ($5::uuid IS NULL OR key_id = $5) AND ($6::uuid[] IS NULL OR project_id = ANY($6))
+             AND ($7::jsonb IS NULL OR labels @> $7)
+             AND (NOT $8 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))
+             AND ($9::text[] IS NULL OR model_name = ANY($9)) AND NOT (model_name = ANY($10))
+             AND (NOT $2 OR (labels ->> (($1::text[])[1]) IS NOT DISTINCT FROM $11::text
+                             AND labels ->> (($1::text[])[2]) IS NOT DISTINCT FROM $12::text
+                             AND labels ->> (($1::text[])[3]) IS NOT DISTINCT FROM $13::text))
+           GROUP BY 1, 2, 3, 4
+           ORDER BY 10 DESC, 5 DESC
+           LIMIT $14"#,
+        keys,
+        of.is_some(),
+        since,
+        until,
+        key_id,
+        projects,
+        labels,
+        deleted_keys,
+        models,
+        exclude,
+        o1,
+        o2,
+        o3,
+        limit,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// One model's requests in one hour, for the model hub's status bar.
 #[derive(Debug)]
 pub struct ModelHour {

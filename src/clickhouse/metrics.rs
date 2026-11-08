@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::{ClickHouse, Params, logs::Where};
-use crate::db::{BillingTotals, Group, KeyMinute, KeyUsageRow, LogTotals, ModelHour, ModelSpeed};
+use crate::db::{BillingTotals, Group, KeyMinute, KeyUsageRow, LabelGroup, LabelTotals, LogTotals, ModelHour, ModelSpeed};
 
 /// The aggregates of `LogTotals`, after its subject and bucket.
 const TOTALS: &str = "count() AS requests, countIf(status_code >= 400) AS errors,
@@ -161,6 +161,66 @@ impl ClickHouse {
             .map(|r| BillingTotals {
                 project_id: Uuid::parse_str(&r.project_id).ok(),
                 key_id: Uuid::parse_str(&r.key_id).ok(),
+                model: r.model,
+                requests: r.requests,
+                input_tokens: r.input_tokens,
+                output_tokens: r.output_tokens,
+                cache_read_tokens: r.cache_read_tokens,
+                cache_write_tokens: r.cache_write_tokens,
+                cost_usd: r.cost_usd,
+            })
+            .collect())
+    }
+
+    /// See `db::label_totals`. A missing label reads as an empty string from the map; no label
+    /// has an empty value, so that is its absence.
+    pub async fn label_totals(
+        &self,
+        pg: &PgPool,
+        s: &Selection<'_>,
+        keys: &[String],
+        of: Option<LabelGroup<'_>>,
+        limit: i64,
+    ) -> crate::logstore::Result<Vec<LabelTotals>> {
+        #[derive(Deserialize)]
+        struct Row {
+            v1: String,
+            v2: String,
+            v3: String,
+            model: String,
+            requests: i64,
+            input_tokens: i64,
+            output_tokens: i64,
+            cache_read_tokens: i64,
+            cache_write_tokens: i64,
+            cost_usd: f64,
+        }
+        let mut w = selection(pg, s, true, true).await?;
+        let key = |i: usize| keys.get(i).map_or("", String::as_str);
+        w.with(|p| p.str("lk1", key(0)).str("lk2", key(1)).str("lk3", key(2)));
+        if let Some(of) = of {
+            for (i, v) in of.iter().enumerate() {
+                let n = w.name();
+                w.and(format!("labels[{{lk{}:String}}] = {{{n}:String}}", i + 1));
+                w.with(|p| p.str(&n, v.unwrap_or_default()));
+            }
+        }
+        let sql = format!(
+            "SELECT labels[{{lk1:String}}] AS v1, labels[{{lk2:String}}] AS v2, labels[{{lk3:String}}] AS v3,
+                    {} AS model, count() AS requests, sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens,
+                    sum(cache_read_tokens) AS cache_read_tokens, sum(cache_write_tokens) AS cache_write_tokens, sum(cost_usd) AS cost_usd
+             FROM request_logs WHERE {} GROUP BY v1, v2, v3, model ORDER BY cost_usd DESC, requests DESC LIMIT {{limit:UInt32}}",
+            if of.is_some() { "model_name" } else { "''" },
+            w.sql()
+        );
+        let rows: Vec<Row> = self.rows(&sql, w.into_params().num("limit", limit.max(0))).await?;
+        let value = |v: String| (!v.is_empty()).then_some(v);
+        Ok(rows
+            .into_iter()
+            .map(|r| LabelTotals {
+                v1: value(r.v1),
+                v2: value(r.v2),
+                v3: value(r.v3),
                 model: r.model,
                 requests: r.requests,
                 input_tokens: r.input_tokens,

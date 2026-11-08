@@ -1,0 +1,99 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT labels ->> (($1::text[])[1]) AS v1, labels ->> (($1::text[])[2]) AS v2, labels ->> (($1::text[])[3]) AS v3,\n                  CASE WHEN $2 THEN model_name ELSE '' END AS \"model!\", count(*) AS \"requests!\",\n                  sum(input_tokens)::bigint AS \"input_tokens!\", sum(output_tokens)::bigint AS \"output_tokens!\",\n                  sum(cache_read_tokens)::bigint AS \"cache_read_tokens!\", sum(cache_write_tokens)::bigint AS \"cache_write_tokens!\",\n                  sum(cost_usd) AS \"cost_usd!\"\n           FROM request_logs\n           WHERE ts >= $3 AND ts < $4 AND ($5::uuid IS NULL OR key_id = $5) AND ($6::uuid[] IS NULL OR project_id = ANY($6))\n             AND ($7::jsonb IS NULL OR labels @> $7)\n             AND (NOT $8 OR (key_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM virtual_keys k WHERE k.id = request_logs.key_id)))\n             AND ($9::text[] IS NULL OR model_name = ANY($9)) AND NOT (model_name = ANY($10))\n             AND (NOT $2 OR (labels ->> (($1::text[])[1]) IS NOT DISTINCT FROM $11::text\n                             AND labels ->> (($1::text[])[2]) IS NOT DISTINCT FROM $12::text\n                             AND labels ->> (($1::text[])[3]) IS NOT DISTINCT FROM $13::text))\n           GROUP BY 1, 2, 3, 4\n           ORDER BY 10 DESC, 5 DESC\n           LIMIT $14",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "v1",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "v2",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "v3",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "model!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "requests!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "input_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "output_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "cache_read_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "cache_write_tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "cost_usd!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz",
+        "Uuid",
+        "UuidArray",
+        "Jsonb",
+        "Bool",
+        "TextArray",
+        "TextArray",
+        "Text",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "9a156905a92d56883a770ac499f16e067cfe716bcc7cc72cd16a94b40007d47c"
+}

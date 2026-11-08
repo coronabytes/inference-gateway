@@ -8,7 +8,7 @@ import { KeyValueInput } from "./controls";
  * are read again when the field is used after a while (`refresh`), so new labels show up.
  * Empty until read, or when they cannot be.
  */
-function useLabelSuggestions(): [LabelKey[], () => void] {
+export function useLabelSuggestions(): [LabelKey[], () => void] {
   const [keys, setKeys] = useState<LabelKey[]>([]);
   const read = useRef(0);
   const refresh = useCallback(() => {

@@ -318,6 +318,10 @@ export interface Point {
 /** Token usage and cost per project, key and model, with the Metrics page's filters. */
 export type Billing = S["Billing"];
 
+/** Token usage and cost per label value (`/metrics/labels`), or one label value's per model. */
+export type LabelUsage = S["LabelUsage"];
+export type LabelUsageRow = S["LabelUsageRow"];
+
 export interface Metrics {
   range: string;
   step_secs: number;

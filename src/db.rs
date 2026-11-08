@@ -168,6 +168,58 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn label_totals_by_label_values_and_one_combination_per_model(pool: PgPool) {
+        let key = Uuid::now_v7();
+        for (labels, model, cost) in [
+            (Some(r#"{"tenant": "acme", "env": "prod"}"#), "m", 1.0),
+            (Some(r#"{"tenant": "acme", "env": "prod"}"#), "n", 2.0),
+            (Some(r#"{"tenant": "acme"}"#), "m", 4.0),
+            (Some(r#"{"env": "prod"}"#), "m", 8.0),
+            (None, "m", 16.0),
+        ] {
+            let (id, _) = entry(&pool, key, Duration::minutes(1), 200, cost, None).await;
+            sqlx::query("UPDATE request_logs SET labels = $1::jsonb, model_name = $2 WHERE id = $3")
+                .bind(labels)
+                .bind(model)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let (since, until) = (Utc::now() - Duration::hours(1), Utc::now() + Duration::minutes(1));
+        let keys = ["tenant".to_string(), "env".to_string()];
+        let totals = |of: Option<LabelGroup<'static>>, limit| {
+            let (pool, keys) = (pool.clone(), keys.clone());
+            async move {
+                label_totals(&pool, &keys, of, since, until, None, false, None, &[], None, None, limit)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|t| (t.v1, t.v2, t.v3, t.model, t.requests, t.cost_usd))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let s = |v: &str| Some(v.to_string());
+        // Costliest first; a missing label is None, and the unused third key too.
+        assert_eq!(
+            totals(None, 10).await,
+            [
+                (None, None, None, String::new(), 1, 16.0),
+                (None, s("prod"), None, String::new(), 1, 8.0),
+                (s("acme"), None, None, String::new(), 1, 4.0),
+                (s("acme"), s("prod"), None, String::new(), 2, 3.0),
+            ]
+        );
+        assert_eq!(totals(None, 1).await.len(), 1);
+        assert_eq!(
+            totals(Some([Some("acme"), Some("prod"), None]), 10).await,
+            [(s("acme"), s("prod"), None, "n".into(), 1, 2.0), (s("acme"), s("prod"), None, "m".into(), 1, 1.0)]
+        );
+        // Without the env label: not the entries that have it.
+        assert_eq!(totals(Some([Some("acme"), None, None]), 10).await, [(s("acme"), None, None, "m".into(), 1, 4.0)]);
+    }
+
+    #[sqlx::test]
     async fn retention_removes_old_entries_with_their_bodies(pool: PgPool) {
         let key = Uuid::now_v7();
         let (old, old_ts) = entry(&pool, key, Duration::days(40), 200, 0.0, None).await;
