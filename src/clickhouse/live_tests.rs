@@ -166,6 +166,12 @@ async fn the_request_log_filters_and_aggregates(pg: PgPool) {
     let theirs = billing.iter().find(|t| t.key_id == other.key_id).unwrap();
     assert_eq!(theirs.project_id, None);
     assert!((theirs.cost_usd - 7.0).abs() < 1e-9);
+    let tenants = ch.label_totals(&pg, &super::Selection { key_id: None, ..s }, &["tenant".into()], None, 10).await.unwrap();
+    let tenants: Vec<_> = tenants.iter().map(|t| (t.v1.as_deref(), t.v2.as_deref(), t.model.as_str(), t.requests)).collect();
+    // Costliest first: the entries without labels here (the call, the failure and 7.0), then the router entry.
+    assert_eq!(tenants, [(None, None, "", 3), (Some("acme"), None, "", 1)]);
+    let acme = ch.label_totals(&pg, &s, &["tenant".into()], Some([Some("acme"), None, None]), 10).await.unwrap();
+    assert_eq!(acme.iter().map(|t| (t.model.as_str(), t.requests)).collect::<Vec<_>>(), [("gpt-test", 1)]);
     let empty = ch.selection_totals(&pg, &super::Selection { key_id: Some(Uuid::now_v7()), ..s }).await.unwrap();
     assert_eq!((empty.requests, empty.p95_latency_ms), (0, None));
 

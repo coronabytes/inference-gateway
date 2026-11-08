@@ -196,6 +196,33 @@ pub async fn billing_totals(state: &AppState, s: &Selection<'_>) -> Result<Vec<d
     }
 }
 
+pub async fn label_totals(
+    state: &AppState,
+    s: &Selection<'_>,
+    keys: &[String],
+    of: Option<db::LabelGroup<'_>>,
+    limit: i64,
+) -> Result<Vec<db::LabelTotals>> {
+    match &state.logs {
+        LogStore::Postgres => Ok(db::label_totals(
+            &state.db,
+            keys,
+            of,
+            s.since,
+            s.until,
+            s.key_id,
+            s.deleted_keys,
+            s.models,
+            s.exclude,
+            s.projects,
+            s.labels,
+            limit,
+        )
+        .await?),
+        LogStore::ClickHouse(ch) => ch.label_totals(&state.db, s, keys, of, limit).await,
+    }
+}
+
 pub async fn selection_totals(state: &AppState, s: &Selection<'_>) -> Result<LogTotals> {
     match &state.logs {
         LogStore::Postgres => Ok(db::selection_totals(

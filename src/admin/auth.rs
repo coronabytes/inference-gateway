@@ -361,6 +361,7 @@ const USER_ROUTES: &[(Method, &str)] = &[
     (Method::GET, "/tags"),
     (Method::GET, "/metrics"),
     (Method::GET, "/metrics/billing"),
+    (Method::GET, "/metrics/labels"),
     (Method::GET, "/logs"),
     (Method::GET, "/logs/labels"),
     (Method::GET, "/logs/tools"),

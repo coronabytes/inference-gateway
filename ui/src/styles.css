@@ -324,13 +324,13 @@ main {
 /* Room between the header and the content (--bar-gap). The band ends 8px below the filters, so at
    rest a strip of page shows between it and the content, and content passing under it disappears
    just below the filters. */
-.page > :is(.page-head, .filters) {
+.page > :is(.page-head, .filters:not(.table-bar)) {
   position: sticky;
   top: var(--sticky-top);
   z-index: 4;
   margin-bottom: calc(var(--bar-gap) - 12px);
 }
-.page > :is(.tabs, .page-head, .filters)::before {
+.page > :is(.tabs, .page-head, .filters:not(.table-bar))::before {
   content: "";
   position: absolute;
   z-index: -1;
@@ -346,7 +346,7 @@ main {
   top: calc(-1 * var(--gutter));
   bottom: calc(12px - var(--tabs-gap));
 }
-.page:has(> .tabs):has(> :is(.page-head, .filters), .page > :is(.page-head, .filters)) > .tabs::before {
+.page:has(> .tabs):has(> :is(.page-head, .filters:not(.table-bar)), .page > :is(.page-head, .filters:not(.table-bar))) > .tabs::before {
   content: none;
 }
 
@@ -976,6 +976,12 @@ th {
   white-space: nowrap;
 }
 tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* A table's totals, under its rows. */
+tfoot td {
+  font-weight: 600;
+  border-top: 1px solid var(--grid);
   border-bottom: 0;
 }
 tbody tr:hover td {

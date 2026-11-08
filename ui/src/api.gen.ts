@@ -1335,6 +1335,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/metrics/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage by label
+         * @description Token usage and cost per value of up to three label keys (per combination of their values),
+         *     with the Metrics page's time range, key and label filters, over every call; with `values`, one
+         *     combination's per model.
+         */
+        get: operations["label_usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/model-metadata": {
         parameters: {
             query?: never;
@@ -4100,6 +4122,38 @@ export interface components {
             key: string;
             /** @description Most used first. */
             values: components["schemas"]["LabelValue"][];
+        };
+        /** @description Usage per label value, or one label value's per model. */
+        LabelUsage: {
+            /**
+             * Format: date-time
+             * @description The covered time, end exclusive.
+             */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            /** @description Costliest first. */
+            rows: components["schemas"]["LabelUsageRow"][];
+            /** @description There were more rows than these, the costliest `LABEL_ROWS`. */
+            truncated: boolean;
+        };
+        LabelUsageRow: {
+            /** @description The values of `by`'s keys, null for the requests without that label; left out per model. */
+            values?: (string | null)[];
+            /** @description Per model only. */
+            model?: string | null;
+            /** Format: int64 */
+            requests: number;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: double */
+            cost_usd: number;
         };
         LabelValue: {
             value: string;
@@ -8392,6 +8446,75 @@ export interface operations {
                 };
             };
             /** @description Invalid range or filter. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    label_usage: {
+        parameters: {
+            query: {
+                range?: string;
+                /** @description Metrics only: just this virtual key's traffic. */
+                key_id?: string;
+                /** @description Metrics only: just the traffic of this project's keys. */
+                project_id?: string;
+                /** @description Metrics only: just the traffic of keys that were deleted since. */
+                deleted_keys?: boolean;
+                /** @description Metrics only: just the requests with all of these labels, as `tenant=…,feature=core`. */
+                labels?: string;
+                /**
+                 * @description Metrics only: the series and totals of just these models, comma-separated; omitted means
+                 *     every model except auto routers, whose entries already count their calls.
+                 */
+                models?: string;
+                /**
+                 * @description Metrics only: whose calls: `models` (the default), `mcp` (MCP servers' tool calls) or `a2a`
+                 *     (A2A agents' messages). With `mcp` or `a2a`, `models` picks servers or agents and the
+                 *     `model` group is by server or agent. The billing export counts every call.
+                 */
+                calls?: string;
+                /** @description Metrics only: what the table's rows total: `model` (the default), `project` or `key`. */
+                group?: string;
+                /**
+                 * @description Metrics only: the column the table's rows are sorted by: `name` (the model's, project's or
+                 *     key's), `requests` (the default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.
+                 */
+                sort?: string;
+                /** @description Metrics only: `asc` or `desc`; the default is ascending for `name`, descending otherwise. */
+                order?: string;
+                /** @description Metrics with `range=custom`: first and last day, inclusive (UTC). */
+                from?: string;
+                to?: string;
+                /** @description The label keys whose values the rows total, comma-separated: one to three. */
+                by: string;
+                /**
+                 * @description One row's totals per model instead: a JSON array with a value for each key of `by`, or
+                 *     null for the requests without that label, as in `["acme", null]`.
+                 */
+                values?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Totals per label value, or per model. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelUsage"];
+                };
+            };
+            /** @description Invalid range, filter or grouping. */
             400: {
                 headers: {
                     [name: string]: unknown;

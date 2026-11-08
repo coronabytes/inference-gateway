@@ -5241,6 +5241,179 @@
         ]
       }
     },
+    "/admin/api/metrics/labels": {
+      "get": {
+        "tags": [
+          "Usage"
+        ],
+        "summary": "Usage by label",
+        "description": "Token usage and cost per value of up to three label keys (per combination of their values),\nwith the Metrics page's time range, key and label filters, over every call; with `values`, one\ncombination's per model.",
+        "operationId": "label_usage",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "description": "Metrics only: just this virtual key's traffic.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Metrics only: just the traffic of this project's keys.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "deleted_keys",
+            "in": "query",
+            "description": "Metrics only: just the traffic of keys that were deleted since.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "labels",
+            "in": "query",
+            "description": "Metrics only: just the requests with all of these labels, as `tenant=…,feature=core`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "models",
+            "in": "query",
+            "description": "Metrics only: the series and totals of just these models, comma-separated; omitted means\nevery model except auto routers, whose entries already count their calls.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "calls",
+            "in": "query",
+            "description": "Metrics only: whose calls: `models` (the default), `mcp` (MCP servers' tool calls) or `a2a`\n(A2A agents' messages). With `mcp` or `a2a`, `models` picks servers or agents and the\n`model` group is by server or agent. The billing export counts every call.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "description": "Metrics only: what the table's rows total: `model` (the default), `project` or `key`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Metrics only: the column the table's rows are sorted by: `name` (the model's, project's or\nkey's), `requests` (the default), `errors`, `input`, `output`, `latency`, `p95`, `ttft` or `cost`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Metrics only: `asc` or `desc`; the default is ascending for `name`, descending otherwise.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Metrics with `range=custom`: first and last day, inclusive (UTC).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "description": "The label keys whose values the rows total, comma-separated: one to three.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "values",
+            "in": "query",
+            "description": "One row's totals per model instead: a JSON array with a value for each key of `by`, or\nnull for the requests without that label, as in `[\"acme\", null]`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Totals per label value, or per model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelUsage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid range, filter or grouping.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/model-metadata": {
       "get": {
         "tags": [
@@ -13634,6 +13807,92 @@
               "$ref": "#/components/schemas/LabelValue"
             },
             "description": "Most used first."
+          }
+        }
+      },
+      "LabelUsage": {
+        "type": "object",
+        "description": "Usage per label value, or one label value's per model.",
+        "required": [
+          "from",
+          "to",
+          "rows",
+          "truncated"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The covered time, end exclusive."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LabelUsageRow"
+            },
+            "description": "Costliest first."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "There were more rows than these, the costliest `LABEL_ROWS`."
+          }
+        }
+      },
+      "LabelUsageRow": {
+        "type": "object",
+        "required": [
+          "requests",
+          "input_tokens",
+          "cache_read_tokens",
+          "cache_write_tokens",
+          "output_tokens",
+          "cost_usd"
+        ],
+        "properties": {
+          "values": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "The values of `by`'s keys, null for the requests without that label; left out per model."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Per model only."
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
           }
         }
       },

@@ -498,6 +498,131 @@ pub(super) async fn billing(
     Ok(Json(Billing { from: filter.window.since, to: filter.window.until, rows: billing_rows(totals, &projects, &keys) }))
 }
 
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct LabelUsageQuery {
+    /// The label keys whose values the rows total, comma-separated: one to three.
+    by: String,
+    /// One row's totals per model instead: a JSON array with a value for each key of `by`, or
+    /// null for the requests without that label, as in `["acme", null]`.
+    values: Option<String>,
+}
+
+/// Usage per label value, or one label value's per model.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct LabelUsage {
+    /// The covered time, end exclusive.
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    /// Costliest first.
+    rows: Vec<LabelUsageRow>,
+    /// There were more rows than these, the costliest `LABEL_ROWS`.
+    truncated: bool,
+}
+
+#[derive(Serialize, utoipa::ToSchema, Debug, PartialEq)]
+pub(crate) struct LabelUsageRow {
+    /// The values of `by`'s keys, null for the requests without that label; left out per model.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(required = false)]
+    values: Vec<Option<String>>,
+    /// Per model only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(required = false)]
+    model: Option<String>,
+    requests: i64,
+    input_tokens: i64,
+    cache_read_tokens: i64,
+    cache_write_tokens: i64,
+    output_tokens: i64,
+    cost_usd: f64,
+}
+
+/// Rows a label usage answer holds at most.
+const LABEL_ROWS: usize = 1000;
+/// Label keys a label usage view groups by at most.
+const LABEL_KEYS: usize = 3;
+
+/// The `by` and `values` parameters: the keys, and the one combination of their values asked for.
+fn label_grouping(q: &LabelUsageQuery) -> R<(Vec<String>, Option<Vec<Option<String>>>)> {
+    let keys: Vec<String> = q.by.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect();
+    if keys.is_empty() || keys.len() > LABEL_KEYS {
+        return Err(AdminError::bad_request(format!("by takes one to {LABEL_KEYS} label keys")));
+    }
+    if keys.iter().any(|k| crate::labels::Labels::parse(&format!("{k}=x")).is_err()) {
+        return Err(AdminError::bad_request("by takes label keys: letters, digits, '_', '-' and '.'"));
+    }
+    if keys.iter().collect::<BTreeSet<_>>().len() != keys.len() {
+        return Err(AdminError::bad_request("by names a label key more than once"));
+    }
+    let values = match q.values.as_deref() {
+        None => None,
+        Some(v) => {
+            let v: Vec<Option<String>> =
+                serde_json::from_str(v).map_err(|_| AdminError::bad_request("values must be a JSON array of strings and nulls"))?;
+            if v.len() != keys.len() {
+                return Err(AdminError::bad_request("values needs one value for each key of by"));
+            }
+            Some(v)
+        }
+    };
+    Ok((keys, values))
+}
+
+fn label_rows(totals: Vec<db::LabelTotals>, keys: usize, per_model: bool) -> Vec<LabelUsageRow> {
+    totals
+        .into_iter()
+        .map(|t| LabelUsageRow {
+            values: if per_model { Vec::new() } else { [t.v1, t.v2, t.v3].into_iter().take(keys).collect() },
+            model: per_model.then_some(t.model),
+            requests: t.requests,
+            input_tokens: t.input_tokens,
+            cache_read_tokens: t.cache_read_tokens,
+            cache_write_tokens: t.cache_write_tokens,
+            output_tokens: t.output_tokens,
+            cost_usd: t.cost_usd,
+        })
+        .collect()
+}
+
+/// Usage by label
+///
+/// Token usage and cost per value of up to three label keys (per combination of their values),
+/// with the Metrics page's time range, key and label filters, over every call; with `values`, one
+/// combination's per model.
+#[utoipa::path(get, path = "/metrics/labels", tag = "Usage", params(RangeQuery, LabelUsageQuery),
+    responses(
+        (status = 200, description = "Totals per label value, or per model.", body = LabelUsage),
+        (status = 400, description = "Invalid range, filter or grouping.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn label_usage(
+    State(state): State<AppState>,
+    Extension(access): Extension<Access>,
+    Query(q): Query<RangeQuery>,
+    Query(lq): Query<LabelUsageQuery>,
+) -> R<Json<LabelUsage>> {
+    let (keys, values) = label_grouping(&lq)?;
+    let _scan = LOG_SCANS.acquire().await.map_err(|_| AdminError::unavailable("shutting down"))?;
+    let filter = Filter::new(&state, &access, &q)?;
+    let of = values.as_ref().map(|v| {
+        let mut of: db::LabelGroup = [None; LABEL_KEYS];
+        for (slot, v) in of.iter_mut().zip(v) {
+            *slot = v.as_deref();
+        }
+        of
+    });
+    let mut totals = crate::logstore::label_totals(&state, &filter.selection(), &keys, of, LABEL_ROWS as i64 + 1).await?;
+    let truncated = totals.len() > LABEL_ROWS;
+    totals.truncate(LABEL_ROWS);
+    Ok(Json(LabelUsage {
+        from: filter.window.since,
+        to: filter.window.until,
+        rows: label_rows(totals, keys.len(), of.is_some()),
+        truncated,
+    }))
+}
+
 /// Usage by key
 ///
 /// Spend by key, top 50.
@@ -718,6 +843,42 @@ mod tests {
                 ("No project", "No key", "gpt", 2.0),
             ]
         );
+    }
+
+    #[test]
+    fn label_grouping_takes_one_to_three_keys_and_a_value_each() {
+        let q = |by: &str, values: Option<&str>| LabelUsageQuery { by: by.to_string(), values: values.map(String::from) };
+        assert_eq!(label_grouping(&q(" tenant , feature ", None)).unwrap(), (vec!["tenant".to_string(), "feature".to_string()], None));
+        assert_eq!(label_grouping(&q("tenant,feature", Some(r#"["acme",null]"#))).unwrap().1, Some(vec![Some("acme".to_string()), None]));
+        for (by, values) in [
+            ("", None),
+            ("a,b,c,d", None),
+            ("tenant,tenant", None),
+            ("ten ant", None),
+            ("tenant", Some(r#"["acme",null]"#)),
+            ("tenant", Some("acme")),
+            ("tenant", Some("[1]")),
+        ] {
+            assert!(label_grouping(&q(by, values)).is_err(), "{by} {values:?}");
+        }
+    }
+
+    #[test]
+    fn label_rows_keep_the_asked_values_or_the_model() {
+        let t = db::LabelTotals {
+            v1: Some("acme".into()),
+            v2: None,
+            v3: None,
+            model: "gpt".into(),
+            requests: 2,
+            cost_usd: 1.5,
+            ..Default::default()
+        };
+        let by_label = label_rows(vec![t.clone()], 2, false);
+        assert_eq!((by_label[0].values.clone(), by_label[0].model.clone()), (vec![Some("acme".to_string()), None], None));
+        let per_model = label_rows(vec![t], 2, true);
+        assert_eq!((per_model[0].values.clone(), per_model[0].model.clone()), (Vec::new(), Some("gpt".to_string())));
+        assert_eq!((per_model[0].requests, per_model[0].cost_usd), (2, 1.5));
     }
 
     #[test]
