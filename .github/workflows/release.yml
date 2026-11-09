@@ -6,7 +6,8 @@
 # attestation attached, and a GitHub release is created. Only admins can create, move or delete `v*`
 # tags (a tag ruleset), and once released, not even they can (immutable releases, a repository setting). The tagged commit must be on main, and the checks its push to main
 # ran must pass; they are not run again.
-# The image is built only once the run is approved in the `release` environment.
+# Both platforms are built first, pushed by digest only (no tag points at them). The run then waits
+# for approval in the `release` environment before the multi-arch manifest puts them under the tags.
 # Running it by hand from main in the Actions tab runs the checks first and pushes the
 # image tagged with the commit.
 name: Release
@@ -65,9 +66,6 @@ jobs:
     name: Gateway image (${{ matrix.platform }})
     needs: [checked-on-main, checks]
     if: ${{ !cancelled() && (needs.checked-on-main.result == 'success' || needs.checks.result == 'success') }}
-    # Nothing is pushed until a reviewer of the environment approves the run (one approval covers both
-    # platforms). The environment only accepts `v*` tags and main.
-    environment: release
     strategy:
       matrix:
         include:
@@ -130,12 +128,17 @@ jobs:
           name: digest-${{ matrix.runner }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
-          retention-days: 1
+          # As long as an approval can stay pending: the manifest job needs them once it is given.
+          retention-days: 30
 
   manifest:
     name: Multi-arch manifest
     needs: image
     if: ${{ !cancelled() && needs.image.result == 'success' }}
+    # The checks have passed and both platforms are built by now. Nothing is tagged, signed or
+    # released until a reviewer of the environment approves the run. The environment only accepts
+    # `v*` tags and main.
+    environment: release
     runs-on: ubuntu-latest
     permissions:
       contents: read
