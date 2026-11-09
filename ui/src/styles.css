@@ -1633,7 +1633,7 @@ button.tag-toggle.on:hover:not(:disabled) {
 }
 
 /* login */
-/* Sign-in: a galaxy behind a glass panel. Always dark, whatever the theme. */
+/* Sign-in: a sky (a galaxy, unless another is picked) behind a glass panel. Always dark, whatever the theme. */
 .login {
   --login-ink: #f4f6ff;
   --login-dim: rgba(220, 228, 255, 0.66);
@@ -1655,6 +1655,26 @@ button.tag-toggle.on:hover:not(:disabled) {
   width: 100%;
   height: 100%;
   display: block;
+}
+/* The choice of sky, in the corner. Dark like the rest of the screen, whatever the theme. */
+.login-skies {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  border-color: var(--login-line);
+  background: rgba(255, 255, 255, 0.04);
+}
+.login-skies button {
+  color: var(--login-dim);
+}
+.login-skies button:hover:not(:disabled) {
+  background: none;
+  color: var(--login-ink);
+}
+.login-skies button.active,
+.login-skies button.active:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--login-ink);
 }
 .login-panel {
   position: relative;
@@ -3091,6 +3111,14 @@ a.button.primary:hover {
   border-bottom: 1px solid var(--grid);
   white-space: normal;
   overflow-wrap: anywhere;
+}
+/* The choice of sky fills the popover's width, its icons spread evenly. */
+.user-pop-sky {
+  display: flex;
+}
+.user-pop-sky .segmented-group {
+  flex: 1;
+  justify-content: space-between;
 }
 .user-pop-action {
   text-align: left;

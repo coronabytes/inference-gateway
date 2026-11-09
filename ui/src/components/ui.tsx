@@ -794,6 +794,131 @@ export function MoonIcon() {
   );
 }
 
+/** A sky of the sign-in screen: a spiral galaxy, its two arms around a core. */
+export function GalaxyIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="1.5" />
+      <path d="M12 6.5a5.5 5.5 0 0 1 5.5 5.5c0 4.5-3.5 8-8 8" />
+      <path d="M12 17.5A5.5 5.5 0 0 1 6.5 12c0-4.5 3.5-8 8-8" />
+    </svg>
+  );
+}
+
+/** A sky of the sign-in screen: a pulsar, a star with its two beams sweeping round. */
+export function PulsarIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M14.5 9.5 20 4M9.5 14.5 4 20" />
+      <path d="M4 10a8 8 0 0 1 6-6M20 14a8 8 0 0 1-6 6" />
+    </svg>
+  );
+}
+
+/** A sky of the sign-in screen: a supernova, a shell blown off a star. */
+export function SupernovaIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="12" r="9" strokeDasharray="3 4" />
+      <path d="M12 6.5v1.5M12 16v1.5M6.5 12H8M16 12h1.5" />
+    </svg>
+  );
+}
+
+/** A sky of the sign-in screen: an aurora, a curtain of rays over a planet's edge. */
+export function AuroraIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2 21a16 16 0 0 1 20 0" />
+      <path d="M4 13c2.5-2 4 1.5 6.5 0S15 11 17 12.5s2.5.5 3-.5" />
+      <path d="M7 8V5M12 9V3M17 8V5" />
+    </svg>
+  );
+}
+
+/** A sky of the sign-in screen: a black hole, with its disc around it and bent over it. */
+export function BlackHoleIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" fill="currentColor" />
+      <ellipse cx="12" cy="13" rx="10" ry="3" />
+      <path d="M5.5 11a6.5 6.5 0 0 1 13 0" />
+    </svg>
+  );
+}
+
+/** No sky scene: a circle struck through. */
+export function NoSkyIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M5.6 5.6l12.8 12.8" />
+    </svg>
+  );
+}
+
 /**
  * A form section that starts collapsed. `summary` sums up its values beside the title, so a closed
  * section still shows what it holds; the fields stay mounted while closed.

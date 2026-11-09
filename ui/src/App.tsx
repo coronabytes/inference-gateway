@@ -1,8 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { SessionContext } from "./access";
 import { AuthError, api, setToken, type SessionInfo } from "./api";
-import { Banner } from "./components/controls";
-import { Galaxy } from "./components/Galaxy";
+import { Banner, Segmented } from "./components/controls";
+import { SCENE_SKIES, Sky, useAppSky, useLoginSky, type SkyName } from "./components/sky";
 import { DocsIcon, GitHubIcon, IconButton, MoonIcon, SunIcon } from "./components/ui";
 import { UserMenu } from "./components/UserMenu";
 import { clearSessionFilters } from "./sessionState";
@@ -99,6 +99,10 @@ export function App() {
   const [connect, setConnect] = useState(connectId);
   const [loginError] = useState(takeLoginError);
   const [theme, toggleTheme] = useTheme();
+  // The sign-in screen has a random sky each time. Behind the pages, in the dark theme, is the
+  // sky picked in the user menu, or the sign-in screen's until one is picked.
+  const [loginSky, setLoginSky] = useLoginSky();
+  const [sky, setSky] = useAppSky(loginSky);
 
   const refresh = useCallback(async () => {
     try {
@@ -165,6 +169,8 @@ export function App() {
         dev={session.dev}
         version={session.version}
         initialError={loginError}
+        sky={loginSky}
+        onSky={setLoginSky}
         onLogin={refresh}
       />
     );
@@ -190,7 +196,7 @@ export function App() {
   return (
     <SessionContext.Provider value={session}>
       <div className="shell">
-        {theme === "light" ? <div className="app-sky" aria-hidden="true" /> : <Galaxy className="app-sky" backdrop />}
+        {theme === "light" ? <div className="app-sky" aria-hidden="true" /> : <Sky name={sky} className="app-sky" backdrop />}
         <header className="topbar">
           <div className="brand">
             Inference Gateway
@@ -231,7 +237,7 @@ export function App() {
             <IconButton label={theme === "light" ? "Switch to dark theme" : "Switch to light theme"} onClick={toggleTheme}>
               {theme === "light" ? <MoonIcon /> : <SunIcon />}
             </IconButton>
-            <UserMenu session={session} onSignOut={signOut} onSwitch={switchDev} />
+            <UserMenu session={session} onSignOut={signOut} onSwitch={switchDev} sky={theme === "light" ? undefined : sky} onSky={setSky} />
           </div>
         </header>
         <main>
@@ -260,6 +266,8 @@ function Login({
   dev,
   version,
   initialError,
+  sky,
+  onSky,
   onLogin,
 }: {
   sso: SessionInfo["sso"];
@@ -267,6 +275,8 @@ function Login({
   dev: boolean;
   version: string;
   initialError: string | null;
+  sky: SkyName;
+  onSky: (sky: SkyName) => void;
   onLogin: () => void;
 }) {
   const [key, setKey] = useState("");
@@ -298,7 +308,8 @@ function Login({
 
   return (
     <div className="login">
-      <Galaxy className="login-sky" />
+      <Sky name={sky} className="login-sky" />
+      <Segmented className="login-skies" label="Sky" options={SCENE_SKIES} value={sky} onChange={onSky} />
       <div className="login-panel">
         <p className="login-eyebrow">
           Admin console
