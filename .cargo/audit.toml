@@ -12,4 +12,9 @@ ignore = [
     # with public keys. The fix (crypto-bigint 0.7) needs an elliptic-curve release line that
     # openidconnect does not use yet.
     "RUSTSEC-2026-0387",
+    # libsqlite3-sys 0.37: a CVE in the bundled C SQLite. The gateway uses sqlx for Postgres only
+    # and never builds SQLite; the crate is in Cargo.lock only because sqlx locks its optional
+    # SQLite driver (`cargo tree -i libsqlite3-sys` finds nothing). sqlx 0.9.0 still requires
+    # 0.37; the fix is 0.39. Drop this once sqlx moves to it.
+    "RUSTSEC-2026-0459",
 ]
