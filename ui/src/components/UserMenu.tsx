@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { SessionInfo } from "../api";
+import { Segmented } from "./controls";
+import { SKIES, type SkyName } from "./sky";
 
 const VIA: Record<NonNullable<SessionInfo["via"]>, string> = {
   session: "Signed in with single sign-on",
@@ -12,17 +14,22 @@ const VIA: Record<NonNullable<SessionInfo["via"]>, string> = {
 
 /**
  * The profile button at the end of the top bar. Who is signed in, and how, shows in its popover
- * along with Sign out. Closes on a click outside or Escape.
+ * along with the choice of sky behind the pages and Sign out. Closes on a click outside or Escape.
  */
 export function UserMenu({
   session,
   onSignOut,
   onSwitch,
+  sky,
+  onSky,
 }: {
   session: SessionInfo;
   onSignOut: () => void;
   /** Dev Login only: sign in again as the admin or as the local development user. */
   onSwitch: (role: "admin" | "user") => void;
+  /** The sky behind the pages; none in the light theme, which has no sky to choose. */
+  sky?: SkyName;
+  onSky: (sky: SkyName) => void;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -73,6 +80,7 @@ export function UserMenu({
             {session.via && <span className="muted small">{VIA[session.via]}</span>}
             {session.role === "user" && <span className="muted small">User: sees only their projects</span>}
           </div>
+          {sky && <Segmented className="user-pop-sky" caption="Sky" options={SKIES} value={sky} onChange={onSky} />}
           {(session.via === "dev" || session.via === "dev_user") && (
             <button type="button" className="ghost user-pop-action" onClick={() => onSwitch(session.via === "dev" ? "user" : "admin")}>
               {session.via === "dev" ? "Switch to user" : "Switch to admin"}
