@@ -26,6 +26,8 @@
   --glow: 0 0 24px rgba(170, 195, 255, 0.3);
   --series-1: #7aa7ff;
   --series-2: #ff9a6b;
+  /* A deployment's custom capabilities. */
+  --capability: #b48cff;
   --status-good: #3ccf6e;
   --status-warning: #fab219;
   --status-critical: #ff6464;
@@ -77,6 +79,7 @@
   --glow: 0 0 22px rgba(74, 96, 200, 0.3);
   --series-1: #3a6ae0;
   --series-2: #e06a34;
+  --capability: #7c4ddb;
   --status-good: #1f9d50;
   --status-warning: #d48c00;
   --status-critical: #dc3c3c;
@@ -1503,6 +1506,24 @@ button.cap-icon[aria-pressed="true"]:hover:not(:disabled) {
 .tag.project {
   border-color: color-mix(in srgb, var(--series-1) 45%, transparent);
   background: color-mix(in srgb, var(--series-1) 16%, transparent);
+  color: var(--link);
+}
+/* A deployment's custom capability, after its tags: what it can do, not who may use it. */
+.tag.capability {
+  border-color: color-mix(in srgb, var(--capability) 50%, transparent);
+  background: color-mix(in srgb, var(--capability) 16%, transparent);
+  color: var(--text-primary);
+}
+button.tag.capability {
+  cursor: pointer;
+}
+button.tag.capability:hover:not(:disabled) {
+  border-color: var(--link);
+  color: var(--link);
+}
+button.tag.capability[aria-pressed="true"] {
+  border-color: var(--link);
+  background: var(--wash);
   color: var(--link);
 }
 /* A request's label in the request log: a button that filters the log by it. */

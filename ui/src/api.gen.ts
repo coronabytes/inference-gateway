@@ -638,6 +638,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/deployments/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List custom capabilities
+         * @description Every custom capability deployments carry, sorted, for suggestions while editing one.
+         */
+        get: operations["list_capabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/deployments/{id}": {
         parameters: {
             query?: never;
@@ -3285,6 +3305,11 @@ export interface components {
             /** @description Permission tags; a key with tags needs all of them to use this deployment. */
             tags?: string[];
             /**
+             * @description Custom capabilities (e.g. `eu-hosted`, `coding`), shown in the console and the model hub;
+             *     unlike tags they grant or limit no access. Normalized as tags are.
+             */
+            capabilities?: string[];
+            /**
              * @description Projects whose keys alone may use this deployment, whatever tags other keys hold; empty
              *     for any key. Omitted, an update keeps the deployment's projects.
              */
@@ -3356,6 +3381,8 @@ export interface components {
             cost_per_m_characters: number | null;
             base_model: string | null;
             tags: string[];
+            /** @description Custom capabilities, as the operator named them. */
+            capabilities: string[];
             project_ids: string[];
             enabled: boolean;
             /** Format: int64 */
@@ -3503,6 +3530,8 @@ export interface components {
              *     `image_input` or `thinking.supported`.
              */
             capabilities?: string[];
+            /** @description The custom capabilities all its deployments carry. */
+            custom_capabilities?: string[];
             tags?: string[];
             /** @description What its deployments charge, once per distinct set of prices, the lowest priority's first. */
             prices: components["schemas"]["ExportPrices"][];
@@ -3812,6 +3841,8 @@ export interface components {
             first_choice: boolean;
             /** @description The deployment's tags, which a key's allowed tags must cover. */
             tags: string[];
+            /** @description The deployment's custom capabilities. */
+            custom_capabilities: string[];
             prices: components["schemas"]["HubPrices"];
         };
         HubGuardrail: {
@@ -3849,6 +3880,8 @@ export interface components {
             /** @description Who makes it: the metadata's `vendor`, or without one the vendor its names suggest. */
             vendor?: string;
             tags: string[];
+            /** @description The custom capabilities all the deployments it reaches carry. */
+            custom_capabilities: string[];
             /** @description A model alias's target: the model name it serves. */
             target?: string;
             /** @description An auto router's models that the key reaches. */
@@ -3931,6 +3964,8 @@ export interface components {
              *     one are not listed.
              */
             vendors: string[];
+            /** @description The custom capabilities among those models, for the capability filter. */
+            custom_capabilities: string[];
         };
         /**
          * @description Where a credential without stored secrets gets its identity.
@@ -6861,6 +6896,26 @@ export interface operations {
             };
         };
     };
+    list_capabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The capabilities. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
     get_deployment: {
         parameters: {
             query?: never;
@@ -7250,8 +7305,8 @@ export interface operations {
                  */
                 vendor: string | null;
                 /**
-                 * @description Only models with all of these capabilities, by path in `capabilities`, as
-                 *     `image_input,thinking.supported`.
+                 * @description Only models with all of these capabilities, by path in `capabilities` or among
+                 *     `custom_capabilities`, as `image_input,thinking.supported,eu-hosted`.
                  */
                 capability: string | null;
                 /**
@@ -7320,8 +7375,8 @@ export interface operations {
                  */
                 vendor: string | null;
                 /**
-                 * @description Only models with all of these capabilities, by path in `capabilities`, as
-                 *     `image_input,thinking.supported`.
+                 * @description Only models with all of these capabilities, by path in `capabilities` or among
+                 *     `custom_capabilities`, as `image_input,thinking.supported,eu-hosted`.
                  */
                 capability: string | null;
                 /**

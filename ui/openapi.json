@@ -2263,6 +2263,42 @@
         ]
       }
     },
+    "/admin/api/deployments/capabilities": {
+      "get": {
+        "tags": [
+          "Deployments"
+        ],
+        "summary": "List custom capabilities",
+        "description": "Every custom capability deployments carry, sorted, for suggestions while editing one.",
+        "operationId": "list_capabilities",
+        "responses": {
+          "200": {
+            "description": "The capabilities.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/deployments/{id}": {
       "get": {
         "tags": [
@@ -2926,7 +2962,7 @@
           {
             "name": "capability",
             "in": "path",
-            "description": "Only models with all of these capabilities, by path in `capabilities`, as\n`image_input,thinking.supported`.",
+            "description": "Only models with all of these capabilities, by path in `capabilities` or among\n`custom_capabilities`, as `image_input,thinking.supported,eu-hosted`.",
             "required": true,
             "schema": {
               "type": [
@@ -3057,7 +3093,7 @@
           {
             "name": "capability",
             "in": "path",
-            "description": "Only models with all of these capabilities, by path in `capabilities`, as\n`image_input,thinking.supported`.",
+            "description": "Only models with all of these capabilities, by path in `capabilities` or among\n`custom_capabilities`, as `image_input,thinking.supported,eu-hosted`.",
             "required": true,
             "schema": {
               "type": [
@@ -11573,6 +11609,13 @@
             },
             "description": "Permission tags; a key with tags needs all of them to use this deployment."
           },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Custom capabilities (e.g. `eu-hosted`, `coding`), shown in the console and the model hub;\nunlike tags they grant or limit no access. Normalized as tags are."
+          },
           "project_ids": {
             "type": [
               "array",
@@ -11654,6 +11697,7 @@
           "cost_per_m_characters",
           "base_model",
           "tags",
+          "capabilities",
           "project_ids",
           "enabled",
           "cooldown_secs",
@@ -11807,6 +11851,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Custom capabilities, as the operator named them."
           },
           "project_ids": {
             "type": "array",
@@ -12243,6 +12294,13 @@
               "type": "string"
             },
             "description": "The capabilities all its deployments have, by path in the hub's `capabilities`, such as\n`image_input` or `thinking.supported`."
+          },
+          "custom_capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The custom capabilities all its deployments carry."
           },
           "tags": {
             "type": "array",
@@ -12906,6 +12964,7 @@
               "weight",
               "first_choice",
               "tags",
+              "custom_capabilities",
               "prices"
             ],
             "properties": {
@@ -12942,6 +13001,13 @@
                   "type": "string"
                 },
                 "description": "The deployment's tags, which a key's allowed tags must cover."
+              },
+              "custom_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The deployment's custom capabilities."
               },
               "prices": {
                 "$ref": "#/components/schemas/HubPrices"
@@ -13042,6 +13108,7 @@
               "mode",
               "metadata",
               "tags",
+              "custom_capabilities",
               "deployments"
             ],
             "properties": {
@@ -13068,6 +13135,13 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "custom_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The custom capabilities all the deployments it reaches carry."
               },
               "target": {
                 "type": "string",
@@ -13208,7 +13282,8 @@
           "models",
           "total",
           "modes",
-          "vendors"
+          "vendors",
+          "custom_capabilities"
         ],
         "properties": {
           "key": {
@@ -13246,6 +13321,13 @@
               "type": "string"
             },
             "description": "The vendors among those models (saved or suggested), for the vendor filter; models without\none are not listed."
+          },
+          "custom_capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The custom capabilities among those models, for the capability filter."
           }
         }
       },

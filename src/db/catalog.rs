@@ -23,7 +23,7 @@ pub async fn list_deployments(pool: &PgPool) -> sqlx::Result<Vec<DeploymentRow>>
                   output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,
                   long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,
                   long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,
-                  base_model, tags, project_ids, enabled, created_at, updated_at
+                  base_model, tags, capabilities, project_ids, enabled, created_at, updated_at
            FROM deployments ORDER BY model_name, priority, created_at"#
     )
     .fetch_all(pool)
@@ -48,7 +48,7 @@ pub async fn search_deployments(
                   output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,
                   long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,
                   long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,
-                  base_model, tags, project_ids, enabled, created_at, updated_at
+                  base_model, tags, capabilities, project_ids, enabled, created_at, updated_at
            FROM deployments
            WHERE ($1::text IS NULL OR strpos(lower(model_name), $1) > 0)
              AND ($2::text IS NULL OR mode = $2)
@@ -70,6 +70,11 @@ pub async fn search_deployments(
     .await
 }
 
+/// Every custom capability deployments carry, sorted.
+pub async fn deployment_capabilities(pool: &PgPool) -> sqlx::Result<Vec<String>> {
+    sqlx::query_scalar!(r#"SELECT DISTINCT unnest(capabilities) AS "capability!" FROM deployments ORDER BY 1"#).fetch_all(pool).await
+}
+
 pub async fn get_deployment(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<DeploymentRow>> {
     sqlx::query_as!(
         DeploymentRow,
@@ -78,7 +83,7 @@ pub async fn get_deployment(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Depl
                   output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,
                   long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,
                   long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,
-                  base_model, tags, project_ids, enabled, created_at, updated_at
+                  base_model, tags, capabilities, project_ids, enabled, created_at, updated_at
            FROM deployments WHERE id = $1"#,
         id
     )
@@ -93,8 +98,8 @@ pub async fn upsert_deployment(db: impl PgExecutor<'_>, d: &DeploymentRow) -> sq
              cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold, long_input_cost_per_mtok,
              long_output_cost_per_mtok, long_cache_read_cost_per_mtok, long_cache_write_cost_per_mtok,
              cost_per_k_searches, base_model, tags, project_ids, enabled, created_at, cost_per_audio_minute,
-             cost_per_m_characters, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,now())
+             cost_per_m_characters, capabilities, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,now())
          ON CONFLICT (id) DO UPDATE SET
              model_name = EXCLUDED.model_name, mode = EXCLUDED.mode, provider = EXCLUDED.provider,
              upstream_model = EXCLUDED.upstream_model, config = EXCLUDED.config,
@@ -112,8 +117,8 @@ pub async fn upsert_deployment(db: impl PgExecutor<'_>, d: &DeploymentRow) -> sq
              cost_per_k_searches = EXCLUDED.cost_per_k_searches,
              cost_per_audio_minute = EXCLUDED.cost_per_audio_minute,
              cost_per_m_characters = EXCLUDED.cost_per_m_characters,
-             base_model = EXCLUDED.base_model, tags = EXCLUDED.tags, project_ids = EXCLUDED.project_ids,
-             enabled = EXCLUDED.enabled,
+             base_model = EXCLUDED.base_model, tags = EXCLUDED.tags, capabilities = EXCLUDED.capabilities,
+             project_ids = EXCLUDED.project_ids, enabled = EXCLUDED.enabled,
              updated_at = now()",
         d.id,
         d.model_name,
@@ -144,6 +149,7 @@ pub async fn upsert_deployment(db: impl PgExecutor<'_>, d: &DeploymentRow) -> sq
         d.created_at,
         d.cost_per_audio_minute,
         d.cost_per_m_characters,
+        &d.capabilities,
     )
     .execute(db)
     .await?;

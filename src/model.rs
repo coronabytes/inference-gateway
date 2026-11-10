@@ -498,6 +498,8 @@ pub struct DeploymentRow {
     pub base_model: Option<String>,
     /// Permission tags (e.g. `azure`, `cheap`); see `VirtualKey::holds_all`.
     pub tags: Vec<String>,
+    /// What it can do, in the operator's own words (e.g. `eu-hosted`); grants no access.
+    pub capabilities: Vec<String>,
     /// Projects whose keys alone may use the deployment; empty for any key. See
     /// `VirtualKey::allows_deployment`.
     pub project_ids: Vec<Uuid>,
@@ -650,6 +652,9 @@ mod tests {
         assert_eq!(t, ["azure", "cheap"]);
         assert!(normalize_tags(vec!["two words".into()]).is_err());
         assert!(normalize_tags((0..21).map(|i| format!("t{i}")).collect()).is_err());
+        assert_eq!(normalize_capabilities(vec![" EU-Hosted ".into(), "coding".into()]).unwrap(), ["coding", "eu-hosted"]);
+        let err = normalize_capabilities(vec!["long context".into()]).unwrap_err();
+        assert!(err.starts_with("capability 'long context'"), "{err}");
     }
 
     #[test]
@@ -671,6 +676,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             pricing: Pricing::default(),
             tags: tags.iter().map(|t| t.to_string()).collect(),
+            capabilities: Vec::new(),
             project_ids: vec![],
             catalog: None,
         };
@@ -802,6 +808,8 @@ pub struct Deployment {
     pub timeout: Duration,
     pub pricing: Pricing,
     pub tags: Vec<String>,
+    /// Its custom capabilities, as the operator named them.
+    pub capabilities: Vec<String>,
     /// Projects whose keys alone may use it; empty for any key.
     pub project_ids: Vec<Uuid>,
     /// The deployment's price catalog entry (LiteLLM's), if there is one: token limits and
@@ -1208,17 +1216,33 @@ impl VirtualKey {
 
 /// Trim and lowercase tags, drop empty ones and duplicates, and sort them.
 pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, String> {
-    let mut out: Vec<String> = tags.into_iter().map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()).collect();
-    if let Some(bad) = out
-        .iter()
-        .find(|t| t.len() > 40 || !t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.')))
-    {
-        return Err(format!("tag '{bad}' must be up to 40 letters, digits, '-', '_' or '.'"));
+    normalize_names(tags, "tag")
+}
+
+/// A deployment's custom capabilities, normalized as tags are.
+pub fn normalize_capabilities(capabilities: Vec<String>) -> Result<Vec<String>, String> {
+    normalize_names(capabilities, "capability")
+}
+
+/// Whether `name` is a tag or custom capability as `normalize_names` leaves it.
+pub fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 40
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Trim and lowercase names (tags, capabilities), drop empty ones and duplicates, and sort them;
+/// `what` names one in errors.
+fn normalize_names(names: Vec<String>, what: &str) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = names.into_iter().map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()).collect();
+    if let Some(bad) = out.iter().find(|t| !valid_name(t)) {
+        return Err(format!("{what} '{bad}' must be up to 40 letters, digits, '-', '_' or '.'"));
     }
     out.sort();
     out.dedup();
     if out.len() > 20 {
-        return Err("at most 20 tags".into());
+        let plural = if what == "capability" { "capabilities" } else { "tags" };
+        return Err(format!("at most 20 {plural}"));
     }
     Ok(out)
 }

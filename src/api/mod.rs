@@ -1342,6 +1342,7 @@ mod tests {
             timeout: std::time::Duration::from_secs(1),
             pricing: Pricing::default(),
             tags: vec!["eu".into()],
+            capabilities: Vec::new(),
             project_ids: vec![],
             catalog: None,
         };

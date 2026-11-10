@@ -34,8 +34,19 @@ export function GuardrailList({ ids, inherited = [], names }: { ids: string[]; i
   );
 }
 
-export function TagList({ tags, projects = [], empty }: { tags: string[]; projects?: string[]; empty?: string }) {
-  if (!tags.length && !projects.length) return empty ? <span className="muted">{empty}</span> : null;
+export function TagList({
+  tags,
+  projects = [],
+  capabilities = [],
+  empty,
+}: {
+  tags: string[];
+  projects?: string[];
+  /** A deployment's custom capabilities, after its tags, in a colour of their own. */
+  capabilities?: string[];
+  empty?: string;
+}) {
+  if (!tags.length && !projects.length && !capabilities.length) return empty ? <span className="muted">{empty}</span> : null;
   return (
     <span className="tags">
       {projects.map((p) => (
@@ -48,13 +59,19 @@ export function TagList({ tags, projects = [], empty }: { tags: string[]; projec
           {t}
         </span>
       ))}
+      {capabilities.map((c) => (
+        <span key={`capability:${c}`} className="tag capability" title="Capability">
+          {c}
+        </span>
+      ))}
     </span>
   );
 }
 
 /**
  * Free-form tag editor: Enter, comma or Tab adds the typed tag, Backspace on an empty input
- * removes the last one. `suggestions` are offered while typing.
+ * removes the last one. `suggestions` are offered while typing. With `noun` and `placeholder` it
+ * edits other names kept like tags, such as a deployment's capabilities.
  *
  * Rendered as its own field (not inside a `<label>`), since a label would forward clicks on its
  * text to the first chip's remove button.
@@ -65,6 +82,9 @@ export function TagEditor({
   value,
   onChange,
   suggestions,
+  noun = "tag",
+  placeholder = "add a tag, e.g. azure",
+  className,
 }: {
   caption: string;
   /** Text, or a short list (`.hint-list`) for rules that read better line by line. */
@@ -72,6 +92,11 @@ export function TagEditor({
   value: string[];
   onChange: (tags: string[]) => void;
   suggestions: string[];
+  /** What one value is called in messages: "tag", "capability". */
+  noun?: string;
+  placeholder?: string;
+  /** Added to each chip's class, as `capability`. */
+  className?: string;
 }) {
   const [draft, setDraft] = useState("");
   const [invalid, setInvalid] = useState(false);
@@ -135,14 +160,14 @@ export function TagEditor({
   };
 
   return (
-    <HintBox hint={hint} id={hintId} note={invalid ? "Tags are up to 40 letters, digits, '-', '_' or '.'." : undefined}>
+    <HintBox hint={hint} id={hintId} note={invalid ? `A ${noun} is up to 40 letters, digits, '-', '_' or '.'.` : undefined}>
       <div className="tag-combo">
         <div className="tag-input" ref={field}>
           <Caption htmlFor={inputId}>{caption}</Caption>
           {value.map((t) => (
-            <span key={t} className="tag">
+            <span key={t} className={className ? `tag ${className}` : "tag"}>
               {t}
-              <button type="button" aria-label={`Remove tag ${t}`} onClick={() => onChange(value.filter((x) => x !== t))}>
+              <button type="button" aria-label={`Remove ${noun} ${t}`} onClick={() => onChange(value.filter((x) => x !== t))}>
                 ×
               </button>
             </span>
@@ -176,7 +201,7 @@ export function TagEditor({
               setActive(-1);
               if (draft.trim()) add(draft);
             }}
-            placeholder={value.length ? "" : "add a tag, e.g. azure"}
+            placeholder={value.length ? "" : placeholder}
           />
         </div>
         {listShown && (

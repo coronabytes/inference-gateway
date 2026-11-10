@@ -20,7 +20,10 @@ use crate::{
     db,
     error::AdminError,
     ir::{Aggregator, ChatRequest, Message, Part, Role},
-    model::{AliasRow, CredentialRow, DeploymentConfig, DeploymentRow, Mode, ProviderKind, RouterRow, VirtualKey, normalize_tags},
+    model::{
+        AliasRow, CredentialRow, DeploymentConfig, DeploymentRow, Mode, ProviderKind, RouterRow, VirtualKey, normalize_capabilities,
+        normalize_tags,
+    },
     state::AppState,
     sync::broadcast_reload,
 };
@@ -70,6 +73,8 @@ pub(crate) struct DeploymentView {
     #[schema(required)]
     base_model: Option<String>,
     tags: Vec<String>,
+    /// Custom capabilities, as the operator named them.
+    capabilities: Vec<String>,
     project_ids: Vec<Uuid>,
     enabled: bool,
     #[schema(required)]
@@ -128,6 +133,7 @@ fn view(r: DeploymentRow, credential_name: Option<String>, cooldown: Option<i64>
         cost_per_m_characters: r.cost_per_m_characters,
         base_model: r.base_model,
         tags: r.tags,
+        capabilities: r.capabilities,
         project_ids: r.project_ids,
         enabled: r.enabled,
         cooldown_secs: cooldown,
@@ -212,6 +218,10 @@ pub(crate) struct DeploymentInput {
     /// Permission tags; a key with tags needs all of them to use this deployment.
     #[serde(default)]
     pub(super) tags: Vec<String>,
+    /// Custom capabilities (e.g. `eu-hosted`, `coding`), shown in the console and the model hub;
+    /// unlike tags they grant or limit no access. Normalized as tags are.
+    #[serde(default)]
+    pub(super) capabilities: Vec<String>,
     /// Projects whose keys alone may use this deployment, whatever tags other keys hold; empty
     /// for any key. Omitted, an update keeps the deployment's projects.
     #[serde(default)]
@@ -237,6 +247,13 @@ async fn validate(state: &AppState, id: Option<Uuid>, i: &DeploymentInput) -> R<
         tokio::try_join!(db::list_deployments(&state.db), db::list_routers(&state.db), db::list_aliases(&state.db))?;
     check_deployment_fits(i, provider, id, &cred, &deployments, &routers, &aliases)?;
     Ok(cred.name)
+}
+
+/// Normalizes a deployment's tags and custom capabilities.
+pub(super) fn normalize_names(i: &mut DeploymentInput) -> R<()> {
+    i.tags = normalize_tags(std::mem::take(&mut i.tags)).map_err(AdminError::bad_request)?;
+    i.capabilities = normalize_capabilities(std::mem::take(&mut i.capabilities)).map_err(AdminError::bad_request)?;
+    Ok(())
 }
 
 /// Sorts the projects a deployment is limited to, drops repeats, and checks that each exists.
@@ -371,6 +388,7 @@ pub(super) fn to_row(id: Uuid, i: DeploymentInput, created: DateTime<Utc>) -> De
         cost_per_m_characters: i.cost_per_m_characters.filter(|_| i.mode == Mode::Speech),
         base_model: i.base_model.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()),
         tags: i.tags,
+        capabilities: i.capabilities,
         project_ids: i.project_ids.unwrap_or_default(),
         enabled: i.enabled,
         created_at: created,
@@ -436,6 +454,16 @@ pub(super) async fn list_deployments(State(state): State<AppState>, Query(q): Qu
     ))
 }
 
+/// List custom capabilities
+///
+/// Every custom capability deployments carry, sorted, for suggestions while editing one.
+#[utoipa::path(get, path = "/deployments/capabilities", tag = "Deployments",
+    responses((status = 200, description = "The capabilities.", body = Vec<String>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(super) async fn list_capabilities(State(state): State<AppState>) -> R<Json<Vec<String>>> {
+    Ok(Json(db::deployment_capabilities(&state.db).await?))
+}
+
 /// Get deployment
 #[utoipa::path(get, path = "/deployments/{id}", tag = "Deployments", params(("id" = Uuid, Path)),
     responses(
@@ -461,7 +489,7 @@ pub(super) async fn create_deployment(
     Extension(actor): Extension<Actor>,
     Json(mut i): Json<DeploymentInput>,
 ) -> R<(StatusCode, Json<DeploymentView>)> {
-    i.tags = normalize_tags(std::mem::take(&mut i.tags)).map_err(AdminError::bad_request)?;
+    normalize_names(&mut i)?;
     check_projects(&state, i.project_ids.as_mut()).await?;
     let cred_name = validate(&state, None, &i).await?;
     let row = to_row(Uuid::now_v7(), i, Utc::now());
@@ -494,7 +522,7 @@ pub(super) async fn update_deployment(
     if existing.mode != i.mode.as_str() {
         return Err(AdminError::bad_request("a deployment's mode cannot be changed; create a new deployment"));
     }
-    i.tags = normalize_tags(std::mem::take(&mut i.tags)).map_err(AdminError::bad_request)?;
+    normalize_names(&mut i)?;
     // Clients that predate projects on deployments leave them as they are.
     check_projects(&state, i.project_ids.as_mut()).await?;
     i.project_ids.get_or_insert_with(|| existing.project_ids.clone());

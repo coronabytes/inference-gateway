@@ -54,7 +54,7 @@ use crate::{
     db,
     error::AdminError,
     guardrails::{GuardrailConfig, GuardrailPrices, GuardrailProvider, GuardrailRow},
-    model::{AliasRow, CredentialRow, CredentialSettings, DeploymentRow, ProviderKind, RouterRow, normalize_tags},
+    model::{AliasRow, CredentialRow, CredentialSettings, DeploymentRow, ProviderKind, RouterRow, normalize_capabilities, normalize_tags},
     registry,
     state::AppState,
     sync::broadcast_reload,
@@ -203,6 +203,9 @@ fn deployment_doc(d: &DeploymentRow, credential: &str, projects: &HashMap<Uuid, 
             }
             if let Some(p) = d.cost_per_m_characters {
                 m.insert("cost_per_m_characters".into(), p.into());
+            }
+            if !d.capabilities.is_empty() {
+                m.insert("capabilities".into(), d.capabilities.clone().into());
             }
             if !d.project_ids.is_empty() {
                 let mut names: Vec<&str> = d.project_ids.iter().filter_map(|id| projects.get(id).map(String::as_str)).collect();
@@ -621,6 +624,8 @@ pub(super) async fn import(
         let mut input: DeploymentInput = serde_json::from_value(Value::Object(m)).map_err(|e| bad(format!("deployment '{model}': {e}")))?;
         let label = format!("{model} ({} via {})", input.upstream_model.trim(), cred.name);
         input.tags = normalize_tags(std::mem::take(&mut input.tags)).map_err(|e| bad(format!("deployment {label}: {e}")))?;
+        input.capabilities =
+            normalize_capabilities(std::mem::take(&mut input.capabilities)).map_err(|e| bad(format!("deployment {label}: {e}")))?;
         let provider = check_deployment(&input).map_err(about(&format!("deployment {label}")))?;
         let existing = file_id.and_then(|id| deployments.iter().position(|d| d.id == id)).or_else(|| {
             deployments.iter().position(|d| {
