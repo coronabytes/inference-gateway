@@ -52,6 +52,7 @@ pub fn router(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         .routes(routes!(credentials::bedrock_models))
         .routes(routes!(credentials::aws_regions))
         .routes(routes!(deployments::list_deployments, deployments::create_deployment))
+        .routes(routes!(deployments::list_capabilities))
         .routes(routes!(deployments::get_deployment, deployments::update_deployment, deployments::delete_deployment))
         .routes(routes!(deployments::test_deployment))
         .routes(routes!(deployments::clear_cooldown))

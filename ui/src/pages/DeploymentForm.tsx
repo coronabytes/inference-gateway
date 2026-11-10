@@ -126,6 +126,7 @@ export function DeploymentForm({
   copyOf,
   credentials,
   knownTags,
+  knownCapabilities,
   projects,
   onSave,
   onDelete,
@@ -136,6 +137,8 @@ export function DeploymentForm({
   copyOf?: Deployment;
   /** Tags other deployments use, offered while typing. */
   knownTags: string[];
+  /** Custom capabilities deployments carry, offered while typing. */
+  knownCapabilities: string[];
   /** Projects the deployment can be limited to. */
   projects: NamedItem[];
   credentials: Credential[];
@@ -183,6 +186,7 @@ export function DeploymentForm({
   const [realtime, setRealtime] = useState(from?.config.realtime ?? false);
   const [baseModel, setBaseModel] = useState(from?.base_model ?? "");
   const [tags, setTags] = useState<string[]>(from?.tags ?? []);
+  const [capabilities, setCapabilities] = useState<string[]>(from?.capabilities ?? []);
   const [projectIds, setProjectIds] = useState<string[]>(from?.project_ids ?? []);
   // Set by the catalog match, not by the user: a later match may replace it.
   const [baseAuto, setBaseAuto] = useState(false);
@@ -478,6 +482,7 @@ export function DeploymentForm({
         cost_per_m_characters: mode === "speech" ? optNum(perMChars) : null,
         base_model: baseModel.trim() || null,
         tags,
+        capabilities,
         project_ids: projectIds,
         enabled,
       });
@@ -833,6 +838,17 @@ export function DeploymentForm({
           value={tags}
           onChange={setTags}
           suggestions={knownTags}
+        />
+
+        <TagEditor
+          caption="Capabilities"
+          noun="capability"
+          placeholder="add a capability, e.g. eu-hosted"
+          className="capability"
+          hint="What this deployment can do, in your own words: shown with the model in the model hub, which can filter on them. A model has a capability when all its deployments do. Unlike tags, capabilities do not limit which keys can use it."
+          value={capabilities}
+          onChange={setCapabilities}
+          suggestions={knownCapabilities}
         />
 
         <MultiSelect

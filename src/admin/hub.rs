@@ -39,8 +39,8 @@ pub(crate) struct HubQuery {
     /// Only models of these vendors (their `vendor`: saved, or suggested from their names), as
     /// `Anthropic,OpenAI`; `-` stands for models without one.
     vendor: Option<String>,
-    /// Only models with all of these capabilities, by path in `capabilities`, as
-    /// `image_input,thinking.supported`.
+    /// Only models with all of these capabilities, by path in `capabilities` or among
+    /// `custom_capabilities`, as `image_input,thinking.supported,eu-hosted`.
     capability: Option<String>,
     /// Only models whose name, display name, vendor, description or an upstream model contains
     /// this text, ignoring case.
@@ -136,7 +136,13 @@ fn matches(m: &HubModel, modes: &[&str], vendors: &[&str], caps: &[&str], term: 
     let text = |field: &str| m.metadata.get(field).and_then(Value::as_str);
     let mode_ok = modes.is_empty() || modes.contains(&if m.kind == "router" { "router" } else { m.mode.as_str() });
     let vendor_ok = vendors.is_empty() || vendors.contains(&m.vendor.as_deref().unwrap_or("-"));
-    let has = |c: &&str| m.described.capabilities.as_ref().is_some_and(|cs| cs.get(*c).copied().flatten() == Some(true));
+    let has = |c: &&str| {
+        if models::is_capability(c) {
+            m.described.capabilities.as_ref().is_some_and(|cs| cs.get(*c).copied().flatten() == Some(true))
+        } else {
+            m.custom_capabilities.iter().any(|x| x == c)
+        }
+    };
     let caps_ok = caps.iter().all(has);
     let term_ok = term.is_empty()
         || [Some(m.name.as_str()), m.target.as_deref(), text("display_name"), m.vendor.as_deref(), text("description")]
@@ -164,6 +170,8 @@ pub(crate) struct HubView {
     /// The vendors among those models (saved or suggested), for the vendor filter; models without
     /// one are not listed.
     vendors: Vec<String>,
+    /// The custom capabilities among those models, for the capability filter.
+    custom_capabilities: Vec<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -208,6 +216,8 @@ pub(crate) struct HubModel {
     #[schema(nullable = false)]
     vendor: Option<String>,
     tags: Vec<String>,
+    /// The custom capabilities all the deployments it reaches carry.
+    custom_capabilities: Vec<String>,
     /// A model alias's target: the model name it serves.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
@@ -296,6 +306,8 @@ pub(crate) struct HubDeployment {
     first_choice: bool,
     /// The deployment's tags, which a key's allowed tags must cover.
     tags: Vec<String>,
+    /// The deployment's custom capabilities.
+    custom_capabilities: Vec<String>,
     #[serde(flatten)]
     described: models::Described,
     prices: HubPrices,
@@ -349,6 +361,12 @@ fn prices(d: &Deployment) -> HubPrices {
     }
 }
 
+/// The custom capabilities every one of `ds` carries, sorted; none without deployments.
+fn shared_capabilities(ds: &[&Deployment]) -> Vec<String> {
+    let Some((first, rest)) = ds.split_first() else { return Vec::new() };
+    first.capabilities.iter().filter(|c| rest.iter().all(|d| d.capabilities.contains(c))).cloned().collect()
+}
+
 fn hub_deployments(ds: &[&Deployment]) -> Vec<HubDeployment> {
     // Per model name: an auto router picks the model, then that model's deployments fail over.
     let first = |model: &str| ds.iter().filter(|d| d.model_name == model).map(|d| d.priority).min();
@@ -363,6 +381,7 @@ fn hub_deployments(ds: &[&Deployment]) -> Vec<HubDeployment> {
             weight: d.weight,
             first_choice: Some(d.priority) == first(&d.model_name),
             tags: d.tags.clone(),
+            custom_capabilities: d.capabilities.clone(),
             described: models::describe_one(d),
             prices: prices(d),
         })
@@ -418,7 +437,7 @@ pub(crate) async fn hub(
     if let Some(m) = modes.iter().find(|m| **m != "router" && Mode::parse(m).is_none()) {
         return Err(AdminError::bad_request(format!("unknown mode '{m}'")));
     }
-    if let Some(c) = caps.iter().find(|c| !models::is_capability(c)) {
+    if let Some(c) = caps.iter().find(|c| !models::is_capability(c) && !crate::model::valid_name(c)) {
         return Err(AdminError::bad_request(format!("unknown capability '{c}'")));
     }
     let term = q.q.as_deref().unwrap_or("").trim().to_lowercase();
@@ -449,6 +468,7 @@ pub(crate) async fn hub(
             let metadata = metadata.get(name.as_str()).cloned().unwrap_or_else(|| Value::Object(Map::new()));
             let vendor = vendor_of(&metadata, name, ds.iter().map(|d| d.upstream_model.as_str()));
             HubModel {
+                custom_capabilities: shared_capabilities(&ds),
                 name: name.clone(),
                 kind,
                 mode,
@@ -467,6 +487,8 @@ pub(crate) async fn hub(
     let mode_of = |m: &HubModel| if m.kind == "router" { "router".to_string() } else { m.mode.as_str().to_string() };
     let known_modes: Vec<String> = all.iter().map(mode_of).collect::<BTreeSet<_>>().into_iter().collect();
     let known_vendors: Vec<String> = all.iter().filter_map(|m| m.vendor.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+    let known_custom: Vec<String> =
+        all.iter().flat_map(|m| m.custom_capabilities.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
     let mut models: Vec<HubModel> = all.into_iter().filter(|m| matches(m, &modes, &vendors, &caps, &term)).collect();
     if q.stats == Some(true) && !models.is_empty() {
         // A key sees its own traffic, a project's users their projects', admins everyone's.
@@ -530,7 +552,7 @@ pub(crate) async fn hub(
             allowed_tags: k.allowed_tags.clone(),
         }
     });
-    Ok(Json(HubView { key, guardrails, models, total, modes: known_modes, vendors: known_vendors }))
+    Ok(Json(HubView { key, guardrails, models, total, modes: known_modes, vendors: known_vendors, custom_capabilities: known_custom }))
 }
 
 /// A model as the hub exports it: what a client needs to pick and call it, without its deployments.
@@ -573,6 +595,9 @@ pub(crate) struct ExportModel {
     /// `image_input` or `thinking.supported`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     capabilities: Vec<&'static str>,
+    /// The custom capabilities all its deployments carry.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    custom_capabilities: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
     /// What its deployments charge, once per distinct set of prices, the lowest priority's first.
@@ -664,6 +689,7 @@ fn export_model(m: HubModel) -> ExportModel {
         max_output_tokens: m.described.max_output_tokens,
         retires: m.described.retires,
         capabilities,
+        custom_capabilities: m.custom_capabilities,
         tags: m.tags,
         prices,
     }
@@ -915,6 +941,7 @@ mod tests {
             vendor: metadata.get("vendor").and_then(Value::as_str).map(str::to_string),
             metadata,
             tags: Vec::new(),
+            custom_capabilities: Vec::new(),
             target: None,
             described: models::describe_all(&[]),
             routes: Vec::new(),
@@ -940,6 +967,9 @@ mod tests {
         assert!(!matches(&seeing, &[], &[], &["image_input", "thinking.supported"], ""), "all of them");
         assert!(!matches(&seeing, &[], &[], &["pdf_input"], ""), "unknown is not supported");
         assert!(!matches(&embed, &[], &[], &["image_input"], ""), "no capabilities at all");
+        seeing.custom_capabilities = vec!["eu-hosted".into()];
+        assert!(matches(&seeing, &[], &[], &["image_input", "eu-hosted"], ""), "built-in and custom together");
+        assert!(!matches(&opus, &[], &[], &["eu-hosted"], ""));
     }
 
     #[test]

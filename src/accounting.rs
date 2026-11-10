@@ -716,6 +716,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             pricing: Pricing { standard: Rates::new(1.0, 2.0, None, None), per_k_searches, ..Default::default() },
             tags: vec![],
+            capabilities: Vec::new(),
             project_ids: vec![],
             catalog: None,
         })

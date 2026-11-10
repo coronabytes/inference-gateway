@@ -318,6 +318,7 @@ fn build_deployment(row: DeploymentRow, creds: &HashMap<Uuid, Result<ResolvedCre
         tpm_limit: row.tpm_limit.map(|v| v as u64),
         timeout: Duration::from_secs(row.timeout_secs.max(1) as u64),
         tags: row.tags,
+        capabilities: row.capabilities,
         project_ids: row.project_ids,
         pricing: Pricing {
             standard: Rates::new(input, row.output_cost_per_mtok, row.cache_read_cost_per_mtok, row.cache_write_cost_per_mtok),

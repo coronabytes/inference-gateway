@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, model_name, mode, provider, upstream_model, config AS \"config: Json<DeploymentConfig>\",\n                  credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,\n                  output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,\n                  long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,\n                  long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,\n                  base_model, tags, project_ids, enabled, created_at, updated_at\n           FROM deployments WHERE id = $1",
+  "query": "SELECT id, model_name, mode, provider, upstream_model, config AS \"config: Json<DeploymentConfig>\",\n                  credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,\n                  output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,\n                  long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,\n                  long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,\n                  base_model, tags, capabilities, project_ids, enabled, created_at, updated_at\n           FROM deployments\n           WHERE ($1::text IS NULL OR strpos(lower(model_name), $1) > 0)\n             AND ($2::text IS NULL OR mode = $2)\n             AND ($3::text[] IS NULL OR tags && $3 OR ($4 AND cardinality(tags) = 0))\n             AND ($5::uuid[] IS NULL OR credential_id = ANY($5))\n             AND ($6::uuid[] IS NULL OR project_ids && $6 OR ($7 AND cardinality(project_ids) = 0))\n             AND ($8::uuid[] IS NULL OR id = ANY($8))\n           ORDER BY model_name, priority, created_at",
   "describe": {
     "columns": [
       {
@@ -291,6 +291,17 @@
       },
       {
         "ordinal": 26,
+        "name": "capabilities",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "capabilities"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
         "name": "project_ids",
         "type_info": "UuidArray",
         "origin": {
@@ -301,7 +312,7 @@
         }
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -312,7 +323,7 @@
         }
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -323,7 +334,7 @@
         }
       },
       {
-        "ordinal": 29,
+        "ordinal": 30,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -336,7 +347,14 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "Text",
+        "TextArray",
+        "Bool",
+        "UuidArray",
+        "UuidArray",
+        "Bool",
+        "UuidArray"
       ]
     },
     "nullable": [
@@ -369,8 +387,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "0f02a2b63b3f9223636e2695868d01858b7949576bd2a4964d93bdb4597f238c"
+  "hash": "dde4845abeb169a231b01b51df1d270eaddcfd63b64a7a322d5008196d239e6e"
 }

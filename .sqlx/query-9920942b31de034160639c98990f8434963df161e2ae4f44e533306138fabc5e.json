@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, model_name, mode, provider, upstream_model, config AS \"config: Json<DeploymentConfig>\",\n                  credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,\n                  output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,\n                  long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,\n                  long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,\n                  base_model, tags, project_ids, enabled, created_at, updated_at\n           FROM deployments ORDER BY model_name, priority, created_at",
+  "query": "SELECT id, model_name, mode, provider, upstream_model, config AS \"config: Json<DeploymentConfig>\",\n                  credential_id, weight, priority, rpm_limit, tpm_limit, timeout_secs, input_cost_per_mtok,\n                  output_cost_per_mtok, cache_read_cost_per_mtok, cache_write_cost_per_mtok, long_context_threshold,\n                  long_input_cost_per_mtok, long_output_cost_per_mtok, long_cache_read_cost_per_mtok,\n                  long_cache_write_cost_per_mtok, cost_per_k_searches, cost_per_audio_minute, cost_per_m_characters,\n                  base_model, tags, capabilities, project_ids, enabled, created_at, updated_at\n           FROM deployments ORDER BY model_name, priority, created_at",
   "describe": {
     "columns": [
       {
@@ -291,6 +291,17 @@
       },
       {
         "ordinal": 26,
+        "name": "capabilities",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "deployments",
+            "name": "capabilities"
+          }
+        }
+      },
+      {
+        "ordinal": 27,
         "name": "project_ids",
         "type_info": "UuidArray",
         "origin": {
@@ -301,7 +312,7 @@
         }
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "enabled",
         "type_info": "Bool",
         "origin": {
@@ -312,7 +323,7 @@
         }
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -323,7 +334,7 @@
         }
       },
       {
-        "ordinal": 29,
+        "ordinal": 30,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -367,8 +378,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "e532169df84d24c1ba265f3bd398831602b88b7a61a4ed7f12fec02b58f11a38"
+  "hash": "9920942b31de034160639c98990f8434963df161e2ae4f44e533306138fabc5e"
 }

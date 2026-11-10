@@ -27,6 +27,7 @@ import {
   GlobeIcon,
   IconButton,
   ImageIcon,
+  LabelIcon,
   ListIcon,
   Modal,
   PlayIcon,
@@ -124,6 +125,36 @@ export function CapabilityIcons({ m, picked, onPick }: { m: Capable; picked?: st
           {c.icon}
         </span>
       ))}
+    </span>
+  );
+}
+
+/**
+ * A model's custom capabilities as chips, each a button that adds it to the hub's filter, or takes
+ * it out. Nothing without any.
+ */
+function CustomCapabilities({ names, picked, onPick }: { names: string[]; picked: string[]; onPick: (name: string) => void }) {
+  if (!names.length) return null;
+  return (
+    <span className="tags" role="group" aria-label="Custom capabilities">
+      {names.map((c) => {
+        const on = picked.includes(c);
+        return (
+          <button
+            key={c}
+            type="button"
+            className="tag capability"
+            aria-pressed={on}
+            title={on ? `${c}: show models without it too` : `${c}: show only models with it`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPick(c);
+            }}
+          >
+            {c}
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -297,9 +328,9 @@ export function ModelHub() {
   const [modeFilter, setModeFilter] = useSessionState<string[]>("hub.modes", []);
   const [q, setQ] = useSessionState("hub.search", "");
   const [vendorFilter, setVendorFilter] = useSessionState<string[]>("hub.vendors", []);
-  // Capabilities by path; a model must have all of them.
+  // Capabilities by path, and custom capabilities by name; a model must have all of them.
   const [capFilter, setCapFilter] = useSessionState<string[]>("hub.capabilities", [], (v) =>
-    (v as unknown[]).every((p) => CAPABILITIES.some((c) => c.path === p)),
+    (v as unknown[]).every((p) => typeof p === "string"),
   );
   const toggleCap = (path: string) => setCapFilter((cs) => (cs.includes(path) ? cs.filter((c) => c !== path) : [...cs, path]));
   const [open, setOpen] = useState<string | null>(null);
@@ -328,6 +359,9 @@ export function ModelHub() {
   // A picked mode or vendor no models have any more drops out.
   const modes = hub ? modeFilter.filter((m) => knownModes.has(m)) : modeFilter;
   const vendors = hub ? vendorFilter.filter((v) => v === NO_VENDOR || knownVendors.includes(v)) : vendorFilter;
+  // So does a custom capability no deployment carries any more.
+  const knownCustom = hub?.custom_capabilities ?? [];
+  const caps = hub ? capFilter.filter((c) => CAPABILITIES.some((x) => x.path === c) || knownCustom.includes(c)) : capFilter;
   const search = useDebounced(q.trim());
 
   /** The hub's query: the key and the filters picked here. */
@@ -336,7 +370,7 @@ export function ModelHub() {
     if (keyId) params.set("key", keyId);
     if (modes.length) params.set("mode", modes.join(","));
     if (vendors.length) params.set("vendor", vendors.map((v) => (v === NO_VENDOR ? "-" : v)).join(","));
-    if (capFilter.length) params.set("capability", capFilter.join(","));
+    if (caps.length) params.set("capability", caps.join(","));
     if (term) params.set("q", term);
     return params.toString().replace(/%2C/g, ",");
   };
@@ -410,7 +444,7 @@ export function ModelHub() {
         m.mode,
         m.max_input_tokens,
         m.max_output_tokens,
-        m.capabilities?.join(", "),
+        [...(m.capabilities ?? []), ...(m.custom_capabilities ?? [])].join(", "),
         m.tags?.join(", "),
         m.routes?.join(", "),
         m.target,
@@ -500,9 +534,12 @@ export function ModelHub() {
           )}
           <MultiSelect
             caption="Capability"
-            hint="Only models with all the picked capabilities. Clicking a capability's icon on a model picks it too."
-            options={CAPABILITIES.map((c) => ({ value: c.path, label: c.label, icon: c.icon }))}
-            values={capFilter}
+            hint="Only models with all the picked capabilities. Clicking a capability's icon or chip on a model picks it too. The chips are capabilities named on the model's deployments."
+            options={[
+              ...CAPABILITIES.map((c) => ({ value: c.path, label: c.label, icon: c.icon })),
+              ...knownCustom.map((c) => ({ value: c, label: c, icon: <LabelIcon /> })),
+            ]}
+            values={caps}
             onChange={setCapFilter}
           />
           <TextInput caption="Model" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="name or description" />
@@ -599,7 +636,7 @@ export function ModelHub() {
         ) : (
           <div className="hub-tiles">
             {visible.map((m) => (
-              <ModelTile key={m.name} model={m} keyId={keyId} caps={capFilter} onCap={toggleCap} onEdit={() => setEditing(m)} />
+              <ModelTile key={m.name} model={m} keyId={keyId} caps={caps} onCap={toggleCap} onEdit={() => setEditing(m)} />
             ))}
           </div>
         )
@@ -664,8 +701,9 @@ export function ModelHub() {
                       <td className="middle">
                         <div className="hub-tile-icons">
                           <ModeIcon mode={m.kind === "router" ? "router" : m.mode} />
-                          {capabilitiesOf(m).length > 0 && <CapabilityIcons m={m} picked={capFilter} onPick={toggleCap} />}
+                          {capabilitiesOf(m).length > 0 && <CapabilityIcons m={m} picked={caps} onPick={toggleCap} />}
                         </div>
+                        <CustomCapabilities names={m.custom_capabilities} picked={caps} onPick={toggleCap} />
                       </td>
                       <td>
                         <div className="hub-row-stats">
@@ -934,6 +972,7 @@ function ModelTile({
           )
         )}
         <TagList tags={m.tags} />
+        <CustomCapabilities names={m.custom_capabilities} picked={caps} onPick={onCap} />
       </div>
       <TilePrice model={m} />
       <div className="hub-tile-foot">
@@ -993,7 +1032,7 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
             <th>Provider</th>
             <th>Upstream model</th>
             {router && <th>Model</th>}
-            <th>Tags</th>
+            <th>{m.deployments.some((d) => d.custom_capabilities.length) ? "Tags and capabilities" : "Tags"}</th>
             <th className="num">Priority</th>
             <th className="num">Weight</th>
             {m.mode === "rerank" && <th className="num">Per 1K searches</th>}
@@ -1013,7 +1052,7 @@ function HubDetails({ model: m, options }: { model: HubModel; options: PriceOpti
                 <td className="mono">{d.upstream_model}</td>
                 {router && <td className="mono">{d.model}</td>}
                 <td>
-                  <TagList tags={d.tags} empty="–" />
+                  <TagList tags={d.tags} capabilities={d.custom_capabilities} empty="–" />
                 </td>
                 <td className="num" title={fallback && d.first_choice ? "First choice" : undefined}>
                   {d.priority}

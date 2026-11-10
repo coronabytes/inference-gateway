@@ -136,6 +136,8 @@ export function Models() {
   const [creds, setCreds] = useState<Credential[] | null>(null);
   const [projects, setProjects] = useState<NamedItem[]>([]);
   const [tags, setTags] = useState<TagInfo[]>([]);
+  // Custom capabilities deployments carry, offered in the deployment editor.
+  const [knownCapabilities, setKnownCapabilities] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Deployment | "new" | null>(null);
   // The deployment being duplicated while `editing` is "new".
@@ -217,14 +219,16 @@ export function Models() {
   // What the filters and the deployment editor offer: not reloaded as the filters change.
   const loadContext = useCallback(async () => {
     try {
-      const [c, p, t] = await Promise.all([
+      const [c, p, t, caps] = await Promise.all([
         api<Credential[]>("/credentials"),
         api<NamedItem[]>("/projects/options"),
         api<TagInfo[]>("/tags"),
+        api<string[]>("/deployments/capabilities"),
       ]);
       setCreds(c);
       setProjects(p);
       setTags(t);
+      setKnownCapabilities(caps);
       setAll(null);
     } catch (e) {
       setError((e as Error).message);
@@ -638,7 +642,7 @@ export function Models() {
                       className="dep-upstream"
                       title={d.base_model ? `${d.upstream_model} (base model ${d.base_model})` : d.upstream_model}
                     >
-                      <TagList tags={d.tags} projects={projectNames(d.project_ids, projects)} />
+                      <TagList tags={d.tags} projects={projectNames(d.project_ids, projects)} capabilities={d.capabilities} />
                       <div className="mono clip">{d.upstream_model}</div>
                       {d.base_model && d.base_model !== d.upstream_model && <div className="muted small clip">{d.base_model}</div>}
                     </div>
@@ -775,6 +779,7 @@ export function Models() {
         <DeploymentForm
           credentials={creds ?? []}
           knownTags={knownTags}
+          knownCapabilities={knownCapabilities}
           projects={projects}
           initial={editing === "new" ? undefined : editing}
           copyOf={editing === "new" ? (copyOf ?? undefined) : undefined}

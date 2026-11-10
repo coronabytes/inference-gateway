@@ -518,6 +518,7 @@ pub(crate) mod tests {
             timeout: std::time::Duration::from_secs(60),
             pricing: Pricing::default(),
             tags: Vec::new(),
+            capabilities: Vec::new(),
             project_ids: Vec::new(),
             catalog: None,
         }
