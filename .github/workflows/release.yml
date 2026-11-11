@@ -6,8 +6,9 @@
 # attestation attached, and a GitHub release is created. Only admins can create, move or delete `v*`
 # tags (a tag ruleset), and once released, not even they can (immutable releases, a repository setting). The tagged commit must be on main, and the checks its push to main
 # ran must pass; they are not run again.
-# Both platforms are built first, pushed by digest only (no tag points at them). The run then waits
-# for approval in the `release` environment before the multi-arch manifest puts them under the tags.
+# Approval in the `release` environment is asked for as soon as the run starts, while the checks
+# run and both platforms are built and pushed by digest only (no tag points at them). The
+# multi-arch manifest puts them under the tags once all of these have passed and the run is approved.
 # Running it by hand from main in the Actions tab runs the checks first and pushes the
 # image tagged with the commit.
 name: Release
@@ -50,6 +51,17 @@ jobs:
             exit 1
           fi
           gh run watch "$id" --interval 30 --exit-status
+
+  # The release gate, asked for at the start so a reviewer can approve while the checks and builds
+  # run. Nothing is tagged, signed or released until it is approved and those have passed. The
+  # environment only accepts `v*` tags and main.
+  approve:
+    name: Approve release
+    environment: release
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: echo "Approved by a reviewer of the release environment."
 
   # Run by hand: tests, sqlx metadata and dependency advisories, as on every push.
   checks:
@@ -133,12 +145,9 @@ jobs:
 
   manifest:
     name: Multi-arch manifest
-    needs: image
-    if: ${{ !cancelled() && needs.image.result == 'success' }}
-    # The checks have passed and both platforms are built by now. Nothing is tagged, signed or
-    # released until a reviewer of the environment approves the run. The environment only accepts
-    # `v*` tags and main.
-    environment: release
+    needs: [approve, image]
+    # The checks have passed, both platforms are built and the run is approved by now.
+    if: ${{ !cancelled() && needs.approve.result == 'success' && needs.image.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
