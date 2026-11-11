@@ -21,7 +21,7 @@ use serde_json::{Map, Value, json};
 use super::{key_can_use, web_search_allowed};
 use crate::{
     auth::ClientKey,
-    model::{ApiStyle, Deployment, Mode, ProviderKind, VirtualKey},
+    model::{ApiStyle, Deployment, Mode, ProviderKind, ThinkingOff, VirtualKey},
     registry::Snapshot,
     state::AppState,
 };
@@ -267,7 +267,14 @@ impl Info {
             max_input_tokens: tokens("max_input_tokens"),
             max_tokens: tokens("max_output_tokens").or_else(|| tokens("max_tokens")),
             retires: c.get("deprecation_date").and_then(Value::as_str).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
-            capabilities: (d.mode == Mode::Chat).then(|| Caps::of(d.style, d.provider, c)),
+            capabilities: (d.mode == Mode::Chat).then(|| {
+                let mut caps = Caps::of(d.style, d.provider, c);
+                // Sent as `between_tools`, which the model takes instead.
+                if d.style == ApiStyle::Anthropic && d.config.thinking_off == Some(ThinkingOff::BetweenTools) {
+                    caps.0.insert("thinking.types.disabled", Some(true));
+                }
+                caps
+            }),
         }
     }
 

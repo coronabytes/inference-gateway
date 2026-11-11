@@ -8,11 +8,26 @@ use super::{EventResult, EventStream, Op, Sse, SseHandler};
 use crate::{
     error::{ErrorKind, GatewayError},
     ir::{BlockKind, BlockTracker, ChatRequest, Effort, ImageSource, Part, Role, StopReason, StreamEvent, ToolChoice, Usage, WebSearch},
-    model::Deployment,
+    model::{Deployment, ThinkingOff},
     state::AppState,
 };
 
 pub const DEFAULT_MAX_TOKENS: u32 = 32_000;
+
+/// A client's own Messages body (passthrough, token counts): thinking turned off goes up as the
+/// deployment's `thinking_off` says. `between_tools` takes no other field and no effort above
+/// `high`.
+pub fn map_thinking_off(d: &Deployment, body: &mut Value) {
+    if d.config.thinking_off != Some(ThinkingOff::BetweenTools) || body.pointer("/thinking/type") != Some(&json!("disabled")) {
+        return;
+    }
+    body["thinking"] = json!({ "type": "between_tools" });
+    if let Some(e) = body.pointer_mut("/output_config/effort")
+        && matches!(e.as_str(), Some("xhigh" | "max"))
+    {
+        *e = "high".into();
+    }
+}
 
 pub async fn send(state: &AppState, d: &Deployment, req: &ChatRequest) -> Result<EventStream, GatewayError> {
     let mut body = build_body(req, d);
@@ -163,7 +178,11 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Value {
 
     let mut output_config = Map::new();
     // The nearest effort the model takes, if any: `none` asks for no thinking.
-    let thinking = req.reasoning.and_then(|r| Some((r, d.fit_effort(r.effort())?))).filter(|(_, e)| *e != Effort::None);
+    let fitted = req.reasoning.and_then(|r| Some((r, d.fit_effort(r.effort())?)));
+    let thinking = fitted.filter(|(_, e)| *e != Effort::None);
+    if fitted.is_some() && thinking.is_none() && d.config.thinking_off == Some(ThinkingOff::BetweenTools) {
+        body.insert("thinking".into(), json!({ "type": "between_tools" }));
+    }
     if let Some((r, effort)) = thinking {
         if d.config.thinking_mode.as_deref() == Some("budget") {
             let budget = r.budget_tokens().max(1024);

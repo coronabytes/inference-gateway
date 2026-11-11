@@ -579,6 +579,44 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn thinking_off_can_be_between_tools() {
+        use crate::ir::{ChatRequest, Effort, Reasoning};
+        use crate::model::ThinkingOff;
+        use serde_json::json;
+        let at = |style, off| {
+            let mut d = deployment(ProviderKind::Bedrock, style, "anthropic.claude-sonnet-5-5");
+            d.config.thinking_off = off;
+            d
+        };
+        let asking = |e| ChatRequest { reasoning: Some(Reasoning::Effort(e)), ..ChatRequest::default() };
+        let between = Some(ThinkingOff::BetweenTools);
+        // Translated: `none` becomes `between_tools`; on stays adaptive with its effort.
+        let claude = |e, off| anthropic::build_body(&asking(e), &at(ApiStyle::Anthropic, off));
+        assert_eq!(claude(Effort::None, between)["thinking"], json!({ "type": "between_tools" }));
+        assert!(claude(Effort::None, between).get("output_config").is_none());
+        assert!(claude(Effort::None, Option::None).get("thinking").is_none(), "disabled by default");
+        assert_eq!(claude(Effort::High, between)["thinking"], json!({ "type": "adaptive" }));
+        assert_eq!(claude(Effort::High, between)["output_config"]["effort"], "high");
+        assert!(anthropic::build_body(&ChatRequest::default(), &at(ApiStyle::Anthropic, between)).get("thinking").is_none(), "not asked");
+        let converse = bedrock::build_body(&asking(Effort::None), &at(ApiStyle::Converse, between)).unwrap();
+        assert_eq!(converse["additionalModelRequestFields"]["thinking"], json!({ "type": "between_tools" }));
+
+        // A client's own Messages body: `disabled` is replaced, with effort capped at high.
+        let native = |off, mut body: serde_json::Value| {
+            anthropic::map_thinking_off(&at(ApiStyle::Anthropic, off), &mut body);
+            body
+        };
+        let off = json!({ "thinking": { "type": "disabled" }, "output_config": { "effort": "max", "format": {} } });
+        let mapped = native(between, off.clone());
+        assert_eq!(mapped["thinking"], json!({ "type": "between_tools" }));
+        assert_eq!(mapped["output_config"], json!({ "effort": "high", "format": {} }));
+        assert_eq!(native(Option::None, off.clone()), off);
+        assert_eq!(native(Some(ThinkingOff::Disabled), off.clone()), off);
+        let adaptive = json!({ "thinking": { "type": "adaptive" }, "output_config": { "effort": "max" } });
+        assert_eq!(native(between, adaptive.clone()), adaptive, "adaptive stays as asked");
+    }
+
+    #[test]
     fn openai_key_goes_in_the_configured_header() {
         let mut d = deployment(ProviderKind::Openai, ApiStyle::Chat, "m");
         d.secrets.api_key = Some("k1".into());

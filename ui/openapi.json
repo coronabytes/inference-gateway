@@ -11418,6 +11418,17 @@
             ],
             "description": "Anthropic-style upstreams, translated requests: `adaptive` (default; Claude 4.6+ with\n`output_config.effort`) or `budget` (older models with `budget_tokens`)."
           },
+          "thinking_off": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingOff",
+                "description": "Anthropic-style upstreams: what a request that turns thinking off is sent as (see\n`ThinkingOff`). Turning it on stays as `thinking_mode` says."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "forward_sampling": {
             "type": [
               "boolean",
@@ -16933,6 +16944,14 @@
             "minimum": 0
           }
         }
+      },
+      "ThinkingOff": {
+        "type": "string",
+        "description": "How an Anthropic-style deployment turns thinking off.",
+        "enum": [
+          "disabled",
+          "between_tools"
+        ]
       },
       "TokenCount": {
         "type": "object",
