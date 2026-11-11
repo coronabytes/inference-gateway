@@ -25,7 +25,7 @@ use crate::{
     aws::{sdk_error, stream_sdk_error},
     error::{ErrorKind, GatewayError},
     ir::{BlockKind, BlockTracker, ChatRequest, Effort, ImageSource, Part, Role, StopReason, StreamEvent, ToolChoice, Usage},
-    model::Deployment,
+    model::{Deployment, ThinkingOff},
     state::AppState,
 };
 
@@ -561,7 +561,11 @@ pub fn build_body(req: &ChatRequest, d: &Deployment) -> Result<Value, GatewayErr
     let mut max_tokens = req.max_tokens.or(d.config.default_max_tokens);
     let mut extra = Map::new();
     // The nearest effort the model takes, if any: `none` asks for no thinking.
-    let thinking = req.reasoning.filter(|_| claude).and_then(|r| Some((r, d.fit_effort(r.effort())?))).filter(|(_, e)| *e != Effort::None);
+    let fitted = req.reasoning.filter(|_| claude).and_then(|r| Some((r, d.fit_effort(r.effort())?)));
+    let thinking = fitted.filter(|(_, e)| *e != Effort::None);
+    if fitted.is_some() && thinking.is_none() && d.config.thinking_off == Some(ThinkingOff::BetweenTools) {
+        extra.insert("thinking".into(), json!({ "type": "between_tools" }));
+    }
     if let Some((r, effort)) = thinking {
         if d.config.thinking_mode.as_deref() == Some("budget") {
             let budget = r.budget_tokens().max(1024);

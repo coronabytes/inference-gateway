@@ -3219,6 +3219,7 @@ export interface components {
              *     `output_config.effort`) or `budget` (older models with `budget_tokens`).
              */
             thinking_mode?: string | null;
+            thinking_off?: components["schemas"]["ThinkingOff"] | null;
             /**
              * @description Anthropic-style upstreams, translated requests: forward temperature/top_p. Off by
              *     default because current Claude models reject sampling parameters.
@@ -5300,6 +5301,11 @@ export interface components {
             /** Format: int64 */
             output_tokens: number | null;
         };
+        /**
+         * @description How an Anthropic-style deployment turns thinking off.
+         * @enum {string}
+         */
+        ThinkingOff: "disabled" | "between_tools";
         /** @description A token count, as Anthropic's API answers it. */
         TokenCount: {
             input_tokens: number;

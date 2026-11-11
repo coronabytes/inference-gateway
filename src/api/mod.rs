@@ -955,9 +955,12 @@ async fn passthrough(
 ) -> Result<Outcome, GatewayError> {
     let mut body = raw.clone();
     body["model"] = d.upstream_model.clone().into();
-    if inbound == Inbound::Messages && body.get("max_tokens").is_none() {
-        let mt = d.config.default_max_tokens.unwrap_or(providers::anthropic::DEFAULT_MAX_TOKENS);
-        body["max_tokens"] = mt.into();
+    if inbound == Inbound::Messages {
+        if body.get("max_tokens").is_none() {
+            let mt = d.config.default_max_tokens.unwrap_or(providers::anthropic::DEFAULT_MAX_TOKENS);
+            body["max_tokens"] = mt.into();
+        }
+        providers::anthropic::map_thinking_off(d, &mut body);
     }
     // Without this, OpenAI-compatible servers report no token usage on streams, and spend and
     // TPM limits could not be accounted. Clients see one extra chunk with empty `choices`.
@@ -1292,6 +1295,7 @@ async fn count(
     crate::auth::check_key_limits(state, key).await?;
     if let Some(d) = deps.iter().find(|d| d.style == ApiStyle::Anthropic && key.allows_deployment(d)) {
         tracker.attempt(d.clone());
+        providers::anthropic::map_thinking_off(d, &mut raw);
         if d.bedrock_invoke() {
             return Ok(Json(providers::bedrock::count_tokens(state, d, &raw).await?).into_response());
         }

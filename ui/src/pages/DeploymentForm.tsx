@@ -162,6 +162,7 @@ export function DeploymentForm({
     from?.config.bedrock_api === "invoke" ? "invoke" : (from?.config.api_style ?? STYLES[from?.provider ?? "openai"][0]?.value ?? "chat"),
   );
   const [thinking, setThinking] = useState(from?.config.thinking_mode ?? "adaptive");
+  const [thinkingOff, setThinkingOff] = useState<string>(from?.config.thinking_off ?? "disabled");
   const [defaultMax, setDefaultMax] = useState(from?.config.default_max_tokens?.toString() ?? "");
   const [maxField, setMaxField] = useState(from?.config.max_tokens_field ?? "");
   const [weight, setWeight] = useState(String(from?.weight ?? 1));
@@ -455,6 +456,7 @@ export function DeploymentForm({
           ...(chat && provider === "bedrock" && style === "invoke" && { bedrock_api: "invoke" as const }),
           ...(chat && provider === "bedrock" && style === "anthropic" && { bedrock_api: "mantle" as const }),
           ...(anthropicStyle && thinking !== "adaptive" && { thinking_mode: thinking }),
+          ...(anthropicStyle && thinkingOff === "between_tools" && { thinking_off: "between_tools" as const }),
           ...(chat && optInt(defaultMax) && { default_max_tokens: optInt(defaultMax)! }),
           ...(chat && maxField && style === "chat" && !MAX_TOKENS_ONLY.includes(provider) && { max_tokens_field: maxField }),
           ...(from?.config.headers && { headers: from.config.headers }),
@@ -907,6 +909,18 @@ export function DeploymentForm({
                 options={[
                   { value: "adaptive", label: "adaptive + effort" },
                   { value: "budget", label: "budget_tokens", note: "older models" },
+                ]}
+              />
+            )}
+            {anthropicStyle && (
+              <Select
+                caption="Thinking off"
+                hint="What a request that turns thinking off is sent as. Claude Sonnet 5.5 refuses disabled: between_tools has it think only between tool calls, at effort high at most."
+                value={thinkingOff}
+                onChange={setThinkingOff}
+                options={[
+                  { value: "disabled", label: "disabled" },
+                  { value: "between_tools", label: "between_tools", note: "Sonnet 5.5" },
                 ]}
               />
             )}

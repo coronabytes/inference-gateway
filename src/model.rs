@@ -241,6 +241,10 @@ pub struct DeploymentConfig {
     /// `output_config.effort`) or `budget` (older models with `budget_tokens`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_mode: Option<String>,
+    /// Anthropic-style upstreams: what a request that turns thinking off is sent as (see
+    /// `ThinkingOff`). Turning it on stays as `thinking_mode` says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_off: Option<ThinkingOff>,
     /// Anthropic-style upstreams, translated requests: forward temperature/top_p. Off by
     /// default because current Claude models reject sampling parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -298,6 +302,19 @@ pub enum BedrockApi {
     Invoke,
     /// bedrock-mantle's Messages API. The default, as before this option existed.
     Mantle,
+}
+
+/// How an Anthropic-style deployment turns thinking off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingOff {
+    /// As asked: `thinking: {type: "disabled"}` from a client goes up as is, and a translated
+    /// request leaves `thinking` out. The default.
+    Disabled,
+    /// `thinking: {type: "between_tools"}`, for models that refuse `disabled` (Claude Sonnet 5.5):
+    /// the model thinks only between tool calls. Its effort is capped at `high`, the most that
+    /// mode takes.
+    BetweenTools,
 }
 
 /// Headers a deployment's `headers` may not set: they would change where or how the request is
