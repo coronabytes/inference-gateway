@@ -178,6 +178,7 @@ export type GuardrailFinding = S["Finding"];
 
 /** What `POST /guardrails/{id}/test` answers. */
 export type GuardrailTestResult = S["GuardrailTestResult"];
+export type PresidioAnalyzer = S["PresidioAnalyzer"];
 
 export type McpAuth = S["McpAuth"];
 

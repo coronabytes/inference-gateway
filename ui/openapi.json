@@ -2698,6 +2698,107 @@
         ]
       }
     },
+    "/admin/api/guardrails/presidio/analyzer": {
+      "get": {
+        "tags": [
+          "Guardrails"
+        ],
+        "summary": "Read a Presidio analyzer",
+        "description": "The languages a Presidio analyzer serves, with the entity types it finds in each, read from its\n`/supportedentities`. The analyzer has no list of its languages, so it is asked about every\nISO 639-1 code; one it has no model for is left out.",
+        "operationId": "presidio_analyzer",
+        "parameters": [
+          {
+            "name": "credential_id",
+            "in": "query",
+            "description": "The generic HTTP credential of the Presidio analyzer.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The analyzer's languages, sorted by code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresidioAnalyzer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a generic HTTP credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The analyzer could not be reached or refused the credential, or serves no language.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
+    "/admin/api/guardrails/presidio/languages": {
+      "get": {
+        "tags": [
+          "Guardrails"
+        ],
+        "summary": "List detected languages",
+        "description": "The languages the gateway detects, as ISO 639-1 codes: those a Presidio guardrail with several\nlanguages can list. A guardrail with one language can use any its analyzer serves.",
+        "operationId": "presidio_languages",
+        "responses": {
+          "200": {
+            "description": "The languages' codes, sorted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "master_key": []
+          },
+          {
+            "admin_key": []
+          },
+          {
+            "admin_session": []
+          }
+        ]
+      }
+    },
     "/admin/api/guardrails/prices": {
       "get": {
         "tags": [
@@ -11278,6 +11379,24 @@
               "null"
             ],
             "description": "Azure with Entra ID: the app registration's application (client) ID."
+          },
+          "http_auth": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HttpAuth",
+                "description": "Generic HTTP: how requests authenticate; none when unset."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Generic HTTP with Basic authentication: the user name. Not secret; the password is."
           }
         },
         "additionalProperties": false
@@ -12395,7 +12514,7 @@
         "properties": {
           "policy": {
             "type": "string",
-            "description": "`content`, `topic`, `word`, `pii`, `regex` or `grounding` (Bedrock), `moderation` (Mistral),\nor Model Armor's filter (see `MODEL_ARMOR_FILTERS`)."
+            "description": "`content`, `topic`, `word`, `pii`, `regex` or `grounding` (Bedrock), `moderation` (Mistral),\nModel Armor's filter (see `MODEL_ARMOR_FILTERS`), or `pii` (Presidio)."
           },
           "kind": {
             "type": "string",
@@ -12525,7 +12644,21 @@
             "items": {
               "type": "string"
             },
-            "description": "Mistral: the categories that block a request (see `MISTRAL_CATEGORIES`); Model Armor: the\nfilters that do (see `MODEL_ARMOR_FILTERS`). Others that find something flag it, and the\nrequest goes on."
+            "description": "Mistral: the categories that block a request (see `MISTRAL_CATEGORIES`); Model Armor: the\nfilters that do (see `MODEL_ARMOR_FILTERS`); Presidio: the entity types that do. Others that\nfind something flag it, and the request goes on."
+          },
+          "mask": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Presidio: the entity types that are masked, replaced with `<ENTITY_TYPE>`."
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Presidio: the languages its analyzer is asked in, as ISO 639-1 codes (`en`, `de`). With\nseveral, each text's language is detected among them, the first when unsure (see\n`language_of`)."
           },
           "threshold": {
             "type": [
@@ -12533,7 +12666,7 @@
               "null"
             ],
             "format": "double",
-            "description": "Mistral: the score (0 to 1) from which a category counts as found; Mistral's own decision\nwhen unset."
+            "description": "Mistral: the score (0 to 1) from which a category counts as found; Mistral's own decision\nwhen unset. Presidio: the analyzer's `score_threshold`."
           },
           "template": {
             "type": [
@@ -12733,7 +12866,8 @@
         "enum": [
           "bedrock",
           "mistral",
-          "model_armor"
+          "model_armor",
+          "presidio"
         ]
       },
       "GuardrailSummary": {
@@ -12958,6 +13092,15 @@
             "description": "The share of its weight the deployment gets now: 1 when healthy, down to 0.05."
           }
         }
+      },
+      "HttpAuth": {
+        "type": "string",
+        "description": "How a generic HTTP credential authenticates.",
+        "enum": [
+          "none",
+          "basic",
+          "bearer"
+        ]
       },
       "HubDeployment": {
         "allOf": [
@@ -15379,6 +15522,41 @@
           }
         }
       },
+      "PresidioAnalyzer": {
+        "type": "object",
+        "description": "What a Presidio analyzer serves: the languages it has a model for, each with the entity types\nit finds in it.",
+        "required": [
+          "languages"
+        ],
+        "properties": {
+          "languages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresidioLanguage"
+            }
+          }
+        }
+      },
+      "PresidioLanguage": {
+        "type": "object",
+        "required": [
+          "code",
+          "entities"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "ISO 639-1, such as `de`."
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The entity types, sorted."
+          }
+        }
+      },
       "PriceImport": {
         "type": "object",
         "required": [
@@ -15687,7 +15865,8 @@
           "typesafe",
           "mistral",
           "vertex",
-          "gemini"
+          "gemini",
+          "http"
         ]
       },
       "RatePoint": {
@@ -16152,6 +16331,13 @@
               "null"
             ],
             "description": "Azure with Entra ID: the app registration's client secret, used instead of an API key."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Generic HTTP with Basic authentication: the password."
           }
         },
         "additionalProperties": false

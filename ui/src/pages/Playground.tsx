@@ -72,7 +72,7 @@ const SAMPLES: { label: string; prompt: string; webSearch?: boolean; schema?: ob
       "Jane Doe is a product manager at Acme Ltd. Reach her at jane.doe@acme.example or +44 20 7946 0958. Extract her contact details.",
     schema: CONTACT_SCHEMA,
   },
-  { label: "PII", prompt: "Hi, I am Jane Doe, call me at +49 151 2223334." },
+  { label: "PII", prompt: "Hi, I am Jane Doe, call me at +49 151 22233344." },
   {
     label: "Injection",
     prompt:

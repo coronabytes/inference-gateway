@@ -22,6 +22,9 @@ pub enum ProviderKind {
     Vertex,
     /// Google AI Studio (the Gemini API) through its OpenAI-compatible endpoint.
     Gemini,
+    /// A plain HTTP service, such as a self-hosted Presidio analyzer: a base URL and no, Basic or
+    /// Bearer authentication. Serves guardrails, never deployments (it supports no `ApiStyle`).
+    Http,
 }
 
 impl ProviderKind {
@@ -35,6 +38,7 @@ impl ProviderKind {
             Self::Mistral => "mistral",
             Self::Vertex => "vertex",
             Self::Gemini => "gemini",
+            Self::Http => "http",
         }
     }
 
@@ -48,13 +52,14 @@ impl ProviderKind {
             "mistral" => Some(Self::Mistral),
             "vertex" => Some(Self::Vertex),
             "gemini" => Some(Self::Gemini),
+            "http" => Some(Self::Http),
             _ => None,
         }
     }
 
     pub fn default_style(self) -> ApiStyle {
         match self {
-            Self::Openai | Self::Azure | Self::Mistral | Self::Vertex | Self::Gemini => ApiStyle::Chat,
+            Self::Openai | Self::Azure | Self::Mistral | Self::Vertex | Self::Gemini | Self::Http => ApiStyle::Chat,
             Self::Bedrock => ApiStyle::Converse,
             Self::Anthropic => ApiStyle::Anthropic,
             Self::Typesafe => ApiStyle::Systemone,
@@ -220,6 +225,43 @@ pub struct CredentialSettings {
     /// Azure with Entra ID: the app registration's application (client) ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// Generic HTTP: how requests authenticate; none when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_auth: Option<HttpAuth>,
+    /// Generic HTTP with Basic authentication: the user name. Not secret; the password is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+}
+
+/// How a generic HTTP credential authenticates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum HttpAuth {
+    /// Nothing sent.
+    None,
+    /// `Authorization: Basic`, with `username` and the `password` secret.
+    Basic,
+    /// `Authorization: Bearer`, with the `api_key` secret as the token.
+    Bearer,
+}
+
+impl CredentialSettings {
+    /// A generic HTTP credential's `Authorization` header, if it sends one; marked sensitive.
+    pub fn http_authorization(&self, secrets: &Secrets) -> Result<Option<axum::http::HeaderValue>, String> {
+        use base64::Engine;
+        let value = match self.http_auth.unwrap_or(HttpAuth::None) {
+            HttpAuth::None => return Ok(None),
+            HttpAuth::Basic => {
+                let user = self.username.as_deref().ok_or("the credential has no user name")?;
+                let password = secrets.password.as_deref().ok_or("the credential has no password")?;
+                format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}")))
+            }
+            HttpAuth::Bearer => format!("Bearer {}", secrets.api_key.as_deref().ok_or("the credential has no token")?),
+        };
+        let mut v = axum::http::HeaderValue::from_str(&value).map_err(|_| "the credential's secret is not a valid header value")?;
+        v.set_sensitive(true);
+        Ok(Some(v))
+    }
 }
 
 /// Per-model settings, stored as JSONB on the deployment.
@@ -438,6 +480,9 @@ pub struct Secrets {
     /// Azure with Entra ID: the app registration's client secret, used instead of an API key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
+    /// Generic HTTP with Basic authentication: the password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
 }
 
 impl Secrets {
@@ -454,6 +499,7 @@ impl Secrets {
         apply(&mut self.aws_session_token, patch.aws_session_token);
         apply(&mut self.google_service_account, patch.google_service_account);
         apply(&mut self.client_secret, patch.client_secret);
+        apply(&mut self.password, patch.password);
     }
 
     /// All values that are set.
@@ -465,6 +511,7 @@ impl Secrets {
             &self.aws_session_token,
             &self.google_service_account,
             &self.client_secret,
+            &self.password,
         ]
         .into_iter()
         .filter_map(|v| v.as_deref())
@@ -478,6 +525,7 @@ impl Secrets {
             ("aws_session_token", self.aws_session_token.is_some()),
             ("google_service_account", self.google_service_account.is_some()),
             ("client_secret", self.client_secret.is_some()),
+            ("password", self.password.is_some()),
         ])
     }
 }

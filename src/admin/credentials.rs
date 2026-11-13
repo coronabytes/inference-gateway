@@ -17,7 +17,7 @@ use crate::{
     audit::{self, Actor},
     db,
     error::AdminError,
-    model::{CredentialRow, CredentialSettings, ProviderKind, Secrets},
+    model::{CredentialRow, CredentialSettings, HttpAuth, ProviderKind, Secrets},
     registry,
     state::AppState,
     sync::broadcast_reload,
@@ -94,7 +94,24 @@ pub(super) fn clean_settings(state: &AppState, provider: ProviderKind, s: Creden
         tenant_id: tidy(s.tenant_id),
         client_id: tidy(s.client_id),
         identity: s.identity,
+        // `none` is the default, stored as unset.
+        http_auth: s.http_auth.filter(|a| *a != HttpAuth::None),
+        username: tidy(s.username),
     };
+    if provider != ProviderKind::Http && (s.http_auth.is_some() || s.username.is_some()) {
+        return Err(AdminError::bad_request("http_auth and username only apply to generic HTTP credentials"));
+    }
+    if provider == ProviderKind::Http {
+        if s.base_url.is_none() {
+            return Err(AdminError::bad_request("a generic HTTP credential needs its base_url"));
+        }
+        if s.username.is_some() != (s.http_auth == Some(HttpAuth::Basic)) {
+            return Err(AdminError::bad_request("Basic authentication needs a username, and only it takes one"));
+        }
+        if s.username.as_deref().is_some_and(|u| u.contains(':') || u.chars().any(char::is_control)) {
+            return Err(AdminError::bad_request("the username cannot contain ':' or control characters"));
+        }
+    }
     let environment = s.identity == Some(crate::model::Identity::Environment);
     if environment && !matches!(provider, ProviderKind::Azure | ProviderKind::Vertex) {
         return Err(AdminError::bad_request("identity only applies to Azure and Vertex AI credentials"));
@@ -180,6 +197,9 @@ fn validate_credential(provider: ProviderKind, name: &str, s: &Secrets, settings
     if provider != ProviderKind::Azure && s.client_secret.is_some() {
         return Err(AdminError::bad_request("a client_secret only applies to Azure credentials (Entra ID)"));
     }
+    if provider != ProviderKind::Http && s.password.is_some() {
+        return Err(AdminError::bad_request("a password only applies to generic HTTP credentials"));
+    }
     let entra = settings.tenant_id.is_some();
     let environment = settings.identity == Some(crate::model::Identity::Environment);
     if environment && (s.api_key.is_some() || s.client_secret.is_some() || s.google_service_account.is_some() || has_aws) {
@@ -212,6 +232,19 @@ fn validate_credential(provider: ProviderKind, name: &str, s: &Secrets, settings
             crate::google::ServiceAccount::parse(json).map_err(AdminError::bad_request)?;
             if s.api_key.is_some() || has_aws {
                 return Err(AdminError::bad_request("Vertex AI credentials take a service account key only"));
+            }
+        }
+        // Exactly the secret its authentication sends.
+        ProviderKind::Http => {
+            let (needs_token, needs_password) = match settings.http_auth.unwrap_or(HttpAuth::None) {
+                HttpAuth::None => (false, false),
+                HttpAuth::Basic => (false, true),
+                HttpAuth::Bearer => (true, false),
+            };
+            if has_aws || s.api_key.is_some() != needs_token || s.password.is_some() != needs_password {
+                return Err(AdminError::bad_request(
+                    "a generic HTTP credential stores a password with Basic authentication, a token (api_key) with Bearer, and nothing without",
+                ));
             }
         }
         // A half-configured key pair would silently fall back to the default credential chain.
@@ -283,7 +316,7 @@ pub(super) async fn create_credential(
     Json(i): Json<CredentialInput>,
 ) -> R<(StatusCode, Json<CredentialView>)> {
     let provider = i.provider.as_deref().and_then(ProviderKind::parse).ok_or_else(|| {
-        AdminError::bad_request("provider must be one of openai, azure, bedrock, anthropic, typesafe, mistral, vertex, gemini")
+        AdminError::bad_request("provider must be one of openai, azure, bedrock, anthropic, typesafe, mistral, vertex, gemini, http")
     })?;
     let mut secrets = Secrets::default();
     secrets.merge(i.secrets);
@@ -506,5 +539,47 @@ mod tests {
         assert!(validate_credential(ProviderKind::Vertex, "v", &Secrets::default(), &v).is_ok());
         // Other providers have their own chains (Bedrock) or none.
         assert!(env(ProviderKind::Openai, CredentialSettings::default()).is_err());
+    }
+
+    #[tokio::test]
+    async fn http_credentials() {
+        let state = crate::state::test_state();
+        let base = CredentialSettings { base_url: Some("https://presidio.example.com".into()), ..Default::default() };
+        let clean = |s: CredentialSettings| clean_settings(&state, ProviderKind::Http, s);
+        let check = |s: &CredentialSettings, secrets: Secrets| validate_credential(ProviderKind::Http, "p", &secrets, s);
+        let token = Secrets { api_key: Some("t".into()), ..Default::default() };
+        let password = Secrets { password: Some("pw".into()), ..Default::default() };
+
+        // No authentication: `none` is stored as unset, and nothing secret is kept.
+        let none = clean(CredentialSettings { http_auth: Some(HttpAuth::None), ..base.clone() }).unwrap();
+        assert_eq!(none.http_auth, None);
+        assert!(check(&none, Secrets::default()).is_ok());
+        assert!(check(&none, token.clone()).is_err());
+        assert!(clean(CredentialSettings::default()).is_err(), "a base URL is required");
+
+        // Basic: a user name in the settings and the password secret.
+        let basic = clean(CredentialSettings { http_auth: Some(HttpAuth::Basic), username: Some(" gw ".into()), ..base.clone() }).unwrap();
+        assert_eq!(basic.username.as_deref(), Some("gw"));
+        assert!(check(&basic, password.clone()).is_ok());
+        assert!(check(&basic, token.clone()).is_err());
+        assert!(clean(CredentialSettings { http_auth: Some(HttpAuth::Basic), ..base.clone() }).is_err());
+        assert!(clean(CredentialSettings { http_auth: Some(HttpAuth::Basic), username: Some("a:b".into()), ..base.clone() }).is_err());
+        let header = basic.http_authorization(&password).unwrap().unwrap();
+        assert_eq!(header, "Basic Z3c6cHc=");
+        assert!(header.is_sensitive());
+
+        // Bearer: the token in api_key.
+        let bearer = clean(CredentialSettings { http_auth: Some(HttpAuth::Bearer), ..base.clone() }).unwrap();
+        assert!(check(&bearer, token.clone()).is_ok());
+        assert!(check(&bearer, password.clone()).is_err());
+        assert_eq!(bearer.http_authorization(&token).unwrap().unwrap(), "Bearer t");
+        assert!(clean(CredentialSettings { http_auth: Some(HttpAuth::Bearer), username: Some("u".into()), ..base }).is_err());
+
+        // Other providers take none of it.
+        assert!(
+            clean_settings(&state, ProviderKind::Openai, CredentialSettings { http_auth: Some(HttpAuth::Bearer), ..Default::default() })
+                .is_err()
+        );
+        assert!(validate_credential(ProviderKind::Openai, "o", &password, &CredentialSettings::default()).is_err());
     }
 }

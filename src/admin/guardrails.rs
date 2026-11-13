@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use axum::{
     Extension, Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use chrono::{DateTime, Utc};
@@ -110,14 +110,26 @@ pub(super) fn check_guardrail(
     }
     let description = description.map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
     let tidy = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
-    let mut block: Vec<String> = config.block.iter().map(|c| c.trim().to_string()).collect();
-    block.sort();
-    block.dedup();
+    let set = |v: &[String]| {
+        let mut v: Vec<String> = v.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    // In the order given: the first is the one used when a text's language is unclear.
+    let mut languages: Vec<String> = Vec::new();
+    for l in config.languages.iter().map(|l| l.trim().to_ascii_lowercase()).filter(|l| !l.is_empty()) {
+        if !languages.contains(&l) {
+            languages.push(l);
+        }
+    }
     let config = GuardrailConfig {
         guardrail_identifier: tidy(&config.guardrail_identifier),
         guardrail_version: tidy(&config.guardrail_version),
         model: tidy(&config.model),
-        block,
+        block: set(&config.block),
+        mask: set(&config.mask),
+        languages,
         threshold: config.threshold,
         template: tidy(&config.template),
         location: tidy(&config.location),
@@ -128,7 +140,48 @@ pub(super) fn check_guardrail(
     let model_armor_fields = config.template.is_some() || config.location.is_some() || config.project_id.is_some();
     // A path segment of Google's API: letters, digits, `-` and `_`.
     let google_id = |s: &str| !s.is_empty() && s.len() <= 63 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if provider != GuardrailProvider::Presidio && (!config.mask.is_empty() || !config.languages.is_empty()) {
+        return Err(only("entities to mask and languages", "Presidio"));
+    }
     match provider {
+        GuardrailProvider::Presidio => {
+            if bedrock_fields {
+                return Err(only("a guardrail id and version", "Bedrock"));
+            }
+            if model_armor_fields {
+                return Err(only("a template, location and project", "Model Armor"));
+            }
+            if config.model.is_some() {
+                return Err(only("a model", "Mistral"));
+            }
+            if config.languages.is_empty() {
+                return Err(AdminError::bad_request("a Presidio guardrail needs at least one language, such as en"));
+            }
+            if let Some(l) = config.languages.iter().find(|l| !guardrails::LANGUAGE_CODES.contains(&l.as_str())) {
+                return Err(AdminError::bad_request(format!("'{l}' is not an ISO 639-1 language code, such as en or de")));
+            }
+            // Several languages are told apart by the gateway's detector, which knows only some.
+            let detectable = guardrails::detectable_languages();
+            if config.languages.len() > 1
+                && let Some(l) = config.languages.iter().find(|l| !detectable.contains(l))
+            {
+                return Err(AdminError::bad_request(format!(
+                    "'{l}' cannot be detected; a guardrail with several languages lists only {}. With one language, any works",
+                    detectable.join(", ")
+                )));
+            }
+            // Presidio's own entity types are upper case; custom recognizers name theirs freely.
+            let entity = |e: &str| e.len() <= 100 && e.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'));
+            if let Some(e) = config.mask.iter().chain(&config.block).find(|e| !entity(e)) {
+                return Err(AdminError::bad_request(format!("'{e}' is not an entity type, such as PERSON or IBAN_CODE")));
+            }
+            if let Some(e) = config.mask.iter().find(|e| config.block.contains(e)) {
+                return Err(AdminError::bad_request(format!("{e} is both masked and blocked; choose one")));
+            }
+            if config.threshold.is_some_and(|t| !(0.0..=1.0).contains(&t)) {
+                return Err(AdminError::bad_request("the threshold is a score from 0 to 1"));
+            }
+        }
         GuardrailProvider::ModelArmor => {
             if bedrock_fields {
                 return Err(only("a guardrail id and version", "Bedrock"));
@@ -262,7 +315,7 @@ pub(crate) async fn create_guardrail(
         .provider
         .as_deref()
         .and_then(GuardrailProvider::parse)
-        .ok_or_else(|| AdminError::bad_request("provider must be bedrock, mistral or model_armor"))?;
+        .ok_or_else(|| AdminError::bad_request("provider must be bedrock, mistral, model_armor or presidio"))?;
     let (name, description, config) = validate(&state, provider, &i).await?;
     let now = Utc::now();
     let row = GuardrailRow {
@@ -421,5 +474,117 @@ pub(crate) async fn list_prices() -> Json<Value> {
         "bedrock": GuardrailPrices::list(GuardrailProvider::Bedrock),
         "mistral": GuardrailPrices::list(GuardrailProvider::Mistral),
         "model_armor": GuardrailPrices::list(GuardrailProvider::ModelArmor),
+        "presidio": GuardrailPrices::list(GuardrailProvider::Presidio),
     }))
+}
+
+/// List detected languages
+///
+/// The languages the gateway detects, as ISO 639-1 codes: those a Presidio guardrail with several
+/// languages can list. A guardrail with one language can use any its analyzer serves.
+#[utoipa::path(get, path = "/guardrails/presidio/languages", tag = "Guardrails",
+    responses((status = 200, description = "The languages' codes, sorted.", body = Vec<String>)),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(crate) async fn presidio_languages() -> Json<Vec<String>> {
+    Json(guardrails::detectable_languages())
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct PresidioAnalyzerQuery {
+    /// The generic HTTP credential of the Presidio analyzer.
+    credential_id: Uuid,
+}
+
+/// What a Presidio analyzer serves: the languages it has a model for, each with the entity types
+/// it finds in it.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PresidioAnalyzer {
+    languages: Vec<PresidioLanguage>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PresidioLanguage {
+    /// ISO 639-1, such as `de`.
+    code: String,
+    /// The entity types, sorted.
+    entities: Vec<String>,
+}
+
+/// How many languages an analyzer is asked about at once.
+const PROBES: usize = 32;
+
+/// Read a Presidio analyzer
+///
+/// The languages a Presidio analyzer serves, with the entity types it finds in each, read from its
+/// `/supportedentities`. The analyzer has no list of its languages, so it is asked about every
+/// ISO 639-1 code; one it has no model for is left out.
+#[utoipa::path(get, path = "/guardrails/presidio/analyzer", tag = "Guardrails", params(PresidioAnalyzerQuery),
+    responses(
+        (status = 200, description = "The analyzer's languages, sorted by code.", body = PresidioAnalyzer),
+        (status = 400, description = "Not a generic HTTP credential.", body = crate::error::AdminErrorBody),
+        (status = 502, description = "The analyzer could not be reached or refused the credential, or serves no language.", body = crate::error::AdminErrorBody),
+    ),
+    security(("master_key" = []), ("admin_key" = []), ("admin_session" = [])))]
+pub(crate) async fn presidio_analyzer(State(state): State<AppState>, Query(q): Query<PresidioAnalyzerQuery>) -> R<Json<PresidioAnalyzer>> {
+    use futures::StreamExt;
+    let cred = db::get_credential(&state.db, q.credential_id).await?.ok_or_else(|| AdminError::bad_request("no such credential"))?;
+    check_credential(GuardrailProvider::Presidio, &cred.provider)?;
+    let secrets = registry::decrypt_secrets(&state.cfg.secret_box, cred.secrets.as_deref()).map_err(AdminError::internal)?;
+    let (state, settings, secrets) = (&state, &cred.settings.0, &secrets);
+    let unreachable = |e: crate::error::GatewayError| AdminError::bad_gateway(e.message);
+    // English first: an analyzer that cannot be reached or refuses the credential fails once,
+    // rather than once for every language.
+    let mut languages = Vec::new();
+    if let Some(entities) = guardrails::presidio_entities(state, settings, secrets, "en").await.map_err(unreachable)? {
+        languages.push(PresidioLanguage { code: "en".into(), entities });
+    }
+    let mut probes = Vec::new();
+    for &code in guardrails::LANGUAGE_CODES.iter().filter(|c| **c != "en") {
+        probes.push(async move { (code, guardrails::presidio_entities(state, settings, secrets, code).await) });
+    }
+    let answers: Vec<_> = futures::stream::iter(probes).buffer_unordered(PROBES).collect().await;
+    for (code, answer) in answers {
+        if let Some(entities) = answer.map_err(unreachable)? {
+            languages.push(PresidioLanguage { code: code.into(), entities });
+        }
+    }
+    if languages.is_empty() {
+        return Err(AdminError::bad_gateway("the analyzer serves no language"));
+    }
+    languages.sort_by(|a, b| a.code.cmp(&b.code));
+    Ok(Json(PresidioAnalyzer { languages }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checks_presidio_guardrails() {
+        let check = |c: GuardrailConfig| check_guardrail(GuardrailProvider::Presidio, "pii", None, &c, None).map(|(_, _, c)| c);
+        let langs = |l: &[&str]| l.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+        let base = GuardrailConfig { languages: langs(&["de"]), mask: langs(&["PERSON"]), ..Default::default() };
+
+        // Languages keep their order (the first is the fallback), lower-cased and once each.
+        let c = check(GuardrailConfig { languages: langs(&[" DE", "en", "de"]), ..base.clone() }).unwrap();
+        assert_eq!(c.languages, ["de", "en"]);
+        assert!(check(GuardrailConfig { languages: vec![], ..base.clone() }).is_err());
+        assert!(check(GuardrailConfig { languages: langs(&["xx"]), ..base.clone() }).is_err());
+        // Alone, any language the analyzer may serve; several only among those the gateway detects.
+        assert!(check(GuardrailConfig { languages: langs(&["ja"]), ..base.clone() }).is_ok());
+        assert!(check(GuardrailConfig { languages: langs(&["en", "ja"]), ..base.clone() }).is_err());
+
+        // An entity type is masked or blocked, not both, and looks like one.
+        assert!(check(GuardrailConfig { block: langs(&["PERSON"]), ..base.clone() }).is_err());
+        assert!(check(GuardrailConfig { mask: langs(&["NO SPACES"]), ..base.clone() }).is_err());
+        assert!(check(GuardrailConfig { threshold: Some(1.5), ..base.clone() }).is_err());
+        assert!(check(GuardrailConfig { threshold: Some(0.0), ..base.clone() }).is_ok());
+
+        // Other providers' fields, and Presidio's on other providers, are refused.
+        assert!(check(GuardrailConfig { model: Some("m".into()), ..base.clone() }).is_err());
+        assert!(check(GuardrailConfig { template: Some("t".into()), ..base.clone() }).is_err());
+        let mistral = GuardrailConfig { languages: langs(&["en"]), ..Default::default() };
+        assert!(check_guardrail(GuardrailProvider::Mistral, "m", None, &mistral, None).is_err());
+    }
 }

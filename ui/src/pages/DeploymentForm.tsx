@@ -55,6 +55,8 @@ const STYLES: Record<Provider, { value: StyleChoice; label: string; note?: strin
     { value: "anthropic", label: "Anthropic Messages", note: "Claude on Vertex AI" },
   ],
   gemini: [{ value: "chat", label: "Chat Completions", note: "OpenAI-compatible" }],
+  // Serves guardrails, never deployments.
+  http: [],
 };
 
 /** Providers whose Chat Completions take only `max_tokens`; the gateway sends that. */

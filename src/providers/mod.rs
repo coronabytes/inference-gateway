@@ -184,6 +184,7 @@ async fn api_base(state: &AppState, d: &Deployment) -> Result<String, GatewayErr
         ProviderKind::Typesafe => custom.unwrap_or_else(|| "https://api.typesafe.ai".into()),
         ProviderKind::Mistral => custom.unwrap_or_else(|| mistral_base(d.connection.region.as_deref())),
         ProviderKind::Gemini => custom.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai".into()),
+        ProviderKind::Http => return Err(GatewayError::internal("a generic HTTP credential serves no deployments")),
         ProviderKind::Vertex => {
             let project = google::project(&d.connection, &d.secrets)?;
             let location = d.connection.region.as_deref().unwrap_or("global");
@@ -355,6 +356,7 @@ pub fn headers(d: &Deployment) -> Result<HeaderMap, GatewayError> {
         }
         // An access token is added when the request is sent (see `post`).
         ProviderKind::Vertex => {}
+        ProviderKind::Http => return Err(GatewayError::internal("a generic HTTP credential serves no deployments")),
         ProviderKind::Anthropic => {
             let k = key.ok_or_else(|| GatewayError::internal("anthropic deployment has no api_key"))?;
             h.insert("x-api-key", HeaderValue::from_str(k).map_err(|_| bad_key())?);

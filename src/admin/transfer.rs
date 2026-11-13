@@ -358,10 +358,14 @@ struct Changes {
     unchanged: usize,
 }
 
-/// Providers whose credentials do not work without a secret. OpenAI-compatible servers may need
-/// none, and Bedrock can use the AWS credential chain.
-fn needs_secret(p: ProviderKind) -> bool {
-    !matches!(p, ProviderKind::Openai | ProviderKind::Bedrock)
+/// Whether a credential does not work without a secret. OpenAI-compatible servers may need none,
+/// Bedrock can use the AWS credential chain, and a generic HTTP service may take no authentication.
+fn needs_secret(p: ProviderKind, settings: &CredentialSettings) -> bool {
+    match p {
+        ProviderKind::Openai | ProviderKind::Bedrock => false,
+        ProviderKind::Http => settings.http_auth.is_some_and(|a| a != crate::model::HttpAuth::None),
+        _ => true,
+    }
 }
 
 fn bad(msg: impl Into<String>) -> AdminError {
@@ -495,8 +499,9 @@ pub(super) async fn import(
                 new_creds.insert(row.id);
                 // One with the environment's identity (Azure, Vertex AI) stores no secret.
                 let environment = row.settings.0.identity == Some(crate::model::Identity::Environment);
+                let needs = needs_secret(provider, &row.settings.0);
                 creds.push(row);
-                if (!c.secrets.is_empty() || needs_secret(provider)) && !environment {
+                if (!c.secrets.is_empty() || needs) && !environment {
                     needs_secrets.push(name.clone());
                 }
                 cred_changes.created.push(name);

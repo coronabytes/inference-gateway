@@ -295,6 +295,7 @@ fn provider_name(p: ProviderKind) -> &'static str {
         ProviderKind::Gemini => "gcp.gemini",
         ProviderKind::Mistral => "mistral_ai",
         ProviderKind::Typesafe => "typesafe",
+        ProviderKind::Http => "http",
     }
 }
 

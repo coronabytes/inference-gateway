@@ -350,6 +350,7 @@ fn candidates(provider: ProviderKind, model: &str) -> Vec<String> {
         ProviderKind::Typesafe => vec![format!("typesafe/{m}"), m.clone()],
         ProviderKind::Mistral => vec![format!("mistral/{m}"), m.clone()],
         ProviderKind::Gemini => vec![format!("gemini/{m}"), m.clone()],
+        ProviderKind::Http => vec![m.clone()],
         // Gemini on Vertex is keyed by bare name, partner models (Claude, …) as `vertex_ai/…`.
         ProviderKind::Vertex => {
             let bare = model.strip_prefix("google/").unwrap_or(model);

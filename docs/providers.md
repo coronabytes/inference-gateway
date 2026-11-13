@@ -12,6 +12,7 @@ A **credential** is one provider account: where to reach it and how to authentic
 | Google AI Studio | Chat, embeddings | Optional base URL | API key |
 | Mistral AI | Chat, embeddings | Global, EU or US endpoint | API key |
 | TypeSafe | Decision models | Optional base URL | API key |
+| Generic HTTP | [Guardrails](guardrails.md) on a self-hosted service (Presidio), no models | Base URL | None, Basic (user name and password) or a Bearer token |
 
 **AWS credential chain.** A Bedrock credential without secrets uses the standard AWS sources: environment, profile, SSO, EKS (IRSA or Pod Identity), ECS task role or EC2 instance profile. The gateway then stores no AWS secret at all.
 
@@ -21,7 +22,7 @@ A **credential** is one provider account: where to reach it and how to authentic
 
 **Regions.** Bedrock, Vertex AI and Mistral credentials pin traffic to a region or geography, for example to keep data in the EU.
 
-**Private networks.** Models on your own network (a vLLM or Ollama server, an Azure private endpoint, a Bedrock VPC endpoint) need their network listed in `GATEWAY_UPSTREAM_ALLOWED_NETWORKS`; by default the gateway only connects to public addresses. See [Configuration](configuration.md#access-and-security).
+**Private networks.** Models and services on your own network (a vLLM or Ollama server, an Azure private endpoint, a Bedrock VPC endpoint, a Presidio analyzer) need their network listed in `GATEWAY_UPSTREAM_ALLOWED_NETWORKS`; by default the gateway only connects to public addresses. See [Configuration](configuration.md#access-and-security).
 
 **The gateway's own identity.** Like Bedrock's AWS credential chain, Azure and Vertex AI credentials can store no secret at all and use the identity the gateway runs as, through each cloud's official SDK:
 

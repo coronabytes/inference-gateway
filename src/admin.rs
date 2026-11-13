@@ -58,6 +58,8 @@ pub fn router(state: Option<&AppState>) -> OpenApiRouter<AppState> {
         .routes(routes!(deployments::clear_cooldown))
         .routes(routes!(guardrails::list_guardrails, guardrails::create_guardrail))
         .routes(routes!(guardrails::list_prices))
+        .routes(routes!(guardrails::presidio_languages))
+        .routes(routes!(guardrails::presidio_analyzer))
         .routes(routes!(guardrails::update_guardrail, guardrails::delete_guardrail))
         .routes(routes!(guardrails::test_guardrail))
         .routes(routes!(mcp::list_mcp_servers, mcp::create_mcp_server))
