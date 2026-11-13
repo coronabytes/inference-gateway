@@ -8,7 +8,8 @@
 // Model names control behaviour: anything containing "fail" returns 503 (to exercise
 // failover/cooldown); requests with tools get a tool call back. A streamed Messages request
 // with the web search tool gets a search, its results and a cited answer. Bedrock credentials
-// pointed at the mock get a guardrail (see `applyGuardrail`).
+// pointed at the mock get a guardrail (see `applyGuardrail`), and under /presidio it is a
+// Presidio analyzer (see `presidioAnalyze`).
 import http from "node:http";
 
 const PORT = Number(process.env.PORT ?? 16604);
@@ -254,6 +255,35 @@ function applyGuardrail(body, res) {
   });
 }
 
+// A Presidio analyzer at /presidio, for a generic HTTP credential with that base URL (any
+// authentication). English finds e-mail addresses, phone numbers, IBANs and the names "Ada
+// Lovelace" and "Jana Novák"; German the same without phone numbers. Offsets count code points,
+// as Presidio's do.
+const PRESIDIO = {
+  en: ["EMAIL_ADDRESS", "IBAN_CODE", "PERSON", "PHONE_NUMBER"],
+  de: ["EMAIL_ADDRESS", "IBAN_CODE", "PERSON"],
+};
+const PRESIDIO_PATTERNS = [
+  ["EMAIL_ADDRESS", /[\w.+-]+@[\w-]+\.[\w.]+/gu, 1.0],
+  ["PHONE_NUMBER", /\+\d[\d ]{7,}\d/gu, 0.75],
+  ["IBAN_CODE", /\b[A-Z]{2}\d{2}(?: ?\d{4}){4}(?: ?\d{1,4})?\b/gu, 1.0],
+  ["PERSON", /Ada Lovelace|Jana Novák/gu, 0.85],
+];
+
+function presidioAnalyze(body, res) {
+  const entities = PRESIDIO[body.language];
+  console.log(`POST presidio/analyze language=${body.language}`);
+  if (!entities) return json(res, 400, { error: `No matching recognizers were found to serve the request (language ${body.language}).` });
+  const text = String(body.text ?? "");
+  const at = (i) => [...text.slice(0, i)].length;
+  const results = [];
+  for (const [type, re, score] of PRESIDIO_PATTERNS) {
+    if (!entities.includes(type) || score < (body.score_threshold ?? 0)) continue;
+    for (const m of text.matchAll(re)) results.push({ entity_type: type, start: at(m.index), end: at(m.index + m[0].length), score });
+  }
+  json(res, 200, results);
+}
+
 /** A WAV file of a short tone: what the mock "speaks". */
 function tone(seconds = 0.6, rate = 16000) {
   const n = Math.round(seconds * rate);
@@ -339,13 +369,19 @@ http
       if (req.url.split("?")[0].endsWith("/audio/transcriptions")) return transcription(raw, res);
       let body = {};
       try {
-        body = JSON.parse(raw || "{}");
+        // Read as latin1 for the multipart audio above; JSON is UTF-8.
+        body = JSON.parse(Buffer.from(raw, "latin1").toString("utf8") || "{}");
       } catch {
         return json(res, 400, { error: { message: "bad json" } });
       }
       const turns = Array.isArray(body.messages) ? body.messages.length : Array.isArray(body.input) ? body.input.length : 1;
       const prev = body.previous_response_id ? ` previous=${body.previous_response_id}` : "";
       console.log(`${req.method} ${req.url} model=${body.model} stream=${!!body.stream} messages=${turns}${prev} auth=${req.headers.authorization ? req.headers.authorization.split(" ")[0] : req.headers["x-api-key"] ? "x-api-key" : req.headers["api-key"] ? "api-key" : "none"}`);
+      if (req.url === "/presidio/analyze") return presidioAnalyze(body, res);
+      if (req.url.split("?")[0] === "/presidio/supportedentities") {
+        const entities = PRESIDIO[new URL(req.url, "http://mock").searchParams.get("language")];
+        return entities ? json(res, 200, entities) : json(res, 400, { error: "unsupported language" });
+      }
       if (String(body.model).includes("fail")) return json(res, 503, { error: { message: "mock upstream overloaded" } });
       if (req.url.endsWith("/chat/completions")) return chat(body, res);
       if (req.url.endsWith("/responses")) return responses(body, res);

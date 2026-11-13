@@ -1,6 +1,6 @@
 import type { Provider } from "./api";
 
-export const PROVIDERS: Provider[] = ["openai", "azure", "bedrock", "anthropic", "vertex", "gemini", "mistral", "typesafe"];
+export const PROVIDERS: Provider[] = ["openai", "azure", "bedrock", "anthropic", "vertex", "gemini", "mistral", "typesafe", "http"];
 
 export const PROVIDER_LABEL: Record<Provider, string> = {
   openai: "OpenAI-compatible",
@@ -11,6 +11,7 @@ export const PROVIDER_LABEL: Record<Provider, string> = {
   mistral: "Mistral AI",
   vertex: "Google Vertex AI",
   gemini: "Google AI Studio",
+  http: "Generic HTTP",
 };
 
 /** Mistral's regional endpoints. */

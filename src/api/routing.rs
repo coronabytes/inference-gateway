@@ -100,6 +100,9 @@ pub async fn route(
         h.insert("x-gateway-route-name", v);
     }
     h.insert("x-gateway-route", HeaderValue::from_str(&how).expect("ascii"));
+    if let Some(p) = guarded.and_then(|s| s.restore) {
+        resp = super::restore::response(resp, inbound, p).await;
+    }
     Ok(resp)
 }
 

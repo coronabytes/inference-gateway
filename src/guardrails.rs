@@ -2,8 +2,9 @@
 //! blocking what must not pass (prompt attacks, denied topics, harmful content). Amazon Bedrock
 //! Guardrails, through its standalone `ApplyGuardrail` API, which works on any text and so for any
 //! model's prompts and responses; Mistral's moderation API, which scores texts by category and
-//! blocks or flags, but cannot mask; and Google Cloud Model Armor, which blocks and, with a
-//! de-identify template, masks.
+//! blocks or flags, but cannot mask; Google Cloud Model Armor, which blocks and, with a
+//! de-identify template, masks; and a self-hosted Presidio analyzer, whose findings the
+//! gateway masks, blocks or flags by entity type.
 
 use std::{
     collections::BTreeMap,
@@ -39,6 +40,7 @@ pub enum GuardrailProvider {
     Bedrock,
     Mistral,
     ModelArmor,
+    Presidio,
 }
 
 impl GuardrailProvider {
@@ -47,6 +49,7 @@ impl GuardrailProvider {
             "bedrock" => Some(Self::Bedrock),
             "mistral" => Some(Self::Mistral),
             "model_armor" => Some(Self::ModelArmor),
+            "presidio" => Some(Self::Presidio),
             _ => None,
         }
     }
@@ -56,6 +59,7 @@ impl GuardrailProvider {
             Self::Bedrock => "bedrock",
             Self::Mistral => "mistral",
             Self::ModelArmor => "model_armor",
+            Self::Presidio => "presidio",
         }
     }
 
@@ -65,6 +69,7 @@ impl GuardrailProvider {
             Self::Bedrock => "bedrock",
             Self::Mistral => "mistral",
             Self::ModelArmor => "vertex",
+            Self::Presidio => "http",
         }
     }
 }
@@ -105,12 +110,28 @@ pub struct GuardrailConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Mistral: the categories that block a request (see `MISTRAL_CATEGORIES`); Model Armor: the
-    /// filters that do (see `MODEL_ARMOR_FILTERS`). Others that find something flag it, and the
-    /// request goes on.
+    /// filters that do (see `MODEL_ARMOR_FILTERS`); Presidio: the entity types that do. Others that
+    /// find something flag it, and the request goes on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub block: Vec<String>,
+    /// Presidio: the entity types that are masked, replaced with `<ENTITY_TYPE>`, or with a
+    /// pseudonym when `pseudonymize`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mask: Vec<String>,
+    /// Presidio: masks with pseudonyms (`Person A`, `Location B`), the same one for the same value
+    /// throughout a request, instead of the entity type.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pseudonymize: bool,
+    /// Presidio with `pseudonymize`: restores the real values in the model's answer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restore: bool,
+    /// Presidio: the languages its analyzer is asked in, as ISO 639-1 codes (`en`, `de`). With
+    /// several, each text's language is detected among them, the first when unsure (see
+    /// `language_of`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
     /// Mistral: the score (0 to 1) from which a category counts as found; Mistral's own decision
-    /// when unset.
+    /// when unset. Presidio: the analyzer's `score_threshold`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub threshold: Option<f64>,
     /// Model Armor: the template's id.
@@ -169,6 +190,17 @@ impl GuardrailPrices {
     pub fn list(provider: GuardrailProvider) -> Self {
         match provider {
             GuardrailProvider::Bedrock => Self::default(),
+            // Self-hosted: nothing billed.
+            GuardrailProvider::Presidio => Self {
+                content: 0.0,
+                content_image: 0.0,
+                topic: 0.0,
+                sensitive_information: 0.0,
+                word: 0.0,
+                contextual_grounding: 0.0,
+                automated_reasoning: 0.0,
+                tokens: 0.0,
+            },
             GuardrailProvider::Mistral | GuardrailProvider::ModelArmor => Self {
                 content: 0.0,
                 content_image: 0.0,
@@ -298,7 +330,7 @@ impl Action {
 #[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct Finding {
     /// `content`, `topic`, `word`, `pii`, `regex` or `grounding` (Bedrock), `moderation` (Mistral),
-    /// or Model Armor's filter (see `MODEL_ARMOR_FILTERS`).
+    /// Model Armor's filter (see `MODEL_ARMOR_FILTERS`), or `pii` (Presidio).
     pub policy: &'static str,
     /// The filter, entity, topic or regex: `PROMPT_ATTACK`, `NAME`, an `Investments` topic, …
     pub kind: String,
@@ -342,6 +374,10 @@ pub struct Verdict {
     /// The provider's answer as it came, for logged requests (see `api::guard::screen_prompt`).
     #[serde(skip)]
     pub raw: Option<Value>,
+    /// The pseudonyms the masked texts got, with the values they stand for (Presidio with
+    /// `pseudonymize`). Never in the request log.
+    #[serde(skip)]
+    pub pseudonyms: Option<crate::pseudonyms::Pseudonyms>,
 }
 
 /// A guardrail with what it needs to be called: its credential's settings and secrets.
@@ -357,6 +393,7 @@ pub async fn check(state: &AppState, g: &Callable<'_>, source: Source, texts: &[
         Some(GuardrailProvider::Bedrock) => bedrock(state, g, source, texts).await,
         Some(GuardrailProvider::Mistral) => mistral(state, g, texts).await,
         Some(GuardrailProvider::ModelArmor) => model_armor(state, g, source, texts).await,
+        Some(GuardrailProvider::Presidio) => presidio(state, g, texts).await,
         None => Err(GatewayError::internal(format!("unknown guardrail provider {}", g.row.provider))),
     }
 }
@@ -558,6 +595,254 @@ async fn model_armor(state: &AppState, g: &Callable<'_>, source: Source, texts: 
     parse_model_armor(&answers, texts, &g.row.config, &g.row.prices)
 }
 
+/// ISO 639-1: the languages a Presidio guardrail can be asked in, whichever its analyzer has a
+/// model for. Presidio does not list its languages, so the console asks about each of these.
+pub const LANGUAGE_CODES: &[&str] = &[
+    "aa", "ab", "ae", "af", "ak", "am", "an", "ar", "as", "av", "ay", "az", "ba", "be", "bg", "bi", "bm", "bn", "bo", "br", "bs", "ca",
+    "ce", "ch", "co", "cr", "cs", "cu", "cv", "cy", "da", "de", "dv", "dz", "ee", "el", "en", "eo", "es", "et", "eu", "fa", "ff", "fi",
+    "fj", "fo", "fr", "fy", "ga", "gd", "gl", "gn", "gu", "gv", "ha", "he", "hi", "ho", "hr", "ht", "hu", "hy", "hz", "ia", "id", "ie",
+    "ig", "ii", "ik", "io", "is", "it", "iu", "ja", "jv", "ka", "kg", "ki", "kj", "kk", "kl", "km", "kn", "ko", "kr", "ks", "ku", "kv",
+    "kw", "ky", "la", "lb", "lg", "li", "ln", "lo", "lt", "lu", "lv", "mg", "mh", "mi", "mk", "ml", "mn", "mr", "ms", "mt", "my", "na",
+    "nb", "nd", "ne", "ng", "nl", "nn", "no", "nr", "nv", "ny", "oc", "oj", "om", "or", "os", "pa", "pi", "pl", "ps", "pt", "qu", "rm",
+    "rn", "ro", "ru", "rw", "sa", "sc", "sd", "se", "sg", "si", "sk", "sl", "sm", "sn", "so", "sq", "sr", "ss", "st", "su", "sv", "sw",
+    "ta", "te", "tg", "th", "ti", "tk", "tl", "tn", "to", "tr", "ts", "tt", "tw", "ty", "ug", "uk", "ur", "uz", "ve", "vi", "vo", "wa",
+    "wo", "xh", "yi", "yo", "za", "zh", "zu",
+];
+
+/// The ISO 639-1 codes of the languages the gateway detects, which are the only ones a Presidio
+/// guardrail with several languages can list: those compiled into the language detector (see
+/// `lingua` in Cargo.toml), sorted. A guardrail with one language can use any other.
+pub fn detectable_languages() -> Vec<String> {
+    let mut codes: Vec<String> = lingua::Language::all().iter().map(|l| l.iso_code_639_1().to_string().to_lowercase()).collect();
+    codes.sort();
+    codes
+}
+
+/// The detector's language for an ISO 639-1 code, if it is compiled in.
+fn lingua_language(code: &str) -> Option<lingua::Language> {
+    code.parse::<lingua::IsoCode639_1>().ok().map(|c| lingua::Language::from_iso_code_639_1(&c))
+}
+
+/// How much of a text its language is detected from: enough for a reliable answer, so that a long
+/// prompt costs no more than a short one.
+const DETECT_CHARS: usize = 2000;
+
+/// The language of `text` among `languages` (ISO 639-1 codes): the only one, or the one detected
+/// among them; the first when the text is too short or too mixed to tell.
+pub fn language_of<'a>(text: &str, languages: &'a [String]) -> &'a str {
+    let first = languages.first().map(String::as_str).unwrap_or("en");
+    if languages.len() < 2 {
+        return first;
+    }
+    let candidates: Vec<lingua::Language> = languages.iter().filter_map(|l| lingua_language(l)).collect();
+    if candidates.len() < 2 {
+        return first;
+    }
+    // Built for every text: cheap, as the models themselves are loaded once and shared.
+    let detector = lingua::LanguageDetectorBuilder::from_languages(&candidates).build();
+    let sample: String = text.chars().take(DETECT_CHARS).collect();
+    detector
+        .detect_language_of(sample)
+        .and_then(|found| languages.iter().find(|l| lingua_language(l) == Some(found)))
+        .map(String::as_str)
+        .unwrap_or(first)
+}
+
+/// The base URL of a Presidio guardrail's generic HTTP credential, checked against the upstream
+/// policy, and the headers to send with its authorization.
+fn presidio_endpoint(state: &AppState, settings: &CredentialSettings, secrets: &Secrets) -> Result<(String, HeaderMap), GatewayError> {
+    let base = settings
+        .base_url
+        .as_deref()
+        .ok_or_else(|| GatewayError::internal("the Presidio guardrail's credential has no base URL"))?
+        .trim_end_matches('/')
+        .to_string();
+    if let Err(why) = state.cfg.upstream_policy.check_url(&base) {
+        return Err(GatewayError::internal(format!("guardrail address not allowed: {why}")));
+    }
+    let mut headers = HeaderMap::new();
+    headers.insert("content-type", HeaderValue::from_static("application/json"));
+    if let Some(auth) = settings.http_authorization(secrets).map_err(GatewayError::internal)? {
+        headers.insert("authorization", auth);
+    }
+    Ok((base, headers))
+}
+
+/// A Presidio analyzer: one `/analyze` call per text, all at once, each in its own language.
+async fn presidio(state: &AppState, g: &Callable<'_>, texts: &[String]) -> Result<Verdict, GatewayError> {
+    let cfg = &g.row.config;
+    let first = cfg.languages.first().ok_or_else(|| GatewayError::internal("the Presidio guardrail has no language"))?;
+    let (base, headers) = presidio_endpoint(state, g.settings, g.secrets)?;
+    let url = format!("{base}/analyze");
+    // Detection is CPU work: off the async threads when there is any to do.
+    let languages: Vec<String> = if cfg.languages.len() > 1 {
+        let (owned, all) = (texts.to_vec(), cfg.languages.clone());
+        tokio::task::spawn_blocking(move || owned.iter().map(|t| language_of(t, &all).to_string()).collect())
+            .await
+            .map_err(|e| GatewayError::internal(format!("language detection failed: {e}")))?
+    } else {
+        vec![first.clone(); texts.len()]
+    };
+    let calls = texts.iter().zip(&languages).map(|(text, language)| {
+        let mut body = json!({ "text": text, "language": language });
+        if let Some(t) = cfg.threshold {
+            body["score_threshold"] = json!(t);
+        }
+        send(state, g, &url, headers.clone(), serde_json::to_vec(&body).unwrap_or_default())
+    });
+    let answers = futures::future::try_join_all(calls).await?;
+    parse_presidio(&answers, texts, &languages, cfg, &g.row.prices)
+}
+
+/// The entity types a Presidio analyzer finds in `language`, from its `/supportedentities`; none
+/// when it refuses the language, having no model for it. An analyzer that cannot be reached,
+/// refuses the credential (401, 403) or has no such path (404, a proxy that does not pass it) is
+/// an error.
+pub async fn presidio_entities(
+    state: &AppState,
+    settings: &CredentialSettings,
+    secrets: &Secrets,
+    language: &str,
+) -> Result<Option<Vec<String>>, GatewayError> {
+    let (base, mut headers) = presidio_endpoint(state, settings, secrets)?;
+    headers.remove("content-type");
+    let resp = state
+        .http
+        .get(format!("{base}/supportedentities"))
+        .query(&[("language", language)])
+        .headers(headers)
+        .timeout(TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| GatewayError::from_reqwest(&e))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| GatewayError::from_reqwest(&e))?;
+    if matches!(status.as_u16(), 401 | 403 | 404) {
+        return Err(GatewayError::from_upstream(status, &text));
+    }
+    if !status.is_success() {
+        return Ok(None);
+    }
+    let mut entities: Vec<String> = serde_json::from_str(&text)
+        .map_err(|_| GatewayError::internal("Presidio answered with something other than a list of entity types"))?;
+    entities.sort();
+    entities.dedup();
+    Ok(Some(entities).filter(|e| !e.is_empty()))
+}
+
+/// A span of a text to mask: byte offsets, the analyzer's score and the entity type.
+struct Span {
+    start: usize,
+    end: usize,
+    score: f64,
+    kind: String,
+}
+
+/// Reads a Presidio analyzer's answers, one list of results for each text: an entity type the
+/// guardrail blocks on blocks, one it masks is replaced with `<ENTITY_TYPE>`, others are flagged.
+/// Presidio counts offsets in code points, as Python does. Overlapping masked spans are merged,
+/// named by the more certain one. With `pseudonymize`, a masked value gets a pseudonym instead
+/// (`Person A`), handed out in the order the values first appear in the texts.
+fn parse_presidio(
+    answers: &[Value],
+    texts: &[String],
+    languages: &[String],
+    cfg: &GuardrailConfig,
+    prices: &GuardrailPrices,
+) -> Result<Verdict, GatewayError> {
+    let mut findings: Vec<Finding> = Vec::new();
+    let mut outputs: Vec<String> = Vec::with_capacity(texts.len());
+    let mut pseudonyms = cfg.pseudonymize.then(crate::pseudonyms::Pseudonyms::default);
+    for (answer, text) in answers.iter().zip(texts) {
+        let results =
+            answer.as_array().ok_or_else(|| GatewayError::internal("Presidio answered with something other than a list of results"))?;
+        // The byte offset of each code point, and of the text's end.
+        let bounds: Vec<usize> = text.char_indices().map(|(i, _)| i).chain(std::iter::once(text.len())).collect();
+        let mut spans: Vec<Span> = Vec::new();
+        for r in results {
+            let (Some(kind), Some(start), Some(end)) = (r["entity_type"].as_str(), r["start"].as_u64(), r["end"].as_u64()) else {
+                continue;
+            };
+            let (Some(&start), Some(&end)) = (bounds.get(start as usize), bounds.get(end as usize)) else {
+                continue;
+            };
+            if start >= end {
+                continue;
+            }
+            let score = r["score"].as_f64().unwrap_or(0.0);
+            let action = if cfg.block.iter().any(|b| b == kind) {
+                "BLOCKED"
+            } else if cfg.mask.iter().any(|m| m == kind) {
+                spans.push(Span { start, end, score, kind: kind.to_string() });
+                "ANONYMIZED"
+            } else {
+                "NONE"
+            };
+            let matched = &text[start..end];
+            if !findings.iter().any(|f| f.kind == kind && f.matched.as_deref() == Some(matched)) {
+                findings.push(Finding {
+                    policy: "pii",
+                    kind: kind.to_string(),
+                    action: action.into(),
+                    matched: Some(matched.to_string()),
+                    confidence: Some(format!("{score:.2}")),
+                });
+            }
+        }
+        spans.sort_by_key(|s| s.start);
+        let mut merged: Vec<Span> = Vec::new();
+        for s in spans {
+            match merged.last_mut() {
+                Some(last) if s.start < last.end => {
+                    last.end = last.end.max(s.end);
+                    if s.score > last.score {
+                        last.score = s.score;
+                        last.kind = s.kind;
+                    }
+                }
+                _ => merged.push(s),
+            }
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut at = 0;
+        for s in merged {
+            out.push_str(&text[at..s.start]);
+            match pseudonyms.as_mut() {
+                Some(p) => out.push_str(&p.of(&s.kind, &text[s.start..s.end])),
+                None => {
+                    out.push('<');
+                    out.push_str(&s.kind);
+                    out.push('>');
+                }
+            }
+            at = s.end;
+        }
+        out.push_str(&text[at..]);
+        outputs.push(out);
+    }
+    let mut blocked: Vec<&str> = findings.iter().filter(|f| f.action == "BLOCKED").map(|f| f.kind.as_str()).collect();
+    blocked.sort();
+    blocked.dedup();
+    let action = if !blocked.is_empty() {
+        Action::Blocked
+    } else if findings.iter().any(|f| f.action == "ANONYMIZED") {
+        Action::Masked
+    } else if findings.is_empty() {
+        Action::Passed
+    } else {
+        Action::Flagged
+    };
+    let outputs = match action {
+        Action::Blocked => vec![format!("The request was blocked by Presidio ({}).", blocked.join(", "))],
+        Action::Masked => outputs,
+        Action::Passed | Action::Flagged => vec![],
+    };
+    let usage = GuardrailUsage::default();
+    let raw = answers.iter().zip(languages).map(|(a, l)| json!({ "language": l, "results": a })).collect();
+    let pseudonyms = pseudonyms.filter(|p| !p.is_empty());
+    Ok(Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(Value::Array(raw)), pseudonyms })
+}
+
 /// Reads Model Armor's answers, one for each text: a filter that matched blocks when the guardrail
 /// blocks on it and is flagged otherwise; sensitive data a de-identify template rewrote is masked
 /// instead. Model Armor reports no usage, so tokens are estimated from the texts' length.
@@ -683,7 +968,15 @@ fn parse_model_armor(
     // About four characters to a token, as Google counts for billing.
     let chars: usize = texts.iter().map(|t| t.chars().count()).sum();
     let usage = GuardrailUsage { tokens: chars.div_ceil(4) as u64, ..Default::default() };
-    Ok(Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(Value::Array(answers.to_vec())) })
+    Ok(Verdict {
+        action,
+        outputs,
+        findings,
+        cost_usd: prices.cost(&usage),
+        usage,
+        raw: Some(Value::Array(answers.to_vec())),
+        pseudonyms: None,
+    })
 }
 
 /// Reads a moderation response: a category found in any text blocks when the guardrail blocks on
@@ -724,7 +1017,7 @@ fn parse_mistral(v: &Value, cfg: &GuardrailConfig, prices: &GuardrailPrices) -> 
     let outputs =
         if blocked.is_empty() { vec![] } else { vec![format!("The request was blocked by moderation ({}).", blocked.join(", "))] };
     let usage = GuardrailUsage { tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0), ..Default::default() };
-    Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(v.clone()) }
+    Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(v.clone()), pseudonyms: None }
 }
 
 /// Reads an `ApplyGuardrail` response.
@@ -783,7 +1076,7 @@ fn parse_bedrock(v: &Value, prices: &GuardrailPrices) -> Verdict {
         tokens: 0,
     };
     let outputs = v["outputs"].as_array().into_iter().flatten().filter_map(|o| s(o, "text")).collect();
-    Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(v.clone()) }
+    Verdict { action, outputs, findings, cost_usd: prices.cost(&usage), usage, raw: Some(v.clone()), pseudonyms: None }
 }
 
 #[cfg(test)]
@@ -916,6 +1209,95 @@ mod tests {
 
         assert_eq!(parse_model_armor(&[clean], &texts(1), &all, &prices).unwrap().action, Action::Passed);
         assert!(parse_model_armor(&[json!({})], &texts(1), &all, &prices).is_err());
+    }
+
+    #[test]
+    fn reads_presidio_answers() {
+        // As a Presidio analyzer answers, with offsets in code points.
+        let text = "Grüße an Jana Novák, IBAN DE89 3704 0044 0532 0130 00.".to_string();
+        let answer = json!([
+            { "entity_type": "PERSON", "start": 9, "end": 19, "score": 0.85 },
+            { "entity_type": "IBAN_CODE", "start": 26, "end": 53, "score": 1.0 },
+            // Overlaps the name: merged into one placeholder, named by the more certain finding.
+            { "entity_type": "LOCATION", "start": 14, "end": 19, "score": 0.4 },
+            { "entity_type": "URL", "start": 0, "end": 0, "score": 0.5 },
+        ]);
+        let prices = GuardrailPrices::list(GuardrailProvider::Presidio);
+        let de = vec!["de".to_string()];
+        let cfg = |mask: &[&str], block: &[&str]| GuardrailConfig {
+            mask: mask.iter().map(|c| c.to_string()).collect(),
+            block: block.iter().map(|c| c.to_string()).collect(),
+            languages: de.clone(),
+            ..Default::default()
+        };
+        let one = |c: &GuardrailConfig| parse_presidio(std::slice::from_ref(&answer), std::slice::from_ref(&text), &de, c, &prices);
+
+        let r = one(&cfg(&["PERSON", "LOCATION", "IBAN_CODE"], &[])).unwrap();
+        assert_eq!(r.action, Action::Masked);
+        assert_eq!(r.outputs, ["Grüße an <PERSON>, IBAN <IBAN_CODE>."]);
+        assert_eq!(r.findings[0].matched.as_deref(), Some("Jana Novák"));
+        assert_eq!(r.findings[0].confidence.as_deref(), Some("0.85"));
+        assert_eq!(r.findings.len(), 3, "an empty span is no finding");
+        assert_eq!(r.cost_usd, 0.0);
+        assert_eq!(r.raw.as_ref().unwrap()[0]["language"], "de");
+
+        // Only what is listed is masked, the rest flagged; texts without findings pass as they were.
+        let two = vec![de[0].clone(), de[0].clone()];
+        let r = parse_presidio(&[answer.clone(), json!([])], &[text.clone(), "hallo".into()], &two, &cfg(&["IBAN_CODE"], &[]), &prices)
+            .unwrap();
+        assert_eq!(r.outputs, ["Grüße an Jana Novák, IBAN <IBAN_CODE>.", "hallo"]);
+        assert_eq!(r.findings.iter().filter(|f| f.action == "NONE").count(), 2);
+
+        // A blocked entity type blocks, whatever else is masked.
+        let r = one(&cfg(&["PERSON"], &["IBAN_CODE"])).unwrap();
+        assert_eq!(r.action, Action::Blocked);
+        assert_eq!(r.outputs, ["The request was blocked by Presidio (IBAN_CODE)."]);
+
+        // Nothing masked or blocked: flagged; nothing found: passed.
+        assert_eq!(one(&cfg(&[], &[])).unwrap().action, Action::Flagged);
+        assert_eq!(parse_presidio(&[json!([])], std::slice::from_ref(&text), &de, &cfg(&[], &[]), &prices).unwrap().action, Action::Passed);
+        assert!(parse_presidio(&[json!({ "error": "x" })], &[text], &de, &cfg(&[], &[]), &prices).is_err());
+    }
+
+    #[test]
+    fn pseudonymizes_presidio_findings() {
+        // Two texts: the same person in both, and a second one in the second.
+        let texts = vec!["Grüße an Jana Novák aus Berlin.".to_string(), "Jana Novák und Ada Lovelace.".to_string()];
+        let answers = vec![
+            json!([{ "entity_type": "PERSON", "start": 9, "end": 19, "score": 0.85 }, { "entity_type": "LOCATION", "start": 24, "end": 30, "score": 0.85 }]),
+            json!([{ "entity_type": "PERSON", "start": 0, "end": 10, "score": 0.85 }, { "entity_type": "PERSON", "start": 15, "end": 27, "score": 0.85 }]),
+        ];
+        let cfg = GuardrailConfig {
+            mask: vec!["PERSON".into(), "LOCATION".into()],
+            pseudonymize: true,
+            languages: vec!["de".into()],
+            ..Default::default()
+        };
+        let langs = vec!["de".to_string(), "de".to_string()];
+        let r = parse_presidio(&answers, &texts, &langs, &cfg, &GuardrailPrices::list(GuardrailProvider::Presidio)).unwrap();
+        assert_eq!(r.action, Action::Masked);
+        assert_eq!(r.outputs, ["Grüße an Person A aus Location A.", "Person A und Person B."]);
+        let p = r.pseudonyms.unwrap();
+        assert_eq!(p.pairs()[1], ("Location A".to_string(), "Berlin".to_string()));
+        assert_eq!(p.restore("Person B kennt Person A."), "Ada Lovelace kennt Jana Novák.");
+    }
+
+    #[test]
+    fn detects_the_language_among_the_guardrails() {
+        let en_de = vec!["en".to_string(), "de".to_string()];
+        assert_eq!(language_of("Bitte fasse das Protokoll der letzten Sitzung zusammen und schicke es an alle.", &en_de), "de");
+        assert_eq!(language_of("Please summarise the minutes of the last meeting and send them to everyone.", &en_de), "en");
+        // Too little to tell: the first.
+        assert_eq!(language_of("42", &en_de), "en");
+        // Only among the guardrail's own languages.
+        let french = "Merci de résumer le compte rendu de la dernière réunion et de l'envoyer à tous.";
+        assert!(["en", "de"].contains(&language_of(french, &en_de)));
+        assert_eq!(language_of(french, &["fr".to_string(), "de".to_string()]), "fr");
+        // One language: no detection.
+        assert_eq!(language_of("Bitte fasse das zusammen.", &["en".to_string()]), "en");
+        assert!(detectable_languages().contains(&"de".to_string()));
+        assert!(LANGUAGE_CODES.contains(&"ja") && !detectable_languages().contains(&"ja".to_string()));
+        assert!(lingua_language("xx").is_none());
     }
 
     #[test]

@@ -767,6 +767,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/guardrails/presidio/analyzer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a Presidio analyzer
+         * @description The languages a Presidio analyzer serves, with the entity types it finds in each, read from its
+         *     `/supportedentities`. The analyzer has no list of its languages, so it is asked about every
+         *     ISO 639-1 code; one it has no model for is left out.
+         */
+        get: operations["presidio_analyzer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/guardrails/presidio/languages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List detected languages
+         * @description The languages the gateway detects, as ISO 639-1 codes: those a Presidio guardrail with several
+         *     languages can list. A guardrail with one language can use any its analyzer serves.
+         */
+        get: operations["presidio_languages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/guardrails/prices": {
         parameters: {
             query?: never;
@@ -3168,6 +3211,9 @@ export interface components {
             tenant_id?: string | null;
             /** @description Azure with Entra ID: the app registration's application (client) ID. */
             client_id?: string | null;
+            http_auth?: components["schemas"]["HttpAuth"] | null;
+            /** @description Generic HTTP with Basic authentication: the user name. Not secret; the password is. */
+            username?: string | null;
         };
         CredentialView: {
             /** Format: uuid */
@@ -3571,7 +3617,7 @@ export interface components {
         Finding: {
             /**
              * @description `content`, `topic`, `word`, `pii`, `regex` or `grounding` (Bedrock), `moderation` (Mistral),
-             *     or Model Armor's filter (see `MODEL_ARMOR_FILTERS`).
+             *     Model Armor's filter (see `MODEL_ARMOR_FILTERS`), or `pii` (Presidio).
              */
             policy: string;
             /** @description The filter, entity, topic or regex: `PROMPT_ATTACK`, `NAME`, an `Investments` topic, … */
@@ -3640,14 +3686,32 @@ export interface components {
             model?: string | null;
             /**
              * @description Mistral: the categories that block a request (see `MISTRAL_CATEGORIES`); Model Armor: the
-             *     filters that do (see `MODEL_ARMOR_FILTERS`). Others that find something flag it, and the
-             *     request goes on.
+             *     filters that do (see `MODEL_ARMOR_FILTERS`); Presidio: the entity types that do. Others that
+             *     find something flag it, and the request goes on.
              */
             block?: string[];
             /**
+             * @description Presidio: the entity types that are masked, replaced with `<ENTITY_TYPE>`, or with a
+             *     pseudonym when `pseudonymize`.
+             */
+            mask?: string[];
+            /**
+             * @description Presidio: masks with pseudonyms (`Person A`, `Location B`), the same one for the same value
+             *     throughout a request, instead of the entity type.
+             */
+            pseudonymize?: boolean;
+            /** @description Presidio with `pseudonymize`: restores the real values in the model's answer. */
+            restore?: boolean;
+            /**
+             * @description Presidio: the languages its analyzer is asked in, as ISO 639-1 codes (`en`, `de`). With
+             *     several, each text's language is detected among them, the first when unsure (see
+             *     `language_of`).
+             */
+            languages?: string[];
+            /**
              * Format: double
              * @description Mistral: the score (0 to 1) from which a category counts as found; Mistral's own decision
-             *     when unset.
+             *     when unset. Presidio: the analyzer's `score_threshold`.
              */
             threshold?: number | null;
             /** @description Model Armor: the template's id. */
@@ -3740,7 +3804,7 @@ export interface components {
             tokens: number;
         };
         /** @enum {string} */
-        GuardrailProvider: "bedrock" | "mistral" | "model_armor";
+        GuardrailProvider: "bedrock" | "mistral" | "model_armor" | "presidio";
         /**
          * @description What the guardrails did to a request, as its request log entry keeps it: never the text they
          *     matched.
@@ -3827,6 +3891,11 @@ export interface components {
              */
             weight_factor: number;
         };
+        /**
+         * @description How a generic HTTP credential authenticates.
+         * @enum {string}
+         */
+        HttpAuth: "none" | "basic" | "bearer";
         HubDeployment: components["schemas"]["Described"] & {
             /** Format: uuid */
             id: string;
@@ -4678,6 +4747,19 @@ export interface components {
             /** @description A tool router, listed with the MCP servers: requests name it like one. */
             router?: boolean;
         };
+        /**
+         * @description What a Presidio analyzer serves: the languages it has a model for, each with the entity types
+         *     it finds in it.
+         */
+        PresidioAnalyzer: {
+            languages: components["schemas"]["PresidioLanguage"][];
+        };
+        PresidioLanguage: {
+            /** @description ISO 639-1, such as `de`. */
+            code: string;
+            /** @description The entity types, sorted. */
+            entities: string[];
+        };
         PriceImport: {
             /** Format: date-time */
             imported_at: string;
@@ -4788,7 +4870,7 @@ export interface components {
          */
         ProviderAnswer: Record<string, unknown>;
         /** @enum {string} */
-        ProviderKind: "openai" | "azure" | "bedrock" | "anthropic" | "typesafe" | "mistral" | "vertex" | "gemini";
+        ProviderKind: "openai" | "azure" | "bedrock" | "anthropic" | "typesafe" | "mistral" | "vertex" | "gemini" | "http";
         RatePoint: {
             /**
              * Format: int64
@@ -4951,6 +5033,8 @@ export interface components {
             google_service_account?: string | null;
             /** @description Azure with Entra ID: the app registration's client secret, used instead of an API key. */
             client_secret?: string | null;
+            /** @description Generic HTTP with Basic authentication: the password. */
+            password?: string | null;
         };
         /** @description Who a Vertex credential's key file authenticates as. */
         ServiceAccountView: {
@@ -7157,6 +7241,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    presidio_analyzer: {
+        parameters: {
+            query: {
+                /** @description The generic HTTP credential of the Presidio analyzer. */
+                credential_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The analyzer's languages, sorted by code. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresidioAnalyzer"];
+                };
+            };
+            /** @description Not a generic HTTP credential. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+            /** @description The analyzer could not be reached or refused the credential, or serves no language. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminError"];
+                };
+            };
+        };
+    };
+    presidio_languages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The languages' codes, sorted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
                 };
             };
         };

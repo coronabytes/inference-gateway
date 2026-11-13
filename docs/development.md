@@ -28,6 +28,7 @@ docker compose --profile replicas up -d --build  # two more gateway replicas on 
 ```
 
 - The **mock provider** runs on loopback, which the gateway refuses unless allowed: `.env.example` already sets `GATEWAY_UPSTREAM_ALLOWED_NETWORKS=127.0.0.0/8,::1`. It is also a Bedrock guardrail: a Bedrock credential with `http://127.0.0.1:16604` as its endpoint (any API key) and a guardrail on it mask e-mail addresses and the name "Ada Lovelace", flag "lottery" and "casino", and block "ignore previous instructions".
+  - At `http://127.0.0.1:16604/presidio` it is a Presidio analyzer, for a generic HTTP credential (any authentication) and a Presidio guardrail in `en` or `de`: it finds e-mail addresses, IBANs, the names "Ada Lovelace" and "Jana Novák", and in English phone numbers.
 - The **mock MCP server** answers at `http://127.0.0.1:16605/mcp` with the bearer token `mock-mcp-secret`, as JSON, or as server-sent events with `?sse` in the URL. Its tools are `echo`, `add`, `fail` (a tool error), `slow` and `whoami`.
   - It is also an OAuth authorization server, for trying [upstream sign-ins](upstream-oauth.md). Use `http://localhost:16605/mcp` with **Discover**. Its client for the gateway's own tokens is `gateway-client`, with the secret `gateway-secret`.
   - It approves sign-ins at once, and `whoami` says which token called. `MOCK_MCP_TOKEN_SECONDS` sets how long its tokens last, to watch them refresh.

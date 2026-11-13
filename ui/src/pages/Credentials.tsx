@@ -19,6 +19,7 @@ import { useAdminData } from "../useAdminData";
 type BedrockAuth = "chain" | "keys" | "api_key";
 type AzureAuth = "api_key" | "entra" | "environment";
 type VertexAuth = "key" | "environment";
+type HttpAuth = "none" | "basic" | "bearer";
 
 /** A credential that signs in as the gateway's own identity (Azure, Vertex AI), storing no secret. */
 const usesEnvironment = (c: Credential) => c.settings.identity === "environment";
@@ -27,6 +28,11 @@ const usesEnvironment = (c: Credential) => c.settings.identity === "environment"
 export const usesEntra = (c: Credential) => c.provider === "azure" && (!!c.settings.tenant_id || usesEnvironment(c));
 
 function authSummary(c: Credential): string {
+  if (c.provider === "http") {
+    if (c.settings.http_auth === "basic") return `Basic (${c.settings.username ?? "no user name"})`;
+    if (c.settings.http_auth === "bearer") return "Bearer token";
+    return "No authentication";
+  }
   if (c.provider === "bedrock") {
     if (c.secrets_set.api_key) return "Bedrock API key";
     if (c.secrets_set.aws_access_key_id) return `AWS access keys${c.secrets_set.aws_session_token ? " + session token" : ""}`;
@@ -42,6 +48,10 @@ function authSummary(c: Credential): string {
 function missingSecret(c: Credential): boolean {
   if (usesEnvironment(c)) return false;
   if (c.provider === "vertex") return !c.secrets_set.google_service_account;
+  if (c.provider === "http") {
+    if (c.settings.http_auth === "basic") return !c.secrets_set.password;
+    return c.settings.http_auth === "bearer" && !c.secrets_set.api_key;
+  }
   if (usesEntra(c)) return !c.secrets_set.client_secret;
   // OpenAI-compatible servers may need no key, and Bedrock can use the AWS credential chain.
   if (c.provider === "openai" || c.provider === "bedrock") return false;
@@ -103,6 +113,8 @@ export function connectionSummary(c: Credential): string {
       const project = s.project_id ?? c.service_account?.project_id ?? "project missing";
       return `${project} · ${regionLabel(VERTEX_REGIONS, s.region)}${s.base_url ? ` via ${host(s.base_url)}` : ""}`;
     }
+    case "http":
+      return s.base_url ? host(s.base_url) : "endpoint missing";
   }
 }
 
@@ -470,6 +482,8 @@ function CredentialForm({
   const [vertexAuth, setVertexAuth] = useState<VertexAuth>(
     initial?.provider === "vertex" && usesEnvironment(initial) ? "environment" : "key",
   );
+  const [httpAuth, setHttpAuth] = useState<HttpAuth>(initial?.settings.http_auth ?? "none");
+  const [username, setUsername] = useState(initial?.settings.username ?? "");
   const [tenantId, setTenantId] = useState(initial?.settings.tenant_id ?? "");
   const [clientId, setClientId] = useState(initial?.settings.client_id ?? "");
   const [keyFile, setKeyFile] = useState<KeyFileInfo | null>(null);
@@ -522,7 +536,13 @@ function CredentialForm({
                 : []
             : provider === "azure" && azureAuth === "entra"
               ? ["client_secret"]
-              : ["api_key"];
+              : provider === "http"
+                ? httpAuth === "basic"
+                  ? ["password"]
+                  : httpAuth === "bearer"
+                    ? ["api_key"]
+                    : []
+                : ["api_key"];
       const out: Secrets = Object.fromEntries(Object.entries(secrets).filter(([k, v]) => v !== "" && applies.includes(k as keyof Secrets)));
       if (provider === "bedrock" && initial) {
         // Switching auth mode clears the secrets of the other modes.
@@ -536,6 +556,11 @@ function CredentialForm({
         if (azureAuth !== "entra" && initial.secrets_set.client_secret) out.client_secret = "";
       }
       if (provider === "vertex" && environment && initial?.secrets_set.google_service_account) out.google_service_account = "";
+      // A generic HTTP credential keeps only the secret its authentication sends.
+      if (provider === "http" && initial) {
+        if (httpAuth !== "bearer" && initial.secrets_set.api_key) out.api_key = "";
+        if (httpAuth !== "basic" && initial.secrets_set.password) out.password = "";
+      }
       const entra = provider === "azure" && azureAuth === "entra";
       // Settings are not secret and always sent in full; only those that apply to the provider.
       const settings: CredentialSettings = {
@@ -547,6 +572,8 @@ function CredentialForm({
         ...(entra && { tenant_id: tenantId.trim(), client_id: clientId.trim() }),
         ...(environment && { identity: "environment" as const }),
         ...(environment && provider === "azure" && clientId.trim() && { client_id: clientId.trim() }),
+        ...(provider === "http" && httpAuth !== "none" && { http_auth: httpAuth }),
+        ...(provider === "http" && httpAuth === "basic" && { username: username.trim() }),
       };
       await onSave({ name: name.trim(), provider, settings, secrets: out });
     } catch (e) {
@@ -569,7 +596,9 @@ function CredentialForm({
   const storedAccount = initial?.service_account;
   const missing =
     !name.trim() ||
-    (provider === "azure" && !baseUrl.trim()) ||
+    ((provider === "azure" || provider === "http") && !baseUrl.trim()) ||
+    (provider === "http" && httpAuth === "basic" && (!username.trim() || (!initial?.secrets_set.password && !secrets.password))) ||
+    (provider === "http" && httpAuth === "bearer" && !initial?.secrets_set.api_key && !secrets.api_key) ||
     (provider === "vertex" && !environment && !initial?.secrets_set.google_service_account && !secrets.google_service_account) ||
     (provider === "vertex" && environment && !projectId.trim()) ||
     (provider === "vertex" && vertexOther && !region.trim()) ||
@@ -790,6 +819,61 @@ function CredentialForm({
           />
         )}
 
+        {provider === "http" && (
+          <>
+            <TextInput
+              caption="Base URL"
+              hint="The service's address, such as a Presidio analyzer's. A private address must be allowed with GATEWAY_UPSTREAM_ALLOWED_NETWORKS."
+              mono
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="e.g. http://presidio-analyzer:3000"
+              required
+            />
+            <Segmented
+              caption="Authentication"
+              hint="What the service, or the proxy in front of it, expects in the Authorization header."
+              value={httpAuth}
+              onChange={setHttpAuth}
+              options={[
+                { value: "none", label: "None" },
+                { value: "basic", label: "Basic" },
+                { value: "bearer", label: "Bearer token" },
+              ]}
+            />
+            {httpAuth === "basic" && (
+              <div className="row">
+                <TextInput
+                  caption="User name"
+                  mono
+                  autoComplete="off"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                />
+                <TextInput
+                  caption="Password"
+                  secret
+                  value={secrets.password ?? ""}
+                  onChange={set("password")}
+                  placeholder={placeholder("password")}
+                  required={!initial?.secrets_set.password}
+                />
+              </div>
+            )}
+            {httpAuth === "bearer" && (
+              <TextInput
+                caption="Token"
+                secret
+                value={secrets.api_key ?? ""}
+                onChange={set("api_key")}
+                placeholder={placeholder("api_key")}
+                required={!initial?.secrets_set.api_key}
+              />
+            )}
+          </>
+        )}
+
         {provider === "vertex" && (
           <Segmented
             caption="Authentication"
@@ -926,17 +1010,21 @@ function CredentialForm({
           </>
         )}
 
-        {provider !== "vertex" && !entraAuth && !environment && (provider !== "bedrock" || bedrockAuth === "api_key") && (
-          <TextInput
-            caption={provider === "bedrock" ? "Bedrock API key" : "API key"}
-            hint={provider === "openai" ? "Leave empty for servers without authentication." : undefined}
-            secret
-            value={secrets.api_key ?? ""}
-            onChange={set("api_key")}
-            placeholder={placeholder("api_key")}
-            required={provider === "bedrock" ? !initial?.secrets_set.api_key : keyRequired}
-          />
-        )}
+        {provider !== "vertex" &&
+          provider !== "http" &&
+          !entraAuth &&
+          !environment &&
+          (provider !== "bedrock" || bedrockAuth === "api_key") && (
+            <TextInput
+              caption={provider === "bedrock" ? "Bedrock API key" : "API key"}
+              hint={provider === "openai" ? "Leave empty for servers without authentication." : undefined}
+              secret
+              value={secrets.api_key ?? ""}
+              onChange={set("api_key")}
+              placeholder={placeholder("api_key")}
+              required={provider === "bedrock" ? !initial?.secrets_set.api_key : keyRequired}
+            />
+          )}
         {provider === "openai" && (
           <TextInput
             caption="API key header"

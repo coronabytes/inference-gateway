@@ -10,6 +10,7 @@ pub mod models;
 pub mod realtime;
 pub mod rerank;
 pub mod responses;
+mod restore;
 pub mod routing;
 pub mod sign_ins;
 
@@ -590,6 +591,10 @@ pub(crate) async fn run_model(
                 resp.headers_mut().insert(name, v);
             }
         }
+    }
+    // The client gets the values its pseudonyms stand for; the log keeps the model's answer.
+    if let Some(p) = guarded.and_then(|s| s.restore) {
+        resp = restore::response(resp, inbound, p).await;
     }
     Ok(resp)
 }
