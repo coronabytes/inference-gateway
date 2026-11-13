@@ -28,6 +28,16 @@ The gateway detects these languages: English, Finnish, French, German, Italian, 
 
 For each language other than English, configure the analyzer with a spaCy model for it, such as `de_core_news_lg`, and register its pattern recognizers for that language: most of Presidio's predefined recognizers are English-only, so without that a German analyzer finds little beyond names, places and organisations. Presidio has no list of its languages, so the console asks the analyzer's `/supportedentities` about every ISO 639-1 code, and offers those it answers for. A proxy in front of the analyzer must pass `/supportedentities` as well as `/analyze`; otherwise the console offers the languages the gateway detects and Presidio's predefined entity types. A guardrail that lists a language the analyzer has no model for refuses the requests in it.
 
+## Pseudonyms
+
+A Presidio guardrail masks what it finds in one of three ways (**Masked as** in its editor):
+
+- **`<PERSON>`**: the entity type. The model cannot tell two people apart.
+- **Person A**: a pseudonym, the same one for the same value throughout the request, so the model can still tell who is who. Alice is `Person A`, Bob `Person B`, Berlin `Location A`; values that differ only in case or spacing are the same. Letters are handed out in the order the values first appear, and a client sends the conversation so far with every request, so a value keeps its letter turn after turn.
+- **Person A, restored**: the answer gets the real values back. The client reads Alice where the model wrote `Person A`, in the text and in tool calls' arguments, streamed or not; reasoning stays as the model wrote it. The model and the request log only ever see the pseudonyms. The assistant's earlier turns, which the client got back with the real values, are pseudonymized again before the model sees them.
+
+A pseudonymizing guardrail screens every text of every request: its pseudonyms depend on the whole request, so it does not remember earlier verdicts. With a conversation stored at the gateway or the provider (`previous_response_id` in the Responses API), the earlier turns are not in the request, and its letters start again with each turn; send the conversation in full to keep them.
+
 ## Apply
 
 - **On a project or a key**, in its editor on the **Access** page: every request of the key, or of every key in the project, goes through it. Only admins choose them; project users cannot take a guardrail off their own keys.
@@ -36,7 +46,7 @@ For each language other than English, configure the analyzer with a spaCy model 
 ## What happens to a request
 
 - The prompt's system, user and tool texts are checked on all three chat APIs, before routing, so auto routers decide on the screened prompt too.
-- **Masked:** the request goes on with the masked text, whichever deployment serves it, and conversations are stored masked. The response carries `x-gateway-guardrail: masked`, and `x-gateway-guardrail-prompt` holds the prompt's last text as the model got it (base64, left out above 8 KB). The playground shows it as **Sent as**.
+- **Masked:** the request goes on with the masked text, whichever deployment serves it, and conversations are stored masked. With restored [pseudonyms](#pseudonyms), the answer carries the real values. The response carries `x-gateway-guardrail: masked`, and `x-gateway-guardrail-prompt` holds the prompt's last text as the model got it (base64, left out above 8 KB). The playground shows it as **Sent as**.
 - **Blocked:** the request is refused with `400` and the guardrail's message, with `code: content_filter` in the OpenAI APIs, before any model is called.
 - **Flagged** and **passed** requests go on unchanged, with `x-gateway-guardrail` set accordingly.
 - A guardrail that cannot be reached refuses the request (`503`) rather than letting it through unscreened.

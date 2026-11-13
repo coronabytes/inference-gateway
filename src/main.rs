@@ -31,6 +31,7 @@ mod oauth;
 mod openapi;
 mod prices;
 mod providers;
+mod pseudonyms;
 mod registry;
 mod rotate;
 mod router;

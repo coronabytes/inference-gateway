@@ -3690,8 +3690,18 @@ export interface components {
              *     find something flag it, and the request goes on.
              */
             block?: string[];
-            /** @description Presidio: the entity types that are masked, replaced with `<ENTITY_TYPE>`. */
+            /**
+             * @description Presidio: the entity types that are masked, replaced with `<ENTITY_TYPE>`, or with a
+             *     pseudonym when `pseudonymize`.
+             */
             mask?: string[];
+            /**
+             * @description Presidio: masks with pseudonyms (`Person A`, `Location B`), the same one for the same value
+             *     throughout a request, instead of the entity type.
+             */
+            pseudonymize?: boolean;
+            /** @description Presidio with `pseudonymize`: restores the real values in the model's answer. */
+            restore?: boolean;
             /**
              * @description Presidio: the languages its analyzer is asked in, as ISO 639-1 codes (`en`, `de`). With
              *     several, each text's language is detected among them, the first when unsure (see

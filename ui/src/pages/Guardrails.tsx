@@ -49,6 +49,25 @@ const PRESIDIO_ENTITIES = [
   "URL",
 ];
 
+/** How a Presidio guardrail masks: with the entity type, a pseudonym, or a pseudonym restored in the answer. */
+type MaskAs = "type" | "pseudonym" | "restore";
+
+const MASK_AS_HINT = (
+  <ul className="hint-list">
+    <li>
+      <strong>&lt;PERSON&gt;:</strong> the entity type. The model cannot tell two people apart.
+    </li>
+    <li>
+      <strong>Person A:</strong> a pseudonym, the same one for the same value throughout the request, so the model can still tell who is
+      who: Person A, Person B, Location A.
+    </li>
+    <li>
+      <strong>Person A, restored:</strong> the answer gets the real values back, so the client reads Alice where the model wrote Person A.
+      The model and the request log only ever see the pseudonyms.
+    </li>
+  </ul>
+);
+
 /** What a new Presidio guardrail masks. */
 const PRESIDIO_MASK = ["CREDIT_CARD", "EMAIL_ADDRESS", "IBAN_CODE", "IP_ADDRESS", "PERSON", "PHONE_NUMBER"];
 
@@ -128,7 +147,8 @@ function target(g: Guardrail): string {
   if (g.provider === "model_armor") return `${g.config.template} · ${g.config.location}`;
   if (g.provider === "presidio") {
     const [m, b] = [g.config.mask?.length ?? 0, g.config.block?.length ?? 0];
-    const does = [m && `masks ${m}`, b && `blocks ${b}`].filter(Boolean).join(", ") || "flags only";
+    const as = g.config.restore ? " as restored pseudonyms" : g.config.pseudonymize ? " as pseudonyms" : "";
+    const does = [m && `masks ${m}${as}`, b && `blocks ${b}`].filter(Boolean).join(", ") || "flags only";
     return `${(g.config.languages ?? []).join(", ")} · ${does}`;
   }
   if (g.provider === "mistral") {
@@ -320,6 +340,7 @@ function GuardrailForm({
   const languages = [mainLanguage, ...(detects ? otherLanguages.filter((l) => l !== mainLanguage) : [])];
   const [mask, setMask] = useState<string[]>(presidio ? (presidio.mask ?? []) : PRESIDIO_MASK);
   const [entityBlock, setEntityBlock] = useState<string[]>(presidio?.block ?? []);
+  const [maskAs, setMaskAs] = useState<MaskAs>(presidio?.restore ? "restore" : presidio?.pseudonymize ? "pseudonym" : "type");
   // The languages the credential's analyzer serves, each with the entity types it finds in it.
   const [analyzer, setAnalyzer] = useState<PresidioAnalyzer["languages"] | null>(null);
   const [analyzerError, setAnalyzerError] = useState<string | null>(null);
@@ -419,7 +440,14 @@ function GuardrailForm({
             : provider === "mistral"
               ? { ...(model.trim() && { model: model.trim() }), block, ...(score != null && { threshold: score }) }
               : provider === "presidio"
-                ? { languages, mask, block: entityBlock, ...(score != null && { threshold: score }) }
+                ? {
+                    languages,
+                    mask,
+                    block: entityBlock,
+                    ...(maskAs !== "type" && { pseudonymize: true }),
+                    ...(maskAs === "restore" && { restore: true }),
+                    ...(score != null && { threshold: score }),
+                  }
                 : { guardrail_identifier: identifier.trim(), guardrail_version: version.trim() },
         ...(parsed && { prices: parsed }),
       });
@@ -583,11 +611,22 @@ function GuardrailForm({
             )}
             <MultiSelect
               caption="Mask"
-              hint="Found entities of these types are replaced with their type, such as <PERSON>, before the prompt goes on."
+              hint="Found entities of these types are replaced before the prompt goes on."
               values={mask}
               onChange={setMask}
               none="Nothing"
               options={entityOptions(entityBlock)}
+            />
+            <Segmented
+              caption="Masked as"
+              hint={MASK_AS_HINT}
+              value={maskAs}
+              onChange={setMaskAs}
+              options={[
+                { value: "type", label: "<PERSON>" },
+                { value: "pseudonym", label: "Person A" },
+                { value: "restore", label: "Person A, restored" },
+              ]}
             />
             <MultiSelect
               caption="Block on"

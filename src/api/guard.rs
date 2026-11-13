@@ -13,6 +13,7 @@ use crate::{
     accounting::GuardrailCharge,
     error::GatewayError,
     guardrails::{self, Action, Active, Source},
+    pseudonyms::Pseudonyms,
     state::AppState,
 };
 
@@ -66,17 +67,29 @@ pub(crate) struct Screened {
     /// The prompt's last text as the model gets it, when the guardrails masked it: usually the
     /// message just sent, for clients to show what left.
     pub masked_prompt: Option<String>,
+    /// The pseudonyms to restore in the answer, when a guardrail that gave them out restores them.
+    pub restore: Option<Arc<Pseudonyms>>,
 }
 
 /// JSON pointers to the strings that make up the prompt: system instructions, and user and tool
 /// content. The assistant's turns are not screened: they are the model's earlier output.
 fn prompt_texts(inbound: Inbound, raw: &Value) -> Vec<String> {
+    texts_of(inbound, raw, false)
+}
+
+/// JSON pointers to the text of the assistant's earlier turns.
+fn assistant_texts(inbound: Inbound, raw: &Value) -> Vec<String> {
+    texts_of(inbound, raw, true)
+}
+
+/// The prompt's texts (`assistant` false) or the assistant's (true).
+fn texts_of(inbound: Inbound, raw: &Value, assistant: bool) -> Vec<String> {
     let mut out = Vec::new();
-    let not_assistant = |m: &Value| m.get("role").and_then(Value::as_str) != Some("assistant");
+    let wanted = |m: &Value| (m.get("role").and_then(Value::as_str) == Some("assistant")) == assistant;
     match inbound {
         Inbound::Chat => {
             for (i, m) in raw["messages"].as_array().into_iter().flatten().enumerate() {
-                if not_assistant(m)
+                if wanted(m)
                     && let Some(c) = m.get("content")
                 {
                     content(&mut out, c, format!("/messages/{i}/content"), &["text"]);
@@ -84,11 +97,11 @@ fn prompt_texts(inbound: Inbound, raw: &Value) -> Vec<String> {
             }
         }
         Inbound::Messages => {
-            if let Some(s) = raw.get("system") {
+            if !assistant && let Some(s) = raw.get("system") {
                 content(&mut out, s, "/system".into(), &["text"]);
             }
             for (i, m) in raw["messages"].as_array().into_iter().flatten().enumerate() {
-                if not_assistant(m)
+                if wanted(m)
                     && let Some(c) = m.get("content")
                 {
                     content(&mut out, c, format!("/messages/{i}/content"), &["text"]);
@@ -96,20 +109,20 @@ fn prompt_texts(inbound: Inbound, raw: &Value) -> Vec<String> {
             }
         }
         Inbound::Responses => {
-            if raw.get("instructions").is_some_and(Value::is_string) {
+            if !assistant && raw.get("instructions").is_some_and(Value::is_string) {
                 content(&mut out, &raw["instructions"], "/instructions".into(), &[]);
             }
             match raw.get("input") {
-                Some(Value::String(_)) => content(&mut out, &raw["input"], "/input".into(), &[]),
+                Some(Value::String(_)) if !assistant => content(&mut out, &raw["input"], "/input".into(), &[]),
                 Some(Value::Array(items)) => {
                     for (i, it) in items.iter().enumerate() {
                         match it.get("type").and_then(Value::as_str).unwrap_or("message") {
-                            "message" if not_assistant(it) => {
+                            "message" if wanted(it) => {
                                 if let Some(c) = it.get("content") {
-                                    content(&mut out, c, format!("/input/{i}/content"), &["input_text", "text"]);
+                                    content(&mut out, c, format!("/input/{i}/content"), &["input_text", "output_text", "text"]);
                                 }
                             }
-                            "function_call_output" if it.get("output").is_some_and(Value::is_string) => {
+                            "function_call_output" if !assistant && it.get("output").is_some_and(Value::is_string) => {
                                 out.push(format!("/input/{i}/output"))
                             }
                             _ => {}
@@ -203,6 +216,8 @@ pub(crate) async fn screen_prompt(
     let mut findings = BTreeSet::new();
     let mut applied = Vec::new();
     let mut steps: Vec<Value> = Vec::new();
+    let mut pseudonyms = Pseudonyms::default();
+    let mut restore = false;
     let charge = |applied: &Vec<String>, action: Action, findings: &BTreeSet<String>, cost: f64, steps: Vec<Value>| GuardrailCharge {
         cost_usd: cost,
         summary: Some(
@@ -221,9 +236,14 @@ pub(crate) async fn screen_prompt(
         }
         let started = std::time::Instant::now();
         // Texts this guardrail screened in an earlier request (a conversation's earlier turns)
-        // keep their verdict; only the others are sent. Blank texts need no screening.
+        // keep their verdict; only the others are sent. Blank texts need no screening. Pseudonyms
+        // depend on the whole request, so a guardrail that gives them out screens every text.
+        let pseudonymize = g.row.config.pseudonymize;
         let hashes: Vec<String> = texts.iter().map(|t| text_hash(state, g, t)).collect();
-        let remembered = state.cache.guard_verdicts(g.row.id, &hashes).await;
+        let remembered = match pseudonymize {
+            true => vec![None; texts.len()],
+            false => state.cache.guard_verdicts(g.row.id, &hashes).await,
+        };
         let known: Vec<Option<String>> =
             texts.iter().zip(remembered).map(|(t, r)| if t.trim().is_empty() { Some(t.clone()) } else { recall(state, t, r) }).collect();
         let todo: Vec<usize> = (0..texts.len()).filter(|&i| known[i].is_none()).collect();
@@ -297,7 +317,13 @@ pub(crate) async fn screen_prompt(
             return Err((charge(&applied, action, &findings, cost, steps), e));
         }
         if let Some(v) = &verdict {
-            remember(state, g, v.action, &todo, &hashes, &texts, &after);
+            if !pseudonymize {
+                remember(state, g, v.action, &todo, &hashes, &texts, &after);
+            }
+            if let Some(p) = &v.pseudonyms {
+                pseudonyms.extend(p);
+                restore |= g.row.config.restore;
+            }
         }
         texts = after;
     }
@@ -308,8 +334,20 @@ pub(crate) async fn screen_prompt(
             }
         }
     }
+    // The assistant's earlier turns hold the values the client got back: the model sees their
+    // pseudonyms there too.
+    if !pseudonyms.is_empty() {
+        for p in assistant_texts(inbound, raw) {
+            if let Some(slot) = raw.pointer_mut(&p)
+                && let Some(text) = slot.as_str()
+            {
+                *slot = Value::String(pseudonyms.pseudonymize(text));
+            }
+        }
+    }
     let masked_prompt = texts.last().filter(|t| action == Action::Masked && Some(*t) != last_sent.as_ref()).cloned();
-    Ok((charge(&applied, action, &findings, cost, steps), Screened { action, masked_prompt }))
+    let restore = (restore && !pseudonyms.is_empty()).then(|| Arc::new(pseudonyms));
+    Ok((charge(&applied, action, &findings, cost, steps), Screened { action, masked_prompt, restore }))
 }
 
 #[cfg(test)]
@@ -349,5 +387,21 @@ mod tests {
         ] });
         assert_eq!(texts(Inbound::Responses, responses), ["sys", "u1", "t1", "u2"]);
         assert_eq!(texts(Inbound::Responses, json!({ "input": "just this" })), ["just this"]);
+    }
+
+    #[test]
+    fn finds_the_assistants_turns() {
+        let of = |inbound, raw: Value| -> Vec<String> {
+            assistant_texts(inbound, &raw).iter().map(|p| raw.pointer(p).unwrap().as_str().unwrap().to_string()).collect()
+        };
+        let chat = json!({ "messages": [{ "role": "user", "content": "u" }, { "role": "assistant", "content": "a1" }] });
+        assert_eq!(of(Inbound::Chat, chat), ["a1"]);
+        let messages = json!({ "system": "s", "messages": [{ "role": "assistant", "content": [{ "type": "text", "text": "a1" }] }] });
+        assert_eq!(of(Inbound::Messages, messages), ["a1"]);
+        let responses = json!({ "instructions": "s", "input": [
+            { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "a1" }] },
+            { "type": "function_call_output", "call_id": "c", "output": "t1" },
+        ] });
+        assert_eq!(of(Inbound::Responses, responses), ["a1"]);
     }
 }

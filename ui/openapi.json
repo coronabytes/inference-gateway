@@ -12651,7 +12651,15 @@
             "items": {
               "type": "string"
             },
-            "description": "Presidio: the entity types that are masked, replaced with `<ENTITY_TYPE>`."
+            "description": "Presidio: the entity types that are masked, replaced with `<ENTITY_TYPE>`, or with a\npseudonym when `pseudonymize`."
+          },
+          "pseudonymize": {
+            "type": "boolean",
+            "description": "Presidio: masks with pseudonyms (`Person A`, `Location B`), the same one for the same value\nthroughout a request, instead of the entity type."
+          },
+          "restore": {
+            "type": "boolean",
+            "description": "Presidio with `pseudonymize`: restores the real values in the model's answer."
           },
           "languages": {
             "type": "array",

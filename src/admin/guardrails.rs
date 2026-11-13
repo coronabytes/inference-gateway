@@ -129,6 +129,8 @@ pub(super) fn check_guardrail(
         model: tidy(&config.model),
         block: set(&config.block),
         mask: set(&config.mask),
+        pseudonymize: config.pseudonymize,
+        restore: config.restore,
         languages,
         threshold: config.threshold,
         template: tidy(&config.template),
@@ -140,8 +142,11 @@ pub(super) fn check_guardrail(
     let model_armor_fields = config.template.is_some() || config.location.is_some() || config.project_id.is_some();
     // A path segment of Google's API: letters, digits, `-` and `_`.
     let google_id = |s: &str| !s.is_empty() && s.len() <= 63 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    if provider != GuardrailProvider::Presidio && (!config.mask.is_empty() || !config.languages.is_empty()) {
-        return Err(only("entities to mask and languages", "Presidio"));
+    if provider != GuardrailProvider::Presidio && (!config.mask.is_empty() || !config.languages.is_empty() || config.pseudonymize) {
+        return Err(only("entities to mask, pseudonyms and languages", "Presidio"));
+    }
+    if config.restore && !config.pseudonymize {
+        return Err(AdminError::bad_request("restoring values in answers needs pseudonyms"));
     }
     match provider {
         GuardrailProvider::Presidio => {
