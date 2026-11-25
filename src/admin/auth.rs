@@ -275,13 +275,25 @@ enum Via {
     DevUser,
 }
 
+/// The person signed in to the request's session, if any. The auth session is cloned out of the
+/// request first: the request is not `Sync`, so the returned future must not borrow it.
+fn signed_in_user(req: &Request) -> impl Future<Output = Option<AdminUser>> + Send + 'static {
+    let auth = req.extensions().get::<Auth>().cloned();
+    async move {
+        match auth {
+            Some(a) => a.user().await,
+            None => None,
+        }
+    }
+}
+
 /// How a request is authenticated, and for Dev Login as a user, as whom; for a project key, its
 /// project (none once the project is deleted). Everything is read from the request up front: the
 /// request is not `Sync`, so the returned future must not borrow it.
 fn authenticated_via(state: &AppState, req: &Request) -> impl Future<Output = Option<(Via, Option<Uuid>)>> + Send + 'static {
     let master = crate::auth::is_master(state, req.headers());
     let admin_key = crate::auth::presented_virtual_key(state, req.headers()).filter(|k| k.scope.admin());
-    let signed_in = req.extensions().get::<Auth>().is_some_and(|a| a.user.is_some());
+    let signed_in = signed_in_user(req);
     let session = req.extensions().get::<Session>().cloned();
     let dev_login = state.cfg.dev_login;
     async move {
@@ -292,7 +304,7 @@ fn authenticated_via(state: &AppState, req: &Request) -> impl Future<Output = Op
             return Some(if k.scope == KeyScope::Project { (Via::ProjectKey, k.project_id) } else { (Via::VirtualKey, None) });
         }
         let session = session?;
-        let (via, dev_user) = if signed_in {
+        let (via, dev_user) = if signed_in.await.is_some() {
             (Via::Session, None)
         } else if dev_login && session.get::<bool>(DEV_KEY).await.ok().flatten() == Some(true) {
             (Via::Dev, None)
@@ -439,15 +451,15 @@ pub async fn require_admin(State(state): State<AppState>, mut req: Request, next
             AdminError::forbidden(format!("missing {CSRF_HEADER} header")).into_response()
         }
         Some((via, dev_user)) => {
-            let signed_in = req.extensions().get::<Auth>().and_then(|a| a.user.clone());
-            let access = match access(&state, signed_in, via, dev_user).await {
+            let signed_in = signed_in_user(&req).await;
+            let access = match access(&state, signed_in.clone(), via, dev_user).await {
                 Ok(a) => a,
                 Err(e) => return e.into_response(),
             };
             if matches!(access, Access::User { .. }) && !may_call(&req, USER_ROUTES) {
                 return AdminError::forbidden("only admins may do this").into_response();
             }
-            let Some(actor) = actor(&state, &req, via, dev_user) else {
+            let Some(actor) = actor(&state, &req, signed_in, via, dev_user) else {
                 return unauthenticated().into_response();
             };
             // Changes made with a key name the key in the log, since no admin is signed in.
@@ -493,7 +505,7 @@ pub async fn require_signed_in(State(state): State<AppState>, req: Request, next
 const DEV_USER_NAME: &str = "Local development user";
 
 /// Who the audit log names for an authenticated request.
-fn actor(state: &AppState, req: &Request, via: Via, dev_user: Option<Uuid>) -> Option<Actor> {
+fn actor(state: &AppState, req: &Request, signed_in: Option<AdminUser>, via: Via, dev_user: Option<Uuid>) -> Option<Actor> {
     Some(match via {
         Via::MasterKey => Actor::master_key(),
         Via::VirtualKey | Via::ProjectKey => {
@@ -501,7 +513,7 @@ fn actor(state: &AppState, req: &Request, via: Via, dev_user: Option<Uuid>) -> O
             Actor::virtual_key(key.id, &key.name)
         }
         Via::Session => {
-            let user = req.extensions().get::<Auth>()?.user.clone()?;
+            let user = signed_in?;
             Actor::admin(user.id, user.email.as_deref(), user.name.as_deref())
         }
         Via::Dev => Actor::dev(),
@@ -597,7 +609,7 @@ pub(crate) struct SsoButton {
 #[utoipa::path(get, path = "/auth/session", operation_id = "session", tag = "Sign-in", responses((status = 200, description = "The session.", body = SessionInfo)))]
 async fn session_info(State(state): State<AppState>, req: Request) -> R<Json<SessionInfo>> {
     let via = authenticated_via(&state, &req).await;
-    let user = req.extensions().get::<Auth>().and_then(|a| a.user.clone());
+    let user = signed_in_user(&req).await;
     let access = match via {
         Some((v, dev_user)) => access(&state, user.clone(), v, dev_user).await.ok(),
         None => None,
@@ -680,7 +692,7 @@ async fn dev_login(
 #[utoipa::path(post, path = "/auth/logout", tag = "Sign-in",
     params(("x-gateway-csrf" = String, Header, description = "Any value.")),
     responses((status = 204, description = "Signed out.")))]
-async fn logout(State(state): State<AppState>, mut auth: Auth, session: Session, req_headers: axum::http::HeaderMap) -> R<StatusCode> {
+async fn logout(State(state): State<AppState>, auth: Auth, session: Session, req_headers: axum::http::HeaderMap) -> R<StatusCode> {
     if !req_headers.contains_key(CSRF_HEADER) {
         return Err(AdminError::forbidden(format!("missing {CSRF_HEADER} header")));
     }
@@ -772,11 +784,11 @@ struct CallbackQuery {
         ("error" = Option<String>, Query), ("error_description" = Option<String>, Query),
     ),
     responses((status = 303, description = "Into the console, or back to the sign-in screen with `login_error`.")))]
-async fn callback(State(state): State<AppState>, mut auth: Auth, Query(q): Query<CallbackQuery>) -> Response {
+async fn callback(State(state): State<AppState>, auth: Auth, session: Session, Query(q): Query<CallbackQuery>) -> Response {
     if let Some(err) = q.error {
         return to_login(&format!("The identity provider refused the sign-in: {}", q.error_description.unwrap_or(err)));
     }
-    let pending: Option<Pending> = auth.session.remove(PENDING_KEY).await.ok().flatten();
+    let pending: Option<Pending> = session.remove(PENDING_KEY).await.ok().flatten();
     let (Some(code), Some(returned_state), Some(pending)) = (q.code, q.state, pending) else {
         return to_login("The sign-in expired or was started in another browser; try again.");
     };
@@ -786,7 +798,7 @@ async fn callback(State(state): State<AppState>, mut auth: Auth, Query(q): Query
     match auth.authenticate(OidcCallback { code, state: returned_state, pending }).await {
         Ok(Some(user)) => {
             let started = match auth.login(&user).await {
-                Ok(()) => auth.session.insert(SIGNED_IN_AT_KEY, Utc::now().timestamp()).await.map_err(|e| e.to_string()),
+                Ok(()) => session.insert(SIGNED_IN_AT_KEY, Utc::now().timestamp()).await.map_err(|e| e.to_string()),
                 Err(e) => Err(e.to_string()),
             };
             match started {
