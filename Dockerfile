@@ -3,7 +3,7 @@
 # proposes the bumps.
 
 # --- admin UI -----------------------------------------------------------------
-FROM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS ui
+FROM oven/bun:1.4.5-alpine@sha256:da816670775f4c2b4e990b6b1847cf5540dcdc721a42033dd331ce7a88ba6a3b AS ui
 WORKDIR /ui
 COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
 COPY ui/tools/gen-api/package.json tools/gen-api/
